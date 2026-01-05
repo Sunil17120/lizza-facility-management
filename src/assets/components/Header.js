@@ -34,7 +34,7 @@ const Header = () => {
               <Nav.Link href="#services">Services</Nav.Link>
               <Nav.Link href="#contact">Contact</Nav.Link>
             </Nav>
-            <Button className="btn-red px-4 py-2 fw-bold shadow-sm">Get a Quote</Button>
+            <Button className="btn-red px-4 py-2 fw-bold shadow-sm">LOGIN</Button>
           </Navbar.Collapse>
         </Container>
       </Navbar>
