@@ -1,25 +1,41 @@
 import React, { useState, useEffect } from 'react';
-import { Navbar, Nav, Container, Button, Dropdown } from 'react-bootstrap';
+import { Navbar, Nav, Container, Button, Dropdown, Spinner } from 'react-bootstrap';
 import { Phone, Mail, Clock, UserCheck, LogOut, Settings } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import logoImg from './logo.png'; 
 
 const Header = () => {
   const navigate = useNavigate();
-  const [user, setUser] = useState({ name: null, type: null });
+  const [user, setUser] = useState({ name: null, email: null });
+  const [dbRole, setDbRole] = useState(null);
+  const [loading, setLoading] = useState(false);
 
-  // Sync state with localStorage on component mount
   useEffect(() => {
     const storedName = localStorage.getItem('userName');
-    const storedType = localStorage.getItem('userType');
-    if (storedName) {
-      setUser({ name: storedName, type: storedType });
+    const storedEmail = localStorage.getItem('userEmail');
+    
+    if (storedName && storedEmail) {
+      setUser({ name: storedName, email: storedEmail });
+      setLoading(true);
+      
+      // Fetch role from DB instead of localStorage
+      fetch(`/api/admin/employees?admin_email=${storedEmail}`)
+        .then(res => res.json())
+        .then(data => {
+          const currentUser = data.find(emp => emp.email === storedEmail);
+          if (currentUser) setDbRole(currentUser.user_type.toLowerCase());
+          setLoading(false);
+        })
+        .catch(() => {
+          setLoading(false);
+        });
     }
   }, []);
 
   const handleLogout = () => {
-    localStorage.clear(); // Clears name, type, and email
-    setUser({ name: null, type: null });
+    localStorage.clear();
+    setUser({ name: null, email: null });
+    setDbRole(null);
     navigate('/');
   };
 
@@ -31,7 +47,7 @@ const Header = () => {
             <span className="me-4"><Phone size={14} className="me-1 text-red"/> +91 9731343937</span>
             <span><Mail size={14} className="me-1 text-red"/> infolizza@lizzafacility.com</span>
           </div>
-          <div><Clock size={14} className="me-1 text-red"/> 24/7 Support</div>
+          <div><Clock size={14} className="me-1 text-red"/> 24/support</div>
         </Container>
       </div>
 
@@ -57,11 +73,11 @@ const Header = () => {
               <Dropdown align="end">
                 <Dropdown.Toggle variant="light" className="d-flex align-items-center fw-bold text-red border-0">
                   <UserCheck size={18} className="me-2" />
-                  Welcome, {user.name.split(' ')[0]}
+                  {loading ? <Spinner animation="border" size="sm" className="me-2"/> : `Hi, ${user.name.split(' ')[0]}`}
                 </Dropdown.Toggle>
                 <Dropdown.Menu className="shadow border-0">
-                  {/* Show Admin Panel only if user is admin */}
-                  {user.type === 'admin' && (
+                  {/* DYNAMIC CHECK: Only show if DB confirms admin */}
+                  {dbRole === 'admin' && (
                     <Dropdown.Item onClick={() => navigate('/admin')}>
                       <Settings size={14} className="me-2" /> Admin Panel
                     </Dropdown.Item>
@@ -74,10 +90,7 @@ const Header = () => {
                 </Dropdown.Menu>
               </Dropdown>
             ) : (
-              <Button 
-                className="btn-red px-4 py-2 fw-bold shadow-sm"
-                onClick={() => navigate('/auth')}
-              >
+              <Button className="btn-red px-4 py-2 fw-bold shadow-sm" onClick={() => navigate('/auth')}>
                 LOGIN 
               </Button>
             )}

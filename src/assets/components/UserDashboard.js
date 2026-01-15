@@ -1,23 +1,42 @@
 import React, { useEffect, useState } from 'react';
-import { Container, Row, Col, Card, Badge, Spinner } from 'react-bootstrap';
-import { User, Shield, CheckCircle } from 'lucide-react';
+import { Container, Row, Col, Card, Badge, Spinner, Alert } from 'react-bootstrap';
+import { User, Shield, CheckCircle, AlertCircle } from 'lucide-react';
 
 const UserDashboard = () => {
-  const [dbRole, setDbRole] = useState(null);
+  const [dbUser, setDbUser] = useState(null);
+  const [loading, setLoading] = useState(true);
   const userName = localStorage.getItem('userName');
   const userEmail = localStorage.getItem('userEmail');
 
   useEffect(() => {
     if (userEmail) {
+      setLoading(true);
+      // Fetching the full employee list to find the current user's role
       fetch(`/api/admin/employees?admin_email=${userEmail}`)
-        .then(res => res.json())
+        .then(res => {
+          if (!res.ok) throw new Error("Unauthorized or Not Found");
+          return res.json();
+        })
         .then(data => {
           const currentUser = data.find(emp => emp.email === userEmail);
-          setDbRole(currentUser ? currentUser.user_type : 'employee');
+          setDbUser(currentUser);
+          setLoading(false);
         })
-        .catch(() => setDbRole('employee'));
+        .catch((err) => {
+          console.error("Dashboard verify error:", err);
+          setLoading(false);
+        });
     }
   }, [userEmail]);
+
+  if (loading) {
+    return (
+      <Container className="py-5 text-center">
+        <Spinner animation="border" variant="danger" />
+        <p className="mt-2 text-muted">Loading your profile...</p>
+      </Container>
+    );
+  }
 
   return (
     <Container className="py-5">
@@ -32,14 +51,9 @@ const UserDashboard = () => {
               <h4 className="fw-bold">{userName || 'User'}</h4>
               <p className="text-muted small">{userEmail}</p>
               
-              {/* FIX: Shows spinner until DB responds, preventing 'UNDEFINED' badge */}
-              {!dbRole ? (
-                <Spinner animation="border" size="sm" variant="danger" />
-              ) : (
-                <Badge bg={dbRole.toLowerCase() === 'admin' ? 'danger' : 'primary'} className="px-3 py-2">
-                  {dbRole.toUpperCase()}
-                </Badge>
-              )}
+              <Badge bg={dbUser?.user_type?.toLowerCase() === 'admin' ? 'danger' : 'primary'} className="px-3 py-2">
+                {dbUser?.user_type?.toUpperCase() || 'EMPLOYEE'}
+              </Badge>
             </Card.Body>
           </Card>
         </Col>
@@ -50,9 +64,18 @@ const UserDashboard = () => {
               Account Status: Active
             </h5>
             <p className="text-muted">
-              Welcome to the Lizza Facility Management portal. From here, you can view your profile 
-              details based on your <strong>{dbRole || '...'}</strong> role.
+              Welcome to the LIZZA Facility Management portal. Your current access level is 
+              set to <strong>{dbUser?.user_type || 'Employee'}</strong>.
             </p>
+            
+            {dbUser?.user_type?.toLowerCase() === 'admin' && (
+              <Alert variant="info" className="mt-3 border-0 shadow-sm">
+                <AlertCircle size={18} className="me-2" />
+                You have Administrative privileges. 
+                <a href="/admin" className="ms-2 fw-bold text-decoration-none">Go to Admin Console →</a>
+              </Alert>
+            )}
+
             <div className="mt-4 p-3 bg-light rounded">
               <div className="d-flex align-items-center mb-2">
                 <CheckCircle size={16} className="text-success me-2" />

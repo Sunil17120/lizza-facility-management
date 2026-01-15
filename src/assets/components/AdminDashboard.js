@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { Table, Badge, Form, Container, Dropdown, ButtonGroup, InputGroup, Spinner } from 'react-bootstrap';
-import { Search, UserCog } from 'lucide-react';
+import { Table, Badge, Form, Container, Dropdown, ButtonGroup, InputGroup, Spinner, Alert } from 'react-bootstrap';
+import { Search, UserCog, ShieldAlert } from 'lucide-react';
 
 const AdminDashboard = () => {
   const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [filter, setFilter] = useState('all'); 
   const adminEmail = localStorage.getItem('userEmail');
@@ -12,12 +13,18 @@ const AdminDashboard = () => {
   const fetchEmployees = () => {
     setLoading(true);
     fetch(`/api/admin/employees?admin_email=${adminEmail}`)
-      .then(res => res.json())
+      .then(res => {
+        if (!res.ok) throw new Error("Forbidden");
+        return res.json();
+      })
       .then(data => {
         setEmployees(data);
         setLoading(false);
       })
-      .catch(() => setLoading(false));
+      .catch(() => {
+        setError(true);
+        setLoading(false);
+      });
   };
 
   useEffect(() => {
@@ -28,20 +35,27 @@ const AdminDashboard = () => {
     const res = await fetch(`/api/admin/update-role?target_email=${email}&new_type=${newRole}&admin_email=${adminEmail}`, {
       method: 'POST'
     });
-    if (res.ok) fetchEmployees(); // Refresh list after update
+    if (res.ok) fetchEmployees(); 
   };
 
-  // Logic: Search by name, email, or department (user_type)
   const filteredEmployees = employees.filter(emp => {
     const matchesSearch = 
       emp.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      emp.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      emp.user_type.toLowerCase().includes(searchTerm.toLowerCase());
-    
+      emp.email.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesFilter = filter === 'all' || emp.user_type.toLowerCase() === filter;
-    
     return matchesSearch && matchesFilter;
   });
+
+  if (error) {
+    return (
+      <Container className="py-5">
+        <Alert variant="danger" className="d-flex align-items-center">
+          <ShieldAlert className="me-2" />
+          Access Denied: Your account does not have Admin permissions in our records.
+        </Alert>
+      </Container>
+    );
+  }
 
   return (
     <Container className="py-5">
@@ -52,22 +66,22 @@ const AdminDashboard = () => {
           <InputGroup style={{ maxWidth: '300px' }}>
             <InputGroup.Text className="bg-white border-end-0"><Search size={16}/></InputGroup.Text>
             <Form.Control 
-              placeholder="Search name or dept..." 
+              placeholder="Search personnel..." 
               className="border-start-0 ps-0"
               onChange={(e) => setSearchTerm(e.target.value)}
             />
           </InputGroup>
 
           <Dropdown as={ButtonGroup} onSelect={(e) => setFilter(e)}>
-            <Dropdown.Toggle variant="danger" id="dropdown-filter">
-              Dept: {filter.toUpperCase()}
+            <Dropdown.Toggle variant="dark" id="dropdown-filter">
+              Role: {filter.toUpperCase()}
             </Dropdown.Toggle>
             <Dropdown.Menu>
               <Dropdown.Item eventKey="all">All</Dropdown.Item>
-              <Dropdown.Item eventKey="admin">Admins</Dropdown.Item>
-              <Dropdown.Item eventKey="guard">Guards</Dropdown.Item>
+              <Dropdown.Item eventKey="admin">Admin</Dropdown.Item>
+              <Dropdown.Item eventKey="guard">Guard</Dropdown.Item>
               <Dropdown.Item eventKey="official staff">Official Staff</Dropdown.Item>
-              <Dropdown.Item eventKey="employee">Employees</Dropdown.Item>
+              <Dropdown.Item eventKey="employee">Employee</Dropdown.Item>
             </Dropdown.Menu>
           </Dropdown>
         </div>
@@ -76,13 +90,13 @@ const AdminDashboard = () => {
       {loading ? (
         <div className="text-center py-5"><Spinner animation="border" variant="danger" /></div>
       ) : (
-        <Table responsive hover className="shadow-sm border rounded">
-          <thead className="bg-light">
+        <Table responsive hover className="shadow-sm border rounded overflow-hidden">
+          <thead className="bg-dark text-white">
             <tr>
               <th>Full Name</th>
               <th>Email Address</th>
-              <th>Department</th>
-              <th>Actions</th>
+              <th>Current Role</th>
+              <th>Modify Access</th>
             </tr>
           </thead>
           <tbody>
@@ -115,9 +129,6 @@ const AdminDashboard = () => {
             ))}
           </tbody>
         </Table>
-      )}
-      {!loading && filteredEmployees.length === 0 && (
-        <div className="text-center py-4 bg-light rounded">No personnel matches found.</div>
       )}
     </Container>
   );
