@@ -18,7 +18,11 @@ const UserDashboard = () => {
           return res.json();
         })
         .then(data => {
-          const currentUser = data.find(emp => emp.email === userEmail);
+          // FIX: Use case-insensitive matching and trim whitespace to ensure the user is found
+          const currentUser = data.find(emp => 
+            emp.email.toLowerCase().trim() === userEmail.toLowerCase().trim()
+          );
+          
           setDbUser(currentUser);
           setLoading(false);
         })
@@ -33,7 +37,7 @@ const UserDashboard = () => {
     return (
       <Container className="py-5 text-center">
         <Spinner animation="border" variant="danger" />
-        <p className="mt-2 text-muted">Loading your profile...</p>
+        <p className="mt-2 text-muted">Verifying your role from database...</p>
       </Container>
     );
   }
@@ -51,8 +55,9 @@ const UserDashboard = () => {
               <h4 className="fw-bold">{userName || 'User'}</h4>
               <p className="text-muted small">{userEmail}</p>
               
+              {/* Displays the dynamic role fetched from DB */}
               <Badge bg={dbUser?.user_type?.toLowerCase() === 'admin' ? 'danger' : 'primary'} className="px-3 py-2">
-                {dbUser?.user_type?.toUpperCase()}
+                {dbUser?.user_type ? dbUser.user_type.toUpperCase() : 'EMPLOYEE'}
               </Badge>
             </Card.Body>
           </Card>
@@ -65,7 +70,7 @@ const UserDashboard = () => {
             </h5>
             <p className="text-muted">
               Welcome to the LIZZA Facility Management portal. Your current access level is 
-              set to <strong>{dbUser?.user_type }</strong>.
+              set to <strong>{dbUser?.user_type ? dbUser.user_type.toUpperCase() : 'EMPLOYEE'}</strong>.
             </p>
             
             {dbUser?.user_type?.toLowerCase() === 'admin' && (
