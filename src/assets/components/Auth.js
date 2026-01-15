@@ -54,22 +54,19 @@ const Auth = () => {
       const data = await response.json();
       if (response.ok) {
         if (isLogin) {
-          // FIX: Normalize the role to lowercase to avoid "Admin" vs "admin" issues
-          const role = (data.user_type || 'employee').toLowerCase();
-          
-          localStorage.setItem('userName', data.user);
-          localStorage.setItem('userType', role); 
-          localStorage.setItem('userEmail', formData.email);
+          // 1. CLEAR all old data to prevent "UNDEFINED" or stale role issues
+          localStorage.clear();
 
-          // FIX: Direct navigation based on role
-          if (role === 'admin') {
-            navigate('/admin');
-          } else {
-            navigate('/dashboard');
-          }
+          // 2. STORE only identity markers. We will fetch 'user_type' from DB in App.js
+          localStorage.setItem('userName', data.user);
+          localStorage.setItem('userEmail', formData.email); 
+
+          // 3. REDIRECT to dashboard. 
+          // The PrivateRoute/AdminRoute in App.js will now verify the DB role.
+          navigate('/dashboard'); 
         } else {
           alert("Registration successful! Please login.");
-          setIsLogin(true);
+          setIsLogin(true); 
           setFormData({ ...formData, password: '', confirmPassword: '' });
         }
       } else {
@@ -87,7 +84,7 @@ const Auth = () => {
           <Col md={6} lg={5}>
             <Button 
               variant="link" 
-              className="text-black mb-3 p-0 d-flex align-items-center text-decoration-none fw-bold"
+              className="text-black mb-3 p-0 d-flex align-items-center text-decoration-none fw-bold hover-red"
               onClick={() => navigate('/')}
             >
               <ArrowLeft size={18} className="me-2" /> Back to Home
@@ -106,7 +103,14 @@ const Auth = () => {
                     <Form.Label className="small fw-bold">Full Name</Form.Label>
                     <div className="position-relative">
                       <User className="position-absolute top-50 start-0 translate-middle-y ms-3 text-muted" size={18} style={{zIndex: 10}} />
-                      <Form.Control name="full_name" type="text" placeholder="Enter your name" className="ps-5 py-2 border-0 bg-light" onChange={handleInputChange} required />
+                      <Form.Control 
+                        name="full_name"
+                        type="text" 
+                        placeholder="Enter your name" 
+                        className="ps-5 py-2 border-0 bg-light" 
+                        onChange={handleInputChange}
+                        required
+                      />
                     </div>
                   </Form.Group>
                 )}
@@ -115,7 +119,14 @@ const Auth = () => {
                   <Form.Label className="small fw-bold">Email Address</Form.Label>
                   <div className="position-relative">
                     <Mail className="position-absolute top-50 start-0 translate-middle-y ms-3 text-muted" size={18} style={{zIndex: 10}} />
-                    <Form.Control name="email" type="email" placeholder="name@example.com" className="ps-5 py-2 border-0 bg-light" onChange={handleInputChange} required />
+                    <Form.Control 
+                      name="email"
+                      type="email" 
+                      placeholder="name@example.com" 
+                      className="ps-5 py-2 border-0 bg-light" 
+                      onChange={handleInputChange}
+                      required
+                    />
                   </div>
                 </Form.Group>
 
@@ -123,7 +134,14 @@ const Auth = () => {
                   <Form.Label className="small fw-bold">Password</Form.Label>
                   <div className="position-relative">
                     <Lock className="position-absolute top-50 start-0 translate-middle-y ms-3 text-muted" size={18} style={{zIndex: 10}} />
-                    <Form.Control name="password" type={showPassword ? "text" : "password"} placeholder="••••••••" className="ps-5 pe-5 py-2 border-0 bg-light" onChange={handleInputChange} required />
+                    <Form.Control 
+                      name="password"
+                      type={showPassword ? "text" : "password"} 
+                      placeholder="••••••••" 
+                      className="ps-5 pe-5 py-2 border-0 bg-light" 
+                      onChange={handleInputChange}
+                      required
+                    />
                     <div className="position-absolute top-50 end-0 translate-middle-y me-3 text-muted" onClick={togglePasswordVisibility} style={{ cursor: 'pointer', zIndex: 10 }}>
                       {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                     </div>
@@ -135,7 +153,14 @@ const Auth = () => {
                     <Form.Label className="small fw-bold">Confirm Password</Form.Label>
                     <div className="position-relative">
                       <Lock className="position-absolute top-50 start-0 translate-middle-y ms-3 text-muted" size={18} style={{zIndex: 10}} />
-                      <Form.Control name="confirmPassword" type={showConfirmPassword ? "text" : "password"} placeholder="••••••••" className="ps-5 pe-5 py-2 border-0 bg-light" onChange={handleInputChange} required />
+                      <Form.Control 
+                        name="confirmPassword"
+                        type={showConfirmPassword ? "text" : "password"} 
+                        placeholder="••••••••" 
+                        className="ps-5 pe-5 py-2 border-0 bg-light" 
+                        onChange={handleInputChange}
+                        required
+                      />
                       <div className="position-absolute top-50 end-0 translate-middle-y me-3 text-muted" onClick={toggleConfirmPasswordVisibility} style={{ cursor: 'pointer', zIndex: 10 }}>
                         {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                       </div>
