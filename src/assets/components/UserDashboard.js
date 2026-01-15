@@ -52,7 +52,7 @@ const UserDashboard = () => {
               <p className="text-muted small">{userEmail}</p>
               
               <Badge bg={dbUser?.user_type?.toLowerCase() === 'admin' ? 'danger' : 'primary'} className="px-3 py-2">
-                {dbUser?.user_type?.toUpperCase() || 'EMPLOYEE'}
+                {dbUser?.user_type?.toUpperCase()}
               </Badge>
             </Card.Body>
           </Card>
@@ -65,7 +65,7 @@ const UserDashboard = () => {
             </h5>
             <p className="text-muted">
               Welcome to the LIZZA Facility Management portal. Your current access level is 
-              set to <strong>{dbUser?.user_type || 'Employee'}</strong>.
+              set to <strong>{dbUser?.user_type }</strong>.
             </p>
             
             {dbUser?.user_type?.toLowerCase() === 'admin' && (

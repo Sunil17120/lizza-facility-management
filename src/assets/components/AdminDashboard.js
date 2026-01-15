@@ -122,7 +122,7 @@ const AdminDashboard = () => {
                     <option value="employee">Employee</option>
                     <option value="official staff">Official Staff</option>
                     <option value="guard">Guard</option>
-                    <option value="admin">Admin</option>
+                    
                   </Form.Select>
                 </td>
               </tr>
