@@ -8,7 +8,6 @@ const Auth = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   
-  // State for form data
   const [formData, setFormData] = useState({
     full_name: '',
     email: '',
@@ -31,7 +30,6 @@ const Auth = () => {
   const togglePasswordVisibility = () => setShowPassword(!showPassword);
   const toggleConfirmPasswordVisibility = () => setShowConfirmPassword(!showConfirmPassword);
 
-  // API Submission Logic
   const handleSubmit = async (e) => {
     e.preventDefault();
     
@@ -55,9 +53,15 @@ const Auth = () => {
       
       const data = await response.json();
       if (response.ok) {
-        alert(data.message);
-        if (isLogin) navigate('/'); // Redirect on success
-        else setIsLogin(true);
+        if (isLogin) {
+          // Store user name for the Header
+          localStorage.setItem('userName', data.user); 
+          navigate('/'); 
+        } else {
+          alert("Registration successful! Please login.");
+          setIsLogin(true); // Automatically show login after signup
+          setFormData({ ...formData, password: '', confirmPassword: '' });
+        }
       } else {
         alert(data.detail || "Error occurred");
       }
