@@ -1,20 +1,28 @@
 import React, { useState } from 'react';
-import { Container, Row, Col, Form, Button, Card } from 'react-bootstrap';
+import { Container, Row, Col, Form, Button, Card, InputGroup } from 'react-bootstrap';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Mail, Lock, User } from 'lucide-react';
+import { ArrowLeft, Mail, Lock, User, Eye, EyeOff } from 'lucide-react';
 
 const Auth = () => {
   const [isLogin, setIsLogin] = useState(true);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const navigate = useNavigate();
 
-  const handleToggle = () => setIsLogin(!isLogin);
+  const handleToggle = () => {
+    setIsLogin(!isLogin);
+    setShowPassword(false);
+    setShowConfirmPassword(false);
+  };
+
+  const togglePasswordVisibility = () => setShowPassword(!showPassword);
+  const toggleConfirmPasswordVisibility = () => setShowConfirmPassword(!showConfirmPassword);
 
   return (
     <div className="bg-light min-vh-100 d-flex align-items-center py-5">
       <Container>
         <Row className="justify-content-center">
           <Col md={6} lg={5} data-aos="fade-up">
-            {/* Back to Home Navigation */}
             <Button 
               variant="link" 
               className="text-black mb-3 p-0 d-flex align-items-center text-decoration-none fw-bold hover-red"
@@ -39,7 +47,7 @@ const Auth = () => {
                   <Form.Group className="mb-3">
                     <Form.Label className="small fw-bold">Full Name</Form.Label>
                     <div className="position-relative">
-                      <User className="position-absolute top-50 start-0 translate-middle-y ms-3 text-muted" size={18} />
+                      <User className="position-absolute top-50 start-0 translate-middle-y ms-3 text-muted" size={18} style={{zIndex: 10}} />
                       <Form.Control 
                         type="text" 
                         placeholder="Enter your name" 
@@ -53,7 +61,7 @@ const Auth = () => {
                 <Form.Group className="mb-3">
                   <Form.Label className="small fw-bold">Email Address</Form.Label>
                   <div className="position-relative">
-                    <Mail className="position-absolute top-50 start-0 translate-middle-y ms-3 text-muted" size={18} />
+                    <Mail className="position-absolute top-50 start-0 translate-middle-y ms-3 text-muted" size={18} style={{zIndex: 10}} />
                     <Form.Control 
                       type="email" 
                       placeholder="name@example.com" 
@@ -63,18 +71,49 @@ const Auth = () => {
                   </div>
                 </Form.Group>
 
-                <Form.Group className="mb-4">
+                {/* Password Field */}
+                <Form.Group className="mb-3">
                   <Form.Label className="small fw-bold">Password</Form.Label>
                   <div className="position-relative">
-                    <Lock className="position-absolute top-50 start-0 translate-middle-y ms-3 text-muted" size={18} />
+                    <Lock className="position-absolute top-50 start-0 translate-middle-y ms-3 text-muted" size={18} style={{zIndex: 10}} />
                     <Form.Control 
-                      type="password" 
+                      type={showPassword ? "text" : "password"} 
                       placeholder="••••••••" 
-                      className="ps-5 py-2 border-0 bg-light" 
+                      className="ps-5 pe-5 py-2 border-0 bg-light" 
                       style={{ borderRadius: '8px' }}
                     />
+                    <div 
+                      className="position-absolute top-50 end-0 translate-middle-y me-3 text-muted cursor-pointer"
+                      onClick={togglePasswordVisibility}
+                      style={{ cursor: 'pointer', zIndex: 10 }}
+                    >
+                      {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                    </div>
                   </div>
                 </Form.Group>
+
+                {/* Confirm Password Field (Only for Signup) */}
+                {!isLogin && (
+                  <Form.Group className="mb-4">
+                    <Form.Label className="small fw-bold">Confirm Password</Form.Label>
+                    <div className="position-relative">
+                      <Lock className="position-absolute top-50 start-0 translate-middle-y ms-3 text-muted" size={18} style={{zIndex: 10}} />
+                      <Form.Control 
+                        type={showConfirmPassword ? "text" : "password"} 
+                        placeholder="••••••••" 
+                        className="ps-5 pe-5 py-2 border-0 bg-light" 
+                        style={{ borderRadius: '8px' }}
+                      />
+                      <div 
+                        className="position-absolute top-50 end-0 translate-middle-y me-3 text-muted cursor-pointer"
+                        onClick={toggleConfirmPasswordVisibility}
+                        style={{ cursor: 'pointer', zIndex: 10 }}
+                      >
+                        {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                      </div>
+                    </div>
+                  </Form.Group>
+                )}
 
                 <Button className="btn-red w-100 py-2 fw-bold shadow-sm mb-3">
                   {isLogin ? 'LOG IN' : 'SIGN UP'}
