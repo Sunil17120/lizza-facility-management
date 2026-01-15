@@ -78,7 +78,7 @@ const AdminDashboard = () => {
             </Dropdown.Toggle>
             <Dropdown.Menu>
               <Dropdown.Item eventKey="all">All</Dropdown.Item>
-              <Dropdown.Item eventKey="admin">Admin</Dropdown.Item>
+            
               <Dropdown.Item eventKey="guard">Guard</Dropdown.Item>
               <Dropdown.Item eventKey="official staff">Official Staff</Dropdown.Item>
               <Dropdown.Item eventKey="employee">Employee</Dropdown.Item>
