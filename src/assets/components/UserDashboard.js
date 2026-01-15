@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Container, Row, Col, Card, Badge, Spinner, Alert } from 'react-bootstrap';
-import { User, Shield, CheckCircle, AlertCircle } from 'lucide-react';
+import { Container, Row, Col, Card, Badge, Spinner } from 'react-bootstrap';
+import { User, Shield } from 'lucide-react';
 
 const UserDashboard = () => {
   const [dbUser, setDbUser] = useState(null);
@@ -11,83 +11,47 @@ const UserDashboard = () => {
   useEffect(() => {
     if (userEmail) {
       setLoading(true);
-      // Fetching from DB using admin_email param as required by your index.py
       fetch(`/api/admin/employees?admin_email=${userEmail}`)
-        .then(res => {
-          if (!res.ok) throw new Error("Unauthorized");
-          return res.json();
-        })
+        .then(res => res.json())
         .then(data => {
-          // Robust case-insensitive matching
+          // Find the exact user record using case-insensitive email matching
           const currentUser = data.find(emp => 
             emp.email.toLowerCase().trim() === userEmail.toLowerCase().trim()
           );
-          
           setDbUser(currentUser);
           setLoading(false);
         })
-        .catch((err) => {
-          console.error("Dashboard verify error:", err);
-          setLoading(false);
-        });
+        .catch(() => setLoading(false));
     }
   }, [userEmail]);
 
-  if (loading) {
-    return (
-      <Container className="py-5 text-center">
-        <Spinner animation="border" variant="danger" />
-        <p className="mt-2 text-muted">Fetching your official role...</p>
-      </Container>
-    );
-  }
+  if (loading) return <div className="text-center py-5"><Spinner animation="border" variant="danger" /></div>;
 
   return (
     <Container className="py-5">
-      <h2 className="fw-bold mb-4">User Dashboard</h2>
-      <Row>
-        <Col md={4}>
-          <Card className="border-0 shadow-sm p-3 text-center mb-4">
-            <Card.Body>
-              <div className="bg-light rounded-circle d-inline-block p-3 mb-3">
-                <User size={40} className="text-danger" />
-              </div>
-              <h4 className="fw-bold">{userName || 'User'}</h4>
-              <p className="text-muted small">{userEmail}</p>
-              
-              <Badge bg={dbUser?.user_type?.toLowerCase() === 'admin' ? 'danger' : 'primary'} className="px-3 py-2">
-                {/* Shows ONLY the role from the DB */}
-                {dbUser?.user_type ? dbUser.user_type.toUpperCase() : "NO ROLE ASSIGNED"}
-              </Badge>
-            </Card.Body>
-          </Card>
-        </Col>
-        <Col md={8}>
-          <Card className="border-0 shadow-sm p-4">
-            <h5 className="fw-bold mb-3 d-flex align-items-center">
-              <Shield size={20} className="me-2 text-success" /> 
-              Account Status: Active
-            </h5>
-            <p className="text-muted">
-              Welcome to the LIZZA Facility Management portal. Your current access level is 
-              set to <strong>{dbUser?.user_type ? dbUser.user_type.toUpperCase() : "PENDING VERIFICATION"}</strong>.
-            </p>
-            
-            {/* Navigational alert if DB confirms user is admin */}
-            {dbUser?.user_type?.toLowerCase() === 'admin' && (
-              <Alert variant="info" className="mt-3 border-0 shadow-sm">
-                <AlertCircle size={18} className="me-2" />
-                You have Administrative privileges. 
-                <a href="/admin" className="ms-2 fw-bold text-decoration-none">Go to Admin Console →</a>
-              </Alert>
-            )}
-
-            <div className="mt-4 p-3 bg-light rounded">
-              <div className="d-flex align-items-center mb-2">
-                <CheckCircle size={16} className="text-success me-2" />
-                <span>Verified Personnel</span>
-              </div>
+      <Row className="justify-content-center">
+        <Col md={6}>
+          <Card className="border-0 shadow-lg text-center p-4">
+            <div className="bg-light rounded-circle d-inline-block p-3 mx-auto mb-3">
+              <User size={48} className="text-danger" />
             </div>
+            <h3 className="fw-bold">{userName}</h3>
+            <p className="text-muted">{userEmail}</p>
+            
+            <div className="my-4">
+              <h6 className="text-uppercase text-muted small fw-bold">Current Designation</h6>
+              {/* This displays the EXACT string from the database (e.g., GUARD, OFFICIAL STAFF) */}
+              <Badge bg="dark" className="fs-6 px-4 py-2">
+                {dbUser?.user_type ? dbUser.user_type.toUpperCase() : "UNASSIGNED"}
+              </Badge>
+            </div>
+
+            <Card className="bg-light border-0 p-3">
+              <div className="d-flex align-items-center justify-content-center gap-2">
+                <Shield size={18} className="text-success" />
+                <span className="fw-bold">Database Verified Account</span>
+              </div>
+            </Card>
           </Card>
         </Col>
       </Row>
