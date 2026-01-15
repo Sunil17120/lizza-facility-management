@@ -67,6 +67,7 @@ def login(data: AuthRequest, db: Session = Depends(get_db)):
         return {"message": "Login successful", "user": user.full_name}
     
     raise HTTPException(status_code=401, detail="Invalid credentials")
+
 @app.get("/api/admin/employees")
 def get_all_employees(admin_email: str, db: Session = Depends(get_db)):
     # Verify the requester is an admin
