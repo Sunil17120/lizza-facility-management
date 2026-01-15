@@ -8,22 +8,27 @@ const UserDashboard = () => {
   const userName = localStorage.getItem('userName');
   const userEmail = localStorage.getItem('userEmail');
 
-  useEffect(() => {
-    if (userEmail) {
-      setLoading(true);
-      fetch(`/api/user/profile?email=${userEmail}`)
-        .then(res => res.json())
-        .then(data => {
-          // Find the exact user record using case-insensitive email matching
-          const currentUser = data.find(emp => 
-            emp.email.toLowerCase().trim() === userEmail.toLowerCase().trim()
-          );
-          setDbUser(currentUser);
-          setLoading(false);
-        })
-        .catch(() => setLoading(false));
-    }
-  }, [userEmail]);
+// Inside UserDashboard.js
+useEffect(() => {
+  if (userEmail) {
+    setLoading(true);
+    // Use the NEW endpoint that doesn't require admin rights
+    fetch(`/api/user/profile?email=${userEmail}`)
+      .then(res => {
+        if (!res.ok) throw new Error("User not found");
+        return res.json();
+      })
+      .then(data => {
+        // data is now a single user object: { user_type: "guard", ... }
+        setDbUser(data); 
+        setLoading(false);
+      })
+      .catch((err) => {
+        console.error("Profile fetch error:", err);
+        setLoading(false);
+      });
+  }
+}, [userEmail]);
 
   if (loading) return <div className="text-center py-5"><Spinner animation="border" variant="danger" /></div>;
 
