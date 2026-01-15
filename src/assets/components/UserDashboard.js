@@ -7,6 +7,9 @@ const UserDashboard = () => {
   const userType = localStorage.getItem('userType');
   const userEmail = localStorage.getItem('userEmail');
 
+  // Normalize type for UI display
+  const displayType = userType ? userType.toUpperCase() : 'EMPLOYEE';
+
   return (
     <Container className="py-5">
       <h2 className="fw-bold mb-4">User Dashboard</h2>
@@ -19,8 +22,9 @@ const UserDashboard = () => {
               </div>
               <h4 className="fw-bold">{userName || 'User'}</h4>
               <p className="text-muted small">{userEmail}</p>
-              <Badge bg={userType === 'admin' ? 'danger' : 'primary'} className="px-3 py-2">
-                {userType ? userType.toUpperCase() : 'EMPLOYEE'}
+              {/* FIX: Use displayType to avoid 'UNDEFINED' badge */}
+              <Badge bg={userType?.toLowerCase() === 'admin' ? 'danger' : 'primary'} className="px-3 py-2">
+                {displayType}
               </Badge>
             </Card.Body>
           </Card>
@@ -33,7 +37,7 @@ const UserDashboard = () => {
             </h5>
             <p className="text-muted">
               Welcome to the Lizza Facility Management portal. From here, you can view your profile 
-              details and access specific department tools based on your <strong>{userType}</strong> role.
+              details and access specific department tools based on your <strong>{displayType.toLowerCase()}</strong> role.
             </p>
             <div className="mt-4 p-3 bg-light rounded">
               <div className="d-flex align-items-center mb-2">

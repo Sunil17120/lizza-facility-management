@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import 'bootstrap/dist/css/bootstrap.min.css';
 import './App.css';
@@ -11,25 +11,23 @@ import About from './assets/components/About';
 import Services from './assets/components/Services';
 import Auth from './assets/components/Auth'; 
 import AdminDashboard from './assets/components/AdminDashboard'; 
-import UserDashboard from './assets/components/UserDashboard';
+import UserDashboard from './assets/components/UserDashboard'; 
 import { Container, Row, Col } from 'react-bootstrap';
 
-// Protected Route Component for General Users
 const PrivateRoute = ({ children }) => {
   const isAuthenticated = localStorage.getItem('userName');
   return isAuthenticated ? children : <Navigate to="/auth" replace />;
 };
 
-// Protected Route Component for Admin
 const AdminRoute = ({ children }) => {
   const userType = localStorage.getItem('userType');
   const isAuthenticated = localStorage.getItem('userName');
   
-  // FIX: Added null check and case-insensitive comparison
+  // FIX: Case-insensitive check and null check
   const isAdmin = isAuthenticated && userType?.toLowerCase() === 'admin';
   
   if (!isAdmin) {
-    return <Navigate to="/" replace />;
+    return <Navigate to="/dashboard" replace />;
   }
   return children;
 };
