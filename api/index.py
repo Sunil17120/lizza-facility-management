@@ -2,12 +2,19 @@ import hashlib
 import os
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
-from .database import SessionLocal, User, init_db # Assuming database.py exists
 from pydantic import BaseModel
+
+# Improved import logic for Vercel's directory structure
+try:
+    from .database import SessionLocal, User, init_db
+except ImportError:
+    from database import SessionLocal, User, init_db
 
 app = FastAPI()
 
-# Pepper stored in Vercel Environment Variables
+# Run table creation once during the serverless function "warm start"
+init_db()
+
 PEPPER = os.environ.get("SECRET_PEPPER", "change_me_in_vercel_settings")
 
 class AuthRequest(BaseModel):
@@ -22,19 +29,17 @@ def get_db():
     finally:
         db.close()
 
-# Requirement: Salt derived from Identity
 def generate_derived_salt(email: str, name: str):
     identity_string = (email.lower() + name.lower()).encode()
     return hashlib.sha256(identity_string).hexdigest()[:16]
 
-# SHA-256 with Salt and Pepper
 def get_secure_hash(password: str, salt: str):
     final_payload = password + salt + PEPPER
     return hashlib.sha256(final_payload.encode()).hexdigest()
 
 @app.post("/api/signup")
 def signup(data: AuthRequest, db: Session = Depends(get_db)):
-    init_db() # Ensure tables exist
+    # Removed init_db() from here for performance
     if db.query(User).filter(User.email == data.email).first():
         raise HTTPException(status_code=400, detail="User already exists")
     
@@ -45,7 +50,7 @@ def signup(data: AuthRequest, db: Session = Depends(get_db)):
         full_name=data.full_name,
         email=data.email,
         password=hashed_password,
-        salt=salt # Stored for verification
+        salt=salt
     )
     db.add(new_user)
     db.commit()
@@ -57,7 +62,6 @@ def login(data: AuthRequest, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=401, detail="Invalid credentials")
     
-    # Recalculate salt and hash to verify
     salt = generate_derived_salt(user.email, user.full_name)
     if get_secure_hash(data.password, salt) == user.password:
         return {"message": "Login successful", "user": user.full_name}
