@@ -11,7 +11,7 @@ const UserDashboard = () => {
   useEffect(() => {
     if (userEmail) {
       setLoading(true);
-      fetch(`/api/admin/employees?admin_email=${userEmail}`)
+      fetch(`/api/user/profile?email=${userEmail}`)
         .then(res => res.json())
         .then(data => {
           // Find the exact user record using case-insensitive email matching
