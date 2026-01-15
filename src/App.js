@@ -13,9 +13,9 @@ import Services from './assets/components/Services';
 import Auth from './assets/components/Auth'; 
 import AdminDashboard from './assets/components/AdminDashboard'; 
 import UserDashboard from './assets/components/UserDashboard'; 
-import Footer from './assets/components/Footer'; // Import your new Footer
+import Footer from './assets/components/Footer'; 
 
-// Protected Route for Admin - FETCHES FROM DB
+// Protected Route for Admin - ALWAYS FETCHES FROM DB
 const AdminRoute = ({ children }) => {
   const [isAdmin, setIsAdmin] = useState(null);
   const userEmail = localStorage.getItem('userEmail');
@@ -26,10 +26,16 @@ const AdminRoute = ({ children }) => {
       return;
     }
 
+    // Fetching from your index.py API endpoint
     fetch(`/api/admin/employees?admin_email=${userEmail}`)
       .then(res => res.json())
       .then(data => {
-        const currentUser = data.find(emp => emp.email === userEmail);
+        // FIX: Case-insensitive email matching to find the current user in the DB list
+        const currentUser = data.find(emp => 
+          emp.email.toLowerCase().trim() === userEmail.toLowerCase().trim()
+        );
+        
+        // Check if the database explicitly says 'admin'
         if (currentUser && currentUser.user_type.toLowerCase() === 'admin') {
           setIsAdmin(true);
         } else {
@@ -39,7 +45,13 @@ const AdminRoute = ({ children }) => {
       .catch(() => setIsAdmin(false));
   }, [userEmail]);
 
-  if (isAdmin === null) return <div className="text-center py-5">Verifying Permissions...</div>;
+  if (isAdmin === null) return (
+    <div className="text-center py-5">
+      <div className="spinner-border text-danger" role="status"></div>
+      <p className="mt-2">Verifying Admin Permissions...</p>
+    </div>
+  );
+
   return isAdmin ? children : <Navigate to="/dashboard" replace />;
 };
 
@@ -57,12 +69,12 @@ function App() {
   return (
     <Router>
       <div className="App d-flex flex-column min-vh-100">
-        {/* HEADER: Placed here so it shows on ALL pages */}
+        {/* Header remains outside so it shows on every page */}
         <Header />
 
         <div className="flex-grow-1">
           <Routes>
-            {/* HOME PAGE: Includes Hero, About, and Services */}
+            {/* Landing Page Content */}
             <Route path="/" element={
               <>
                 <Hero />
@@ -73,6 +85,7 @@ function App() {
 
             <Route path="/auth" element={<Auth />} />
 
+            {/* Normal User Dashboard - Now always authenticated */}
             <Route 
               path="/dashboard" 
               element={
@@ -82,6 +95,7 @@ function App() {
               } 
             />
 
+            {/* Admin Dashboard - Database verified */}
             <Route 
               path="/admin" 
               element={
@@ -93,7 +107,7 @@ function App() {
           </Routes>
         </div>
 
-        {/* FOOTER: Placed here so it shows on ALL pages */}
+        {/* Footer remains outside so it shows on every page */}
         <Footer />
       </div>
     </Router>
