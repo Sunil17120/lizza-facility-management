@@ -5,7 +5,6 @@ import './App.css';
 import AOS from 'aos';
 import 'aos/dist/aos.css';
 
-// Component Imports
 import Header from './assets/components/Header';
 import Hero from './assets/components/Hero';
 import About from './assets/components/About';
@@ -25,17 +24,13 @@ const AdminRoute = ({ children }) => {
       return;
     }
 
-    // Fetch the latest user data from your existing admin/employees endpoint
-    // or a specific profile endpoint
     fetch(`/api/admin/employees?admin_email=${userEmail}`)
       .then(res => res.json())
       .then(data => {
-        // Find the current logged-in user in the list to verify their type
         const currentUser = data.find(emp => emp.email === userEmail);
+        // Direct DB Check
         if (currentUser && currentUser.user_type.toLowerCase() === 'admin') {
           setIsAdmin(true);
-          // Sync local storage just in case for UI consistency
-          localStorage.setItem('userType', 'admin');
         } else {
           setIsAdmin(false);
         }
@@ -43,11 +38,10 @@ const AdminRoute = ({ children }) => {
       .catch(() => setIsAdmin(false));
   }, [userEmail]);
 
-  if (isAdmin === null) return <div className="text-center py-5">Loading Permissions...</div>;
+  if (isAdmin === null) return <div className="text-center py-5">Verifying Admin Permissions...</div>;
   return isAdmin ? children : <Navigate to="/dashboard" replace />;
 };
 
-// Protected Route for Users
 const PrivateRoute = ({ children }) => {
   const isAuthenticated = localStorage.getItem('userName');
   return isAuthenticated ? children : <Navigate to="/auth" replace />;
@@ -61,10 +55,12 @@ function App() {
   return (
     <Router>
       <div className="App">
+        {/* Header moved OUTSIDE Routes so it always shows on every page */}
+        <Header /> 
+        
         <Routes>
           <Route path="/" element={
             <>
-              <Header />
               <Hero />
               <About />
               <Services />
@@ -77,7 +73,6 @@ function App() {
             path="/dashboard" 
             element={
               <PrivateRoute>
-                <Header />
                 <UserDashboard />
               </PrivateRoute>
             } 
@@ -87,12 +82,13 @@ function App() {
             path="/admin" 
             element={
               <AdminRoute>
-                <Header />
                 <AdminDashboard />
               </AdminRoute>
             } 
           />
         </Routes>
+        
+        {/* If you have a Footer component, place it here: <Footer /> */}
       </div>
     </Router>
   );

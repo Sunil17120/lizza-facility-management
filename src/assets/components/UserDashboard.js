@@ -1,14 +1,23 @@
-import React from 'react';
-import { Container, Row, Col, Card, Badge } from 'react-bootstrap';
+import React, { useEffect, useState } from 'react';
+import { Container, Row, Col, Card, Badge, Spinner } from 'react-bootstrap';
 import { User, Shield, CheckCircle } from 'lucide-react';
 
 const UserDashboard = () => {
+  const [dbRole, setDbRole] = useState(null);
   const userName = localStorage.getItem('userName');
-  const userType = localStorage.getItem('userType');
   const userEmail = localStorage.getItem('userEmail');
 
-  // Normalize type for UI display
-  const displayType = userType ? userType.toUpperCase() : 'EMPLOYEE';
+  useEffect(() => {
+    if (userEmail) {
+      fetch(`/api/admin/employees?admin_email=${userEmail}`)
+        .then(res => res.json())
+        .then(data => {
+          const currentUser = data.find(emp => emp.email === userEmail);
+          setDbRole(currentUser ? currentUser.user_type : 'employee');
+        })
+        .catch(() => setDbRole('employee'));
+    }
+  }, [userEmail]);
 
   return (
     <Container className="py-5">
@@ -22,10 +31,15 @@ const UserDashboard = () => {
               </div>
               <h4 className="fw-bold">{userName || 'User'}</h4>
               <p className="text-muted small">{userEmail}</p>
-              {/* FIX: Use displayType to avoid 'UNDEFINED' badge */}
-              <Badge bg={userType?.toLowerCase() === 'admin' ? 'danger' : 'primary'} className="px-3 py-2">
-                {displayType}
-              </Badge>
+              
+              {/* FIX: Shows spinner until DB responds, preventing 'UNDEFINED' badge */}
+              {!dbRole ? (
+                <Spinner animation="border" size="sm" variant="danger" />
+              ) : (
+                <Badge bg={dbRole.toLowerCase() === 'admin' ? 'danger' : 'primary'} className="px-3 py-2">
+                  {dbRole.toUpperCase()}
+                </Badge>
+              )}
             </Card.Body>
           </Card>
         </Col>
@@ -37,7 +51,7 @@ const UserDashboard = () => {
             </h5>
             <p className="text-muted">
               Welcome to the Lizza Facility Management portal. From here, you can view your profile 
-              details and access specific department tools based on your <strong>{displayType.toLowerCase()}</strong> role.
+              details based on your <strong>{dbRole || '...'}</strong> role.
             </p>
             <div className="mt-4 p-3 bg-light rounded">
               <div className="d-flex align-items-center mb-2">
