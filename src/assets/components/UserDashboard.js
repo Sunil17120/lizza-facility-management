@@ -11,14 +11,14 @@ const UserDashboard = () => {
   useEffect(() => {
     if (userEmail) {
       setLoading(true);
-      // Fetching the full employee list to find the current user's role
+      // Fetching from DB using admin_email param as required by your index.py
       fetch(`/api/admin/employees?admin_email=${userEmail}`)
         .then(res => {
-          if (!res.ok) throw new Error("Unauthorized or Not Found");
+          if (!res.ok) throw new Error("Unauthorized");
           return res.json();
         })
         .then(data => {
-          // FIX: Use case-insensitive matching and trim whitespace to ensure the user is found
+          // Robust case-insensitive matching
           const currentUser = data.find(emp => 
             emp.email.toLowerCase().trim() === userEmail.toLowerCase().trim()
           );
@@ -37,7 +37,7 @@ const UserDashboard = () => {
     return (
       <Container className="py-5 text-center">
         <Spinner animation="border" variant="danger" />
-        <p className="mt-2 text-muted">Verifying your role from database...</p>
+        <p className="mt-2 text-muted">Fetching your official role...</p>
       </Container>
     );
   }
@@ -55,9 +55,9 @@ const UserDashboard = () => {
               <h4 className="fw-bold">{userName || 'User'}</h4>
               <p className="text-muted small">{userEmail}</p>
               
-              {/* Displays the dynamic role fetched from DB */}
               <Badge bg={dbUser?.user_type?.toLowerCase() === 'admin' ? 'danger' : 'primary'} className="px-3 py-2">
-                {dbUser?.user_type ? dbUser.user_type.toUpperCase() : 'EMPLOYEE'}
+                {/* Shows ONLY the role from the DB */}
+                {dbUser?.user_type ? dbUser.user_type.toUpperCase() : "NO ROLE ASSIGNED"}
               </Badge>
             </Card.Body>
           </Card>
@@ -70,9 +70,10 @@ const UserDashboard = () => {
             </h5>
             <p className="text-muted">
               Welcome to the LIZZA Facility Management portal. Your current access level is 
-              set to <strong>{dbUser?.user_type ? dbUser.user_type.toUpperCase() : 'EMPLOYEE'}</strong>.
+              set to <strong>{dbUser?.user_type ? dbUser.user_type.toUpperCase() : "PENDING VERIFICATION"}</strong>.
             </p>
             
+            {/* Navigational alert if DB confirms user is admin */}
             {dbUser?.user_type?.toLowerCase() === 'admin' && (
               <Alert variant="info" className="mt-3 border-0 shadow-sm">
                 <AlertCircle size={18} className="me-2" />
