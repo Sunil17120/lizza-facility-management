@@ -58,3 +58,4 @@ const AdminDashboard = () => {
     </Container>
   );
 };
+export default AdminDashboard;
