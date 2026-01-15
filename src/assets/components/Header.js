@@ -47,7 +47,7 @@ const Header = () => {
             <span className="me-4"><Phone size={14} className="me-1 text-red"/> +91 9731343937</span>
             <span><Mail size={14} className="me-1 text-red"/> infolizza@lizzafacility.com</span>
           </div>
-          <div><Clock size={14} className="me-1 text-red"/> 24/support</div>
+          <div><Clock size={14} className="me-1 text-red"/> 24/7support</div>
         </Container>
       </div>
 
