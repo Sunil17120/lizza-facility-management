@@ -80,13 +80,27 @@ def get_all_employees(admin_email: str, db: Session = Depends(get_db)):
 
 @app.post("/api/admin/update-role")
 def update_user_role(target_email: str, new_type: str, admin_email: str, db: Session = Depends(get_db)):
-    admin = db.query(User).filter(User.email == admin_email, User.user_type == "admin").first()
+    admin = db.query(User).filter(
+        User.email == admin_email.lower().strip(), 
+        User.user_type == "admin"
+    ).first()
+    
     if not admin:
         raise HTTPException(status_code=403, detail="Unauthorized")
     
-    user = db.query(User).filter(User.email == target_email).first()
+    user = db.query(User).filter(User.email == target_email.lower().strip()).first()
     if user:
-        user.user_type = new_type
+        user.user_type = new_type.lower() # Store role in lowercase for consistency
         db.commit()
         return {"message": f"User {target_email} updated to {new_type}"}
     raise HTTPException(status_code=404, detail="User not found")
+@app.get("/api/user/profile")
+def get_user_profile(email: str, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == email.lower().strip()).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {
+        "full_name": user.full_name,
+        "email": user.email,
+        "user_type": user.user_type
+    }
