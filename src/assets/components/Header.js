@@ -1,24 +1,25 @@
 import React, { useState, useEffect } from 'react';
 import { Navbar, Nav, Container, Button, Dropdown } from 'react-bootstrap';
-import { Phone, Mail, Clock, UserCheck, LogOut } from 'lucide-react';
+import { Phone, Mail, Clock, UserCheck, LogOut, Settings } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import logoImg from './logo.png'; 
 
 const Header = () => {
   const navigate = useNavigate();
-  const [userName, setUserName] = useState(null);
+  const [user, setUser] = useState({ name: null, type: null });
 
-  // Check login status on load
+  // Sync state with localStorage on component mount
   useEffect(() => {
     const storedName = localStorage.getItem('userName');
+    const storedType = localStorage.getItem('userType');
     if (storedName) {
-      setUserName(storedName);
+      setUser({ name: storedName, type: storedType });
     }
   }, []);
 
   const handleLogout = () => {
-    localStorage.removeItem('userName');
-    setUserName(null);
+    localStorage.clear(); // Clears name, type, and email
+    setUser({ name: null, type: null });
     navigate('/');
   };
 
@@ -36,7 +37,7 @@ const Header = () => {
 
       <Navbar bg="white" expand="lg" sticky="top" className="shadow-sm py-3">
         <Container>
-          <Navbar.Brand href="/" className="d-flex align-items-center">
+          <Navbar.Brand onClick={() => navigate('/')} style={{cursor: 'pointer'}} className="d-flex align-items-center">
             <img src={logoImg} height="50" className="me-2" alt="Lizza Logo" />
             <div className="lh-1">
               <span className="fw-bold fs-4 text-black">LIZZA</span><br/>
@@ -47,21 +48,25 @@ const Header = () => {
           <Navbar.Toggle aria-controls="main-nav" />
           <Navbar.Collapse id="main-nav">
             <Nav className="ms-auto me-4 fw-semibold custom-nav">
-              <Nav.Link href="/">Home</Nav.Link>
+              <Nav.Link onClick={() => navigate('/')}>Home</Nav.Link>
               <Nav.Link href="#about">About</Nav.Link>
               <Nav.Link href="#services">Services</Nav.Link>
-              <Nav.Link href="#contact">Contact</Nav.Link>
             </Nav>
             
-            {userName ? (
-              // Welcome Message & Logout for Logged-in Users
+            {user.name ? (
               <Dropdown align="end">
                 <Dropdown.Toggle variant="light" className="d-flex align-items-center fw-bold text-red border-0">
                   <UserCheck size={18} className="me-2" />
-                  Welcome, {userName.split(' ')[0]}
+                  Welcome, {user.name.split(' ')[0]}
                 </Dropdown.Toggle>
-                <Dropdown.Menu>
-                  <Dropdown.Item onClick={() => navigate('/dashboard')}>Dashboard</Dropdown.Item>
+                <Dropdown.Menu className="shadow border-0">
+                  {/* Show Admin Panel only if user is admin */}
+                  {user.type === 'admin' && (
+                    <Dropdown.Item onClick={() => navigate('/admin')}>
+                      <Settings size={14} className="me-2" /> Admin Panel
+                    </Dropdown.Item>
+                  )}
+                  <Dropdown.Item onClick={() => navigate('/dashboard')}>My Dashboard</Dropdown.Item>
                   <Dropdown.Divider />
                   <Dropdown.Item onClick={handleLogout} className="text-danger">
                     <LogOut size={14} className="me-2" /> Logout
@@ -69,7 +74,6 @@ const Header = () => {
                 </Dropdown.Menu>
               </Dropdown>
             ) : (
-              // Standard Login Button
               <Button 
                 className="btn-red px-4 py-2 fw-bold shadow-sm"
                 onClick={() => navigate('/auth')}

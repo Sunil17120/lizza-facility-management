@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import 'bootstrap/dist/css/bootstrap.min.css';
 import './App.css';
 import AOS from 'aos';
@@ -11,7 +11,20 @@ import Hero from './assets/components/Hero';
 import About from './assets/components/About';
 import Services from './assets/components/Services';
 import Auth from './assets/components/Auth'; 
+import AdminDashboard from './assets/components/AdminDashboard'; // Ensure you create this file
 import { Container, Row, Col } from 'react-bootstrap';
+
+// Protected Route Component for Admin
+const AdminRoute = ({ children }) => {
+  const userType = localStorage.getItem('userType');
+  const isAuthenticated = localStorage.getItem('userName');
+  
+  // If not an admin, redirect back to home or login
+  if (!isAuthenticated || userType !== 'admin') {
+    return <Navigate to="/" replace />;
+  }
+  return children;
+};
 
 function App() {
   useEffect(() => {
@@ -69,15 +82,7 @@ function App() {
               <About />
               <Services />
 
-              {/* CTA Section */}
-              <section className="py-5 bg-black text-white text-center position-relative">
-                <Container data-aos="zoom-out-up">
-                  <h2 className="fw-bold mb-4">Ready to Secure Your Facility?</h2>
-                  <p className="mb-4 opacity-75">Join our 100+ satisfied corporate clients today.</p>
-                  <button className="btn btn-red btn-lg px-5 fw-bold pulse-infinite">Contact Us Now</button>
-                </Container>
-              </section>
-
+              {/* Footer Section */}
               <footer className="bg-black text-white py-4 text-center border-top border-secondary">
                 <Container>
                   <p className="mb-0 small opacity-50">
@@ -90,6 +95,17 @@ function App() {
 
           {/* Login/Signup Route */}
           <Route path="/auth" element={<Auth />} />
+
+          {/* Admin Dashboard - Protected */}
+          <Route 
+            path="/admin" 
+            element={
+              <AdminRoute>
+                <Header />
+                <AdminDashboard />
+              </AdminRoute>
+            } 
+          />
         </Routes>
       </div>
     </Router>

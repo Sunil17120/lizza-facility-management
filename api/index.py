@@ -67,3 +67,25 @@ def login(data: AuthRequest, db: Session = Depends(get_db)):
         return {"message": "Login successful", "user": user.full_name}
     
     raise HTTPException(status_code=401, detail="Invalid credentials")
+@app.get("/api/admin/employees")
+def get_all_employees(admin_email: str, db: Session = Depends(get_db)):
+    # Verify the requester is an admin
+    admin = db.query(User).filter(User.email == admin_email, User.user_type == "admin").first()
+    if not admin:
+        raise HTTPException(status_code=403, detail="Access denied. Admin only.")
+    
+    employees = db.query(User).all()
+    return employees
+
+@app.post("/api/admin/update-role")
+def update_user_role(target_email: str, new_type: str, admin_email: str, db: Session = Depends(get_db)):
+    admin = db.query(User).filter(User.email == admin_email, User.user_type == "admin").first()
+    if not admin:
+        raise HTTPException(status_code=403, detail="Unauthorized")
+    
+    user = db.query(User).filter(User.email == target_email).first()
+    if user:
+        user.user_type = new_type
+        db.commit()
+        return {"message": f"User {target_email} updated to {new_type}"}
+    raise HTTPException(status_code=404, detail="User not found")

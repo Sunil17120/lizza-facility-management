@@ -55,7 +55,9 @@ const Auth = () => {
       if (response.ok) {
         if (isLogin) {
           // Store user name for the Header
-          localStorage.setItem('userName', data.user); 
+          localStorage.setItem('userName', data.user);
+          localStorage.setItem('userType', data.user_type); // Add this line
+          localStorage.setItem('userEmail', formData.email); // Add this line
           navigate('/'); 
         } else {
           alert("Registration successful! Please login.");

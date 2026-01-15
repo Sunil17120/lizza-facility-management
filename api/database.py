@@ -27,6 +27,8 @@ class User(Base):
     email = Column(String, unique=True, index=True)
     password = Column(String) 
     salt = Column(String)     
+    
+    user_type = Column(String, server_default="employee", default="employee") 
     created_at = Column(DateTime, default=datetime.utcnow)
 
 def init_db():
