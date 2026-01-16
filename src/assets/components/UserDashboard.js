@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react'; // Added useCallback
 import { Container, Row, Col, Card, Spinner, Button, Alert } from 'react-bootstrap';
 import { Clock, ShieldCheck, MapPin, Navigation } from 'lucide-react';
 
@@ -20,45 +20,50 @@ const UserDashboard = () => {
     }
   }, [userEmail]);
 
-  // Unified function to get and send location
-  const syncLocation = (isManual = false) => {
+  // FIX: Wrap syncLocation in useCallback to satisfy ESLint
+  const syncLocation = useCallback((isManual = false) => {
     if (!navigator.geolocation) {
       setStatus({ type: 'danger', msg: 'GPS not supported by this browser.' });
       return;
     }
 
-    setStatus({ type: 'warning', msg: 'Syncing GPS...' });
+    if (isManual) setStatus({ type: 'warning', msg: 'Syncing GPS...' });
 
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         const { latitude, longitude } = pos.coords;
         const now = new Date().toTimeString().slice(0, 5);
 
-        // Check shift hours
+        // Check shift hours logic
         if (dbUser && (now >= dbUser.shift_start && now <= dbUser.shift_end)) {
           fetch(`/api/user/update-location?email=${userEmail}&lat=${latitude}&lon=${longitude}`, { method: 'POST' })
             .then(res => res.json())
-            .then(data => {
+            .then(() => {
               setStatus({ type: 'success', msg: `Live Tracking Active (Last sync: ${now})` });
-            });
+            })
+            .catch(() => setStatus({ type: 'danger', msg: 'Server sync failed.' }));
         } else if (isManual) {
           setStatus({ type: 'info', msg: `GPS Working, but you are currently Off-Shift.` });
         }
       },
       (err) => {
-        setStatus({ type: 'danger', msg: 'Location blocked. Please allow GPS in browser settings.' });
-        if (isManual) alert("Error: Please enable Location/GPS on your phone.");
+        setStatus({ type: 'danger', msg: 'Location blocked. Please allow GPS in settings.' });
+        if (isManual) alert("Please enable Location/GPS permissions in your browser settings.");
       },
       { enableHighAccuracy: true, timeout: 10000 }
     );
-  };
+  }, [dbUser, userEmail]);
 
   useEffect(() => {
     if (!dbUser) return;
+    
+    // Initial sync
+    syncLocation(false);
+    
     // Auto-sync every 2 minutes
     const interval = setInterval(() => syncLocation(false), 120000);
     return () => clearInterval(interval);
-  }, [dbUser, userEmail]);
+  }, [dbUser, syncLocation]); // syncLocation is now a stable dependency
 
   if (loading) return <div className="text-center py-5"><Spinner animation="border" variant="danger" /></div>;
 
@@ -73,7 +78,7 @@ const UserDashboard = () => {
             </div>
             <Card.Body className="p-5 text-center">
               
-              <Alert variant={status.type} className="mb-4 small fw-bold py-2">
+              <Alert variant={status.type} className="mb-4 small fw-bold py-2 text-start">
                 <Navigation size={14} className="me-2" /> {status.msg}
               </Alert>
 
@@ -90,16 +95,16 @@ const UserDashboard = () => {
               </div>
 
               <Button 
-                variant="outline-danger" 
-                className="mb-4 fw-bold px-4"
+                variant="danger" 
+                className="mb-4 fw-bold px-4 shadow-sm"
                 onClick={() => syncLocation(true)}
               >
-                <MapPin size={18} className="me-2" /> Start Live Tracking / Check-In
+                <MapPin size={18} className="me-2" /> Manual Check-In
               </Button>
 
               <div className="bg-light p-3 rounded-3 d-flex align-items-center justify-content-center gap-2 mb-4">
                 <Clock className="text-danger" size={20} />
-                <span className="fw-bold">Policy: Active tracking during duty hours only.</span>
+                <span className="fw-bold">Tracking active during duty hours.</span>
               </div>
 
               <div className="text-success d-flex align-items-center justify-content-center gap-1 small">
