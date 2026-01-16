@@ -26,12 +26,11 @@ const AdminRoute = ({ children }) => {
       return;
     }
 
-    // FIX: Call the profile endpoint instead of the employee list
-    // The employee list requires admin status to even look at it, creating a loop
+    // FIX: Use the individual profile endpoint instead of the full admin list
     fetch(`/api/user/profile?email=${userEmail}`)
       .then(res => res.json())
       .then(data => {
-        // If data is returned and user_type is 'admin', allow access
+        // Verify user_type status from DB result
         if (data && data.user_type && data.user_type.toLowerCase() === 'admin') {
           setIsAdmin(true);
         } else {

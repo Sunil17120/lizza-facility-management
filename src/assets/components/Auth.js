@@ -51,9 +51,9 @@ const Auth = () => {
         }),
       });
       
-      // FIX: Check if the response is JSON before parsing to prevent "Unexpected token A" error
+      // FIX: Check for JSON content-type before parsing
       const contentType = response.headers.get("content-type");
-      if (contentType && contentType.indexOf("application/json") !== -1) {
+      if (contentType && contentType.includes("application/json")) {
         const data = await response.json();
         if (response.ok) {
           if (isLogin) {
@@ -67,17 +67,17 @@ const Auth = () => {
             setFormData({ ...formData, password: '', confirmPassword: '' });
           }
         } else {
-          alert(data.detail || "Error occurred");
+          alert(data.detail || "Authentication failed");
         }
       } else {
-        // If server crashes with 500, it returns HTML
+        // Handle HTML error pages (Status 500) gracefully
         const errorText = await response.text();
         console.error("Server Error Response:", errorText);
-        alert("Server Error: The database may not be updated. Please check Vercel logs.");
+        alert("Server Error: Please check backend logs in Vercel.");
       }
     } catch (error) {
       console.error("Auth Error:", error);
-      alert("Connection error. Please check your internet or server status.");
+      alert("Connection error. Please try again later.");
     }
   };
 
