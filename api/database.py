@@ -13,7 +13,7 @@ class User(Base):
     # Add shift fields
     shift_start = Column(String, default="09:00")
     shift_end = Column(String, default="18:00")
-    created_at = Column(DateTime, default=DateTime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 class EmployeeLocation(Base):
     __tablename__ = "employee_locations"
@@ -21,4 +21,4 @@ class EmployeeLocation(Base):
     user_id = Column(Integer, ForeignKey("users.id"))
     latitude = Column(String)
     longitude = Column(String)
-    updated_at = Column(DateTime, default=DateTime.utcnow, onupdate=DateTime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
