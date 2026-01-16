@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { Container, Row, Col, Card, Badge, Spinner } from 'react-bootstrap';
-import { Clock, MapPin, ShieldCheck } from 'lucide-react';
+// Removed 'Badge' from the import below
+import { Container, Row, Col, Card, Spinner } from 'react-bootstrap';
+// Removed 'MapPin' from the import below
+import { Clock, ShieldCheck } from 'lucide-react';
 
 const UserDashboard = () => {
   const [dbUser, setDbUser] = useState(null);
@@ -19,7 +21,7 @@ const UserDashboard = () => {
     }
   }, [userEmail]);
 
-  // Location Tracking logic remains untouched
+  // Tracking logic remains active in the background
   useEffect(() => {
     const sendLocation = () => {
       if ("geolocation" in navigator && userEmail && dbUser) {
