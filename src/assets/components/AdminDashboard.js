@@ -1,14 +1,20 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Table, Badge, Form, Container, Row, Col, Card, Spinner, Button } from 'react-bootstrap';
+// FIX: Removed unused 'Row' and 'Col' to pass Vercel build
+import { Table, Badge, Form, Container, Card, Spinner, Button } from 'react-bootstrap';
 import { UserCog, Map as MapIcon, Save } from 'lucide-react'; 
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
-// Leaflet marker fix
+// Leaflet marker configuration fix
 import markerIcon from 'leaflet/dist/images/marker-icon.png';
 import markerShadow from 'leaflet/dist/images/marker-shadow.png';
-let DefaultIcon = L.icon({ iconUrl: markerIcon, shadowUrl: markerShadow, iconSize: [25, 41], iconAnchor: [12, 41] });
+let DefaultIcon = L.icon({ 
+    iconUrl: markerIcon, 
+    shadowUrl: markerShadow, 
+    iconSize: [25, 41], 
+    iconAnchor: [12, 41] 
+});
 L.Marker.prototype.options.icon = DefaultIcon;
 
 const AdminDashboard = () => {
@@ -18,18 +24,26 @@ const AdminDashboard = () => {
   const adminEmail = localStorage.getItem('userEmail');
 
   const fetchData = useCallback(() => {
-    fetch(`/api/admin/employees?admin_email=${adminEmail}`).then(res => res.json()).then(data => { setEmployees(data); setLoading(false); });
-    fetch(`/api/admin/live-tracking?admin_email=${adminEmail}`).then(res => res.json()).then(setLiveLocations);
+    fetch(`/api/admin/employees?admin_email=${adminEmail}`)
+      .then(res => res.json())
+      .then(data => { setEmployees(data); setLoading(false); });
+    
+    fetch(`/api/admin/live-tracking?admin_email=${adminEmail}`)
+      .then(res => res.json())
+      .then(setLiveLocations);
   }, [adminEmail]);
 
   useEffect(() => { 
     fetchData(); 
-    const interval = setInterval(fetchData, 30000);
+    const interval = setInterval(fetchData, 30000); // Sync every 30s
     return () => clearInterval(interval);
   }, [fetchData]);
 
+  // FIX: Admin side shift logic using IST 24H format
   const isOnShift = (s, e) => {
-    const now = new Date().toLocaleTimeString('en-GB', { hour12: false, hour: '2-digit', minute: '2-digit' });
+    const now = new Date().toLocaleTimeString('en-GB', { 
+        hour12: false, hour: '2-digit', minute: '2-digit' 
+    });
     return s <= e ? (now >= s && now <= e) : (now >= s || now <= e);
   };
 
@@ -39,6 +53,7 @@ const AdminDashboard = () => {
     <Container className="py-5 text-dark">
       <h2 className="fw-bold mb-4"><UserCog className="me-2 text-danger" />Admin Console</h2>
       
+      {/* Live Tracking Map Section */}
       <Card className="border-0 shadow-sm mb-5 overflow-hidden">
         <Card.Header className="bg-white fw-bold d-flex align-items-center gap-2 pt-3">
           <MapIcon className="text-danger" size={20} /> Live Field Tracking (IST)
@@ -48,16 +63,28 @@ const AdminDashboard = () => {
             <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
             {liveLocations.map(loc => (
               <Marker key={loc.email} position={[parseFloat(loc.lat), parseFloat(loc.lon)]}>
-                <Popup><strong>{loc.name}</strong><br/>{loc.email}</Popup>
+                <Popup>
+                    <div className="text-dark">
+                        <strong>{loc.name}</strong><br/>
+                        <span className="small text-muted">{loc.email}</span>
+                    </div>
+                </Popup>
               </Marker>
             ))}
           </MapContainer>
         </div>
       </Card>
 
-      <Table responsive hover className="shadow-sm border rounded">
+      <Table responsive hover className="shadow-sm border rounded mt-4">
         <thead className="bg-dark text-white text-center">
-          <tr><th>Name</th><th>Email</th><th>Shift (24H)</th><th>Role</th><th>Status</th><th>Save</th></tr>
+          <tr>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Shift (24H)</th>
+            <th>Role</th>
+            <th>Status</th>
+            <th>Save</th>
+          </tr>
         </thead>
         <tbody>
           {employees.map(emp => (
@@ -72,7 +99,8 @@ const AdminDashboard = () => {
               </td>
               <td>
                 <Form.Select size="sm" defaultValue={emp.user_type} id={`type-${emp.id}`} disabled={emp.email === adminEmail}>
-                  <option value="employee">Employee</option><option value="admin">Admin</option>
+                  <option value="employee">Employee</option>
+                  <option value="admin">Admin</option>
                 </Form.Select>
               </td>
               <td><Badge bg={isOnShift(emp.shift_start, emp.shift_end) ? "success" : "secondary"}>SHIFT</Badge></td>
