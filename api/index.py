@@ -99,6 +99,7 @@ def update_user_role(target_email: str, new_type: str, admin_email: str, db: Ses
         return {"message": f"User {target_email} updated to {new_type}"}
     raise HTTPException(status_code=404, detail="User not found")
 @app.get("/api/user/profile")
+@app.get("/api/user/profile")
 def get_user_profile(email: str, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == email.lower().strip()).first()
     if not user:
@@ -106,7 +107,9 @@ def get_user_profile(email: str, db: Session = Depends(get_db)):
     return {
         "full_name": user.full_name,
         "email": user.email,
-        "user_type": user.user_type
+        "user_type": user.user_type,
+        "shift_start": user.shift_start,  # Add this
+        "shift_end": user.shift_end       # Add this
     }
 @app.post("/api/user/update-location")
 def update_location(email: str, lat: str, lon: str, db: Session = Depends(get_db)):
