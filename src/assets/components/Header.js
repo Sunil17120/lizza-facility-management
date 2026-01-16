@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Navbar, Nav, Container, Button, Dropdown, Spinner } from 'react-bootstrap';
-import { Phone, Mail, Clock, UserCheck, LogOut, Settings } from 'lucide-react';
+import { Phone, Mail, Clock, UserCheck, LogOut, Settings, LayoutDashboard } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import logoImg from './logo.png'; 
 
@@ -18,12 +18,14 @@ const Header = () => {
       setUser({ name: storedName, email: storedEmail });
       setLoading(true);
       
-      // Fetch role from DB instead of localStorage
-      fetch(`/api/admin/employees?admin_email=${storedEmail}`)
+      // FIX: Use the profile endpoint instead of the full admin list
+      // This allows both employees and admins to verify their role safely
+      fetch(`/api/user/profile?email=${storedEmail}`)
         .then(res => res.json())
         .then(data => {
-          const currentUser = data.find(emp => emp.email === storedEmail);
-          if (currentUser) setDbRole(currentUser.user_type.toLowerCase());
+          if (data && data.user_type) {
+            setDbRole(data.user_type.toLowerCase());
+          }
           setLoading(false);
         })
         .catch(() => {
@@ -76,13 +78,18 @@ const Header = () => {
                   {loading ? <Spinner animation="border" size="sm" className="me-2"/> : `Hi, ${user.name.split(' ')[0]}`}
                 </Dropdown.Toggle>
                 <Dropdown.Menu className="shadow border-0">
-                  {/* DYNAMIC CHECK: Only show if DB confirms admin */}
+                  {/* Show Admin Panel only if DB confirms admin status */}
                   {dbRole === 'admin' && (
                     <Dropdown.Item onClick={() => navigate('/admin')}>
-                      <Settings size={14} className="me-2" /> Admin Panel
+                      <Settings size={14} className="me-2 text-danger" /> Admin Panel
                     </Dropdown.Item>
                   )}
-                  <Dropdown.Item onClick={() => navigate('/dashboard')}>My Dashboard</Dropdown.Item>
+                  
+                  {/* Dashboard link for all logged-in users */}
+                  <Dropdown.Item onClick={() => navigate('/dashboard')}>
+                    <LayoutDashboard size={14} className="me-2" /> My Dashboard
+                  </Dropdown.Item>
+                  
                   <Dropdown.Divider />
                   <Dropdown.Item onClick={handleLogout} className="text-danger">
                     <LogOut size={14} className="me-2" /> Logout
