@@ -26,17 +26,13 @@ const AdminRoute = ({ children }) => {
       return;
     }
 
-    // Fetching from your index.py API endpoint
-    fetch(`/api/admin/employees?admin_email=${userEmail}`)
+    // FIX: Call the profile endpoint instead of the employee list
+    // The employee list requires admin status to even look at it, creating a loop
+    fetch(`/api/user/profile?email=${userEmail}`)
       .then(res => res.json())
       .then(data => {
-        // FIX: Case-insensitive email matching to find the current user in the DB list
-        const currentUser = data.find(emp => 
-          emp.email.toLowerCase().trim() === userEmail.toLowerCase().trim()
-        );
-        
-        // Check if the database explicitly says 'admin'
-        if (currentUser && currentUser.user_type.toLowerCase() === 'admin') {
+        // If data is returned and user_type is 'admin', allow access
+        if (data && data.user_type && data.user_type.toLowerCase() === 'admin') {
           setIsAdmin(true);
         } else {
           setIsAdmin(false);
@@ -69,12 +65,9 @@ function App() {
   return (
     <Router>
       <div className="App d-flex flex-column min-vh-100">
-        {/* Header remains outside so it shows on every page */}
         <Header />
-
         <div className="flex-grow-1">
           <Routes>
-            {/* Landing Page Content */}
             <Route path="/" element={
               <>
                 <Hero />
@@ -82,10 +75,7 @@ function App() {
                 <Services />
               </>
             } />
-
             <Route path="/auth" element={<Auth />} />
-
-            {/* Normal User Dashboard - Now always authenticated */}
             <Route 
               path="/dashboard" 
               element={
@@ -94,8 +84,6 @@ function App() {
                 </PrivateRoute>
               } 
             />
-
-            {/* Admin Dashboard - Database verified */}
             <Route 
               path="/admin" 
               element={
@@ -106,8 +94,6 @@ function App() {
             />
           </Routes>
         </div>
-
-        {/* Footer remains outside so it shows on every page */}
         <Footer />
       </div>
     </Router>

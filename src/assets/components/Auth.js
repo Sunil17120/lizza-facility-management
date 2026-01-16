@@ -51,29 +51,33 @@ const Auth = () => {
         }),
       });
       
-      const data = await response.json();
-      if (response.ok) {
-        if (isLogin) {
-          // 1. CLEAR all old data to prevent "UNDEFINED" or stale role issues
-          localStorage.clear();
-
-          // 2. STORE only identity markers. We will fetch 'user_type' from DB in App.js
-          localStorage.setItem('userName', data.user);
-          localStorage.setItem('userEmail', formData.email); 
-
-          // 3. REDIRECT to dashboard. 
-          // The PrivateRoute/AdminRoute in App.js will now verify the DB role.
-          navigate('/dashboard'); 
+      // FIX: Check if the response is JSON before parsing to prevent "Unexpected token A" error
+      const contentType = response.headers.get("content-type");
+      if (contentType && contentType.indexOf("application/json") !== -1) {
+        const data = await response.json();
+        if (response.ok) {
+          if (isLogin) {
+            localStorage.clear();
+            localStorage.setItem('userName', data.user);
+            localStorage.setItem('userEmail', formData.email); 
+            navigate('/dashboard'); 
+          } else {
+            alert("Registration successful! Please login.");
+            setIsLogin(true); 
+            setFormData({ ...formData, password: '', confirmPassword: '' });
+          }
         } else {
-          alert("Registration successful! Please login.");
-          setIsLogin(true); 
-          setFormData({ ...formData, password: '', confirmPassword: '' });
+          alert(data.detail || "Error occurred");
         }
       } else {
-        alert(data.detail || "Error occurred");
+        // If server crashes with 500, it returns HTML
+        const errorText = await response.text();
+        console.error("Server Error Response:", errorText);
+        alert("Server Error: The database may not be updated. Please check Vercel logs.");
       }
     } catch (error) {
       console.error("Auth Error:", error);
+      alert("Connection error. Please check your internet or server status.");
     }
   };
 
