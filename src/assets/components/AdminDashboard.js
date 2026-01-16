@@ -75,9 +75,11 @@ const AdminDashboard = () => {
   };
 
   const isOnShift = (s, e) => {
-    const now = new Date().toLocaleTimeString('en-GB', { hour12: false, hour: '2-digit', minute: '2-digit' });
-    return s <= e ? (now >= s && now <= e) : (now >= s || now <= e);
-  };
+  const now = new Date().toLocaleTimeString('en-GB', { hour12: false, hour: '2-digit', minute: '2-digit' });
+  // If shift ends at 00:00, treat it as 23:59 for clearer comparison
+  const endTime = e === "00:00" ? "23:59" : e;
+  return s <= endTime ? (now >= s && now <= endTime) : (now >= s || now <= endTime);
+};
 
   if (loading) return <div className="text-center py-5"><Spinner animation="border" variant="danger" /></div>;
 
