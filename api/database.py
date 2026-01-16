@@ -33,3 +33,7 @@ class EmployeeLocation(Base):
     latitude = Column(String)
     longitude = Column(String)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+# 3. FIX: Add this function back so index.py can import it
+def init_db():
+    Base.metadata.create_all(bind=engine)
