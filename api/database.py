@@ -1,7 +1,15 @@
 # database.py updates
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey
 from sqlalchemy.orm import relationship
+# 1. Setup the Database URL (Ensure this is in your Vercel Env Vars)
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
+# 2. Create the Engine and Session
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+# 3. DEFINE BASE (This is what was missing)
+Base = declarative_base()
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
