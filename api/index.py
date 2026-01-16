@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from datetime import datetime
 import redis
+from datetime import datetime, timedelta
 # Improved import logic for Vercel's directory structure
 try:
     from .database import SessionLocal, User, init_db
