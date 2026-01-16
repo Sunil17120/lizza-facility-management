@@ -10,9 +10,11 @@ try:
     from .database import SessionLocal, User, init_db
 except ImportError:
     from database import SessionLocal, User, init_db
-
+now_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
+now = now_ist.strftime("%H:%M")
 app = FastAPI()
-r= os.environ.get("REDIS_URL") or os.environ.get("KV_URL")
+redis_url = os.environ.get("REDIS_URL") or os.environ.get("KV_URL")
+r = redis.from_url(redis_url, decode_responses=True)
 # Run table creation once during the serverless function "warm start"
 init_db()
 
