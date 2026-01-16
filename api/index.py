@@ -156,17 +156,34 @@ def update_employee(target_email: str, admin_email: str, data: UpdateUserRequest
 
 @app.get("/api/admin/live-tracking")
 def get_live_tracking(admin_email: str, db: Session = Depends(get_db)):
+    # Verify Admin status
     admin = db.query(User).filter(User.email == admin_email.lower().strip(), User.user_type == "admin").first()
-    if not admin: raise HTTPException(status_code=403, detail="Unauthorized")
+    if not admin: 
+        raise HTTPException(status_code=403, detail="Unauthorized")
+    
     active_users = []
-    keys = r.keys("loc:*")
+    # 1. Get ALL keys starting with 'loc:' from Redis
+    keys = r.keys("loc:*") 
+    
     for key in keys:
+        # 2. Extract email from the key (format is loc:email@example.com)
         key_str = key.decode() if isinstance(key, bytes) else key
         email = key_str.split(":")[1]
+        
+        # 3. Get coordinates and decode if necessary
         raw_val = r.get(key_str)
         val_str = raw_val.decode() if isinstance(raw_val, bytes) else raw_val
         coords = val_str.split(",")
+        
+        # 4. Fetch user details to get the name for the map popup
         user = db.query(User).filter(User.email == email).first()
         if user:
-            active_users.append({"name": user.full_name, "email": email, "lat": coords[0], "lon": coords[1]})
+            active_users.append({
+                "name": user.full_name,
+                "email": email,
+                "lat": coords[0],
+                "lon": coords[1]
+            })
+            
+    # Returns a list of ALL on-duty employees currently in Redis
     return active_users

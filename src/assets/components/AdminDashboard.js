@@ -90,20 +90,28 @@ const AdminDashboard = () => {
           <MapIcon className="text-danger" size={20} /> Live Tracking Area (IST)
         </Card.Header>
         <div style={{ height: '450px', width: '100%' }}>
-          <MapContainer center={[20.5937, 78.9629]} zoom={5} style={{ height: '100%' }}>
-            <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-            <RecenterMap locations={liveLocations} />
-            {liveLocations.map(loc => (
-              <Marker key={loc.email} position={[parseFloat(loc.lat), parseFloat(loc.lon)]}>
-                <Popup>
-                    <div className="text-dark">
-                        <strong>{loc.name}</strong><br/>
-                        <span className="small text-muted">{loc.email}</span>
-                    </div>
-                </Popup>
-              </Marker>
-            ))}
-          </MapContainer>
+        <MapContainer center={[20.5937, 78.9629]} zoom={5} style={{ height: '100%' }}>
+  <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+  
+  {/* This component calculates a box containing ALL active markers */}
+  <RecenterMap locations={liveLocations} />
+  
+  {/* Loop through every employee returned by the backend */}
+  {liveLocations.map((loc) => (
+    <Marker 
+      key={loc.email} 
+      position={[parseFloat(loc.lat), parseFloat(loc.lon)]}
+    >
+      <Popup>
+          <div className="text-dark">
+              <strong>{loc.name}</strong><br/>
+              <span className="small text-muted">{loc.email}</span>
+              <div className="mt-1 text-success small">● Active Now</div>
+          </div>
+      </Popup>
+    </Marker>
+  ))}
+</MapContainer>
         </div>
       </Card>
 
