@@ -3,7 +3,8 @@ import os
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-
+from datetime import datetime
+import redis
 # Improved import logic for Vercel's directory structure
 try:
     from .database import SessionLocal, User, init_db
@@ -11,7 +12,7 @@ except ImportError:
     from database import SessionLocal, User, init_db
 
 app = FastAPI()
-
+r= os.environ.get("REDIS_URL") or os.environ.get("KV_URL")
 # Run table creation once during the serverless function "warm start"
 init_db()
 
@@ -104,3 +105,47 @@ def get_user_profile(email: str, db: Session = Depends(get_db)):
         "email": user.email,
         "user_type": user.user_type
     }
+@app.post("/api/user/update-location")
+def update_location(email: str, lat: str, lon: str, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == email.lower().strip()).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Check if currently in shift hours
+    now = datetime.now().strftime("%H:%M")
+    is_on_shift = user.shift_start <= now <= user.shift_end
+    
+    if is_on_shift:
+        # Update Redis for real-time tracking (expires in 5 mins)
+        r.setex(f"loc:{user.email}", 300, f"{lat},{lon}")
+        
+        # Update Database for persistence
+        loc = db.query(EmployeeLocation).filter(EmployeeLocation.user_id == user.id).first()
+        if not loc:
+            loc = EmployeeLocation(user_id=user.id, latitude=lat, longitude=lon)
+            db.add(loc)
+        else:
+            loc.latitude = lat
+            loc.longitude = lon
+        db.commit()
+    return {"on_shift": is_on_shift}
+
+@app.get("/api/admin/live-tracking")
+def get_live_tracking(admin_email: str, db: Session = Depends(get_db)):
+    # Verify Admin
+    admin = db.query(User).filter(User.email == admin_email, User.user_type == "admin").first()
+    if not admin: raise HTTPException(status_code=403)
+    
+    active_users = []
+    keys = r.keys("loc:*")
+    for key in keys:
+        email = key.decode().split(":")[1]
+        coords = r.get(key).decode().split(",")
+        user = db.query(User).filter(User.email == email).first()
+        active_users.append({
+            "name": user.full_name,
+            "email": email,
+            "lat": coords[0],
+            "lon": coords[1]
+        })
+    return active_users
