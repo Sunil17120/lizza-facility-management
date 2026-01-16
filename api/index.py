@@ -171,10 +171,17 @@ def get_live_tracking(admin_email: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=403, detail="Unauthorized")
     
     active_users = []
+    # Fetch all location keys from Redis
     keys = r.keys("loc:*")
     for key in keys:
-        email = key.split(":")[1]
-        coords = r.get(key).split(",")
+        # FIX: Ensure key is a string for splitting
+        key_str = key.decode() if isinstance(key, bytes) else key
+        email = key_str.split(":")[1]
+        
+        raw_val = r.get(key_str)
+        val_str = raw_val.decode() if isinstance(raw_val, bytes) else raw_val
+        coords = val_str.split(",")
+        
         user = db.query(User).filter(User.email == email).first()
         if user:
             active_users.append({
