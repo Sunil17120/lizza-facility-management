@@ -39,8 +39,8 @@ def get_db():
 # --- AUTHENTICATION ---
 @app.post("/api/signup")
 def signup(data: AuthRequest, db: Session = Depends(get_db)):
-    def signup(data: AuthRequest, db: Session = Depends(get_db)):
-    """Handles new user registration with secure hashing."""
+    
+   
     existing_user = db.query(User).filter(User.email == data.email.lower().strip()).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -61,8 +61,7 @@ def signup(data: AuthRequest, db: Session = Depends(get_db)):
 
 @app.post("/api/login")
 def login(data: AuthRequest, db: Session = Depends(get_db)):
-   def login(data: AuthRequest, db: Session = Depends(get_db)):
-    """Verifies credentials and returns user details."""
+  
     user = db.query(User).filter(User.email == data.email.lower().strip()).first()
     if not user:
         raise HTTPException(status_code=401, detail="Invalid email or password")
