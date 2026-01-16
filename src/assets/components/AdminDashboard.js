@@ -39,7 +39,7 @@ const AdminDashboard = () => {
   }, [fetchData]);
 
   const handleUpdate = async (email, updatedData) => {
-    const res = await fetch(`/api/admin/update-employee?target_email=${email}&admin_email=${adminEmail}`, {
+    const res = await fetch(`/api/admin/update-role?target_email=${email}&admin_email=${adminEmail}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updatedData)
