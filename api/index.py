@@ -17,7 +17,7 @@ r = redis.from_url(redis_url, decode_responses=True)
 init_db()
 
 PEPPER = os.environ.get("SECRET_PEPPER", "change_me_in_vercel_settings")
-
+app = FastAPI()
 class AuthRequest(BaseModel):
     full_name: str = None
     email: str
@@ -35,6 +35,17 @@ def get_db():
         yield db
     finally:
         db.close()
+def generate_derived_salt(email: str, name: str):
+    """Generates a unique salt based on user identity."""
+    identity_string = (email.lower() + name.lower()).encode()
+    return hashlib.sha256(identity_string).hexdigest()[:16]
+
+def get_secure_hash(password: str, salt: str):
+    """Hashes password with salt and pepper."""
+    # Ensure PEPPER is defined or fetched from env
+    PEPPER = os.environ.get("SECRET_PEPPER", "change_me_in_vercel_settings")
+    final_payload = password + salt + PEPPER
+    return hashlib.sha256(final_payload.encode()).hexdigest()
 
 # --- AUTHENTICATION ---
 @app.post("/api/signup")
