@@ -1,6 +1,9 @@
-# database.py updates
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey
-from sqlalchemy.orm import relationship
+import os  # FIX: Added missing import
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, ForeignKey
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+from datetime import datetime
+
 # 1. Setup the Database URL (Ensure this is in your Vercel Env Vars)
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
