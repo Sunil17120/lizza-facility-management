@@ -39,13 +39,43 @@ def get_db():
 # --- AUTHENTICATION ---
 @app.post("/api/signup")
 def signup(data: AuthRequest, db: Session = Depends(get_db)):
-    # ... (Keep existing signup logic) ...
-    return {"message": "Account created"}
+    def signup(data: AuthRequest, db: Session = Depends(get_db)):
+    """Handles new user registration with secure hashing."""
+    existing_user = db.query(User).filter(User.email == data.email.lower().strip()).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    
+    salt = generate_derived_salt(data.email, data.full_name)
+    hashed_password = get_secure_hash(data.password, salt)
+    
+    new_user = User(
+        full_name=data.full_name,
+        email=data.email.lower().strip(),
+        password=hashed_password,
+        salt=salt,
+        user_type="employee"  # Default role
+    )
+    db.add(new_user)
+    db.commit()
+    return {"message": "Account created successfully"}
 
 @app.post("/api/login")
 def login(data: AuthRequest, db: Session = Depends(get_db)):
-    # ... (Keep existing login logic) ...
-    return {"message": "Login successful"}
+   def login(data: AuthRequest, db: Session = Depends(get_db)):
+    """Verifies credentials and returns user details."""
+    user = db.query(User).filter(User.email == data.email.lower().strip()).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    
+    salt = generate_derived_salt(user.email, user.full_name)
+    if get_secure_hash(data.password, salt) != user.password:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    
+    return {
+        "message": "Login successful",
+        "user": user.full_name,
+        "user_type": user.user_type
+    }
 
 # --- USER & TRACKING ---
 @app.get("/api/user/profile")
