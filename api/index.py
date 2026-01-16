@@ -70,22 +70,30 @@ def signup(data: AuthRequest, db: Session = Depends(get_db)):
     db.commit()
     return {"message": "Account created successfully"}
 
+
+  
 @app.post("/api/login")
 def login(data: AuthRequest, db: Session = Depends(get_db)):
-  
+    # 1. Find user by email (cleaned)
     user = db.query(User).filter(User.email == data.email.lower().strip()).first()
+    
     if not user:
         raise HTTPException(status_code=401, detail="Invalid email or password")
     
-    salt = generate_derived_salt(user.email, user.full_name)
-    if get_secure_hash(data.password, salt) != user.password:
-        raise HTTPException(status_code=401, detail="Invalid email or password")
+    # 2. Use the salt stored in the database for THIS user
+    # If this field is empty in your DB, login will fail.
+    salt = user.salt 
     
-    return {
-        "message": "Login successful",
-        "user": user.full_name,
-        "user_type": user.user_type
-    }
+    # 3. Hash the incoming password and compare
+    if get_secure_hash(data.password, salt) == user.password:
+        return {
+            "message": "Login successful",
+            "user": user.full_name,
+            "user_type": user.user_type
+        }
+    
+    # 4. If hash doesn't match, return 401
+    raise HTTPException(status_code=401, detail="Invalid email or password")
 
 # --- USER & TRACKING ---
 @app.get("/api/user/profile")
