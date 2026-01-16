@@ -45,6 +45,8 @@ const Header = () => {
         <Navbar.Collapse id="main-nav">
           <Nav className="ms-auto me-4 fw-semibold custom-nav text-dark">
             <Nav.Link onClick={() => navigate('/')}>Home</Nav.Link>
+            <Nav.Link onClick={() => handleNavClick('about')}>About</Nav.Link>
+            <Nav.Link onClick={() => handleNavClick('services')}>Services</Nav.Link>
           </Nav>
           {user.name ? (
             <Dropdown align="end">
