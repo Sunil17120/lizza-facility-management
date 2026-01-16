@@ -1,11 +1,11 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Table, Badge, Form, Container, Card, Spinner, Button } from 'react-bootstrap';
 import { UserCog, Map as MapIcon, Save } from 'lucide-react'; 
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet'; // Added useMap
+import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
-// Leaflet marker configuration fix
+// Leaflet marker fix
 import markerIcon from 'leaflet/dist/images/marker-icon.png';
 import markerShadow from 'leaflet/dist/images/marker-shadow.png';
 let DefaultIcon = L.icon({ 
@@ -16,13 +16,13 @@ let DefaultIcon = L.icon({
 });
 L.Marker.prototype.options.icon = DefaultIcon;
 
-// NEW: Component to automatically zoom the map to active workers
+// Component to automatically zoom map to active workers
 const RecenterMap = ({ locations }) => {
   const map = useMap();
   useEffect(() => {
     if (locations.length > 0) {
       const bounds = L.latLngBounds(locations.map(loc => [parseFloat(loc.lat), parseFloat(loc.lon)]));
-      map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 }); // Focuses on the "nearby area"
+      map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
     }
   }, [locations, map]);
   return null;
@@ -46,13 +46,37 @@ const AdminDashboard = () => {
 
   useEffect(() => { 
     fetchData(); 
-    const interval = setInterval(fetchData, 30000); // Refresh every 30s
+    const interval = setInterval(fetchData, 30000);
     return () => clearInterval(interval);
   }, [fetchData]);
 
+  // Handle saving changes to employee details
+  const handleUpdate = async (originalEmail, id) => {
+    const updatedData = {
+      new_email: document.getElementById(`email-${id}`).value,
+      shift_start: document.getElementById(`start-${id}`).value,
+      shift_end: document.getElementById(`end-${id}`).value,
+      user_type: document.getElementById(`type-${id}`).value,
+    };
+
+    const res = await fetch(`/api/admin/update-employee?target_email=${originalEmail}&admin_email=${adminEmail}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updatedData)
+    });
+
+    if (res.ok) {
+      alert("Employee details updated successfully.");
+      fetchData();
+    } else {
+      const err = await res.json();
+      alert(err.detail || "Update failed");
+    }
+  };
+
   const isOnShift = (s, e) => {
     const now = new Date().toLocaleTimeString('en-GB', { hour12: false, hour: '2-digit', minute: '2-digit' });
-    return s <= e ? (now >= s && now <= e) : (now >= s || now <= e); // Midnight crossing logic
+    return s <= e ? (now >= s && now <= e) : (now >= s || now <= e);
   };
 
   if (loading) return <div className="text-center py-5"><Spinner animation="border" variant="danger" /></div>;
@@ -105,7 +129,7 @@ const AdminDashboard = () => {
                 </Form.Select>
               </td>
               <td><Badge bg={isOnShift(emp.shift_start, emp.shift_end) ? "success" : "secondary"}>SHIFT</Badge></td>
-              <td><Button variant="outline-danger" size="sm"><Save size={14} /></Button></td>
+              <td><Button variant="outline-danger" size="sm" onClick={() => handleUpdate(emp.email, emp.id)}><Save size={14} /></Button></td>
             </tr>
           ))}
         </tbody>
