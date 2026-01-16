@@ -18,7 +18,8 @@ const Header = () => {
       setUser({ name: storedName, email: storedEmail });
       setLoading(true);
       
-      // FIX: Use profile endpoint instead of restricted admin endpoint
+      // FIX: Use the profile endpoint instead of the full admin list
+      // This allows both employees and admins to verify their role safely
       fetch(`/api/user/profile?email=${storedEmail}`)
         .then(res => res.json())
         .then(data => {
@@ -27,7 +28,9 @@ const Header = () => {
           }
           setLoading(false);
         })
-        .catch(() => setLoading(false));
+        .catch(() => {
+          setLoading(false);
+        });
     }
   }, []);
 
@@ -75,16 +78,18 @@ const Header = () => {
                   {loading ? <Spinner animation="border" size="sm" className="me-2"/> : `Hi, ${user.name.split(' ')[0]}`}
                 </Dropdown.Toggle>
                 <Dropdown.Menu className="shadow border-0">
-                  {/* Shows only if user is Admin in DB */}
+                  {/* Show Admin Panel only if DB confirms admin status */}
                   {dbRole === 'admin' && (
                     <Dropdown.Item onClick={() => navigate('/admin')}>
                       <Settings size={14} className="me-2 text-danger" /> Admin Panel
                     </Dropdown.Item>
                   )}
-                  {/* Shows for all logged-in users */}
+                  
+                  {/* Dashboard link for all logged-in users */}
                   <Dropdown.Item onClick={() => navigate('/dashboard')}>
                     <LayoutDashboard size={14} className="me-2" /> My Dashboard
                   </Dropdown.Item>
+                  
                   <Dropdown.Divider />
                   <Dropdown.Item onClick={handleLogout} className="text-danger">
                     <LogOut size={14} className="me-2" /> Logout
