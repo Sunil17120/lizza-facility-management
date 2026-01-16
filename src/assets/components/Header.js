@@ -1,17 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { Navbar, Nav, Container, Button, Dropdown, Spinner } from 'react-bootstrap';
 import { UserCheck, LogOut, Settings, LayoutDashboard } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom'; // Import useLocation
 import logoImg from './logo.png'; 
 
 const Header = () => {
   const navigate = useNavigate();
+  const location = useLocation(); // To track current page path
   const [user, setUser] = useState({ name: null, email: null });
   const [dbRole, setDbRole] = useState(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    // FIX: Match 'userName' exactly as saved in Auth.js
+    // FIX: Match 'userName' exactly as saved in Auth.js to prevent "undefined"
     const storedName = localStorage.getItem('userName'); 
     const storedEmail = localStorage.getItem('userEmail');
     
@@ -29,6 +30,21 @@ const Header = () => {
     }
   }, []);
 
+  // FIX: Added the missing handleNavClick function
+  const handleNavClick = (sectionId) => {
+    if (location.pathname !== '/') {
+      // If not on Home page, navigate there first
+      navigate('/');
+      // Wait for navigation to complete then scroll
+      setTimeout(() => {
+        document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
+    } else {
+      // If already on Home, just scroll
+      document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth' });
+    }
+  };
+
   const handleLogout = () => {
     localStorage.clear();
     setUser({ name: null, email: null });
@@ -41,14 +57,18 @@ const Header = () => {
         <Navbar.Brand onClick={() => navigate('/')} style={{cursor: 'pointer'}}>
           <img src={logoImg} height="50" alt="Lizza Logo" />
         </Navbar.Brand>
+        
         <Navbar.Toggle aria-controls="main-nav" />
+        
         <Navbar.Collapse id="main-nav">
           <Nav className="ms-auto me-4 fw-semibold custom-nav text-dark">
             <Nav.Link onClick={() => navigate('/')}>Home</Nav.Link>
+            
+            {/* These links now have a defined handleNavClick function */}
             <Nav.Link onClick={() => handleNavClick('about')}>About</Nav.Link>
             <Nav.Link onClick={() => handleNavClick('services')}>Services</Nav.Link>
-            
           </Nav>
+
           {user.name ? (
             <Dropdown align="end">
               <Dropdown.Toggle variant="light" className="fw-bold text-danger border-0">
@@ -65,13 +85,15 @@ const Header = () => {
                   <LayoutDashboard size={14} className="me-2" /> My Dashboard
                 </Dropdown.Item>
                 <Dropdown.Divider />
-                <Dropdown.Item onClick={handleLogout} className="text-danger font-weight-bold">
+                <Dropdown.Item onClick={handleLogout} className="text-danger fw-bold">
                   <LogOut size={14} className="me-2" /> Logout
                 </Dropdown.Item>
               </Dropdown.Menu>
             </Dropdown>
           ) : (
-            <Button variant="danger" onClick={() => navigate('/auth')}>LOGIN</Button>
+            <Button variant="danger" className="fw-bold px-4" onClick={() => navigate('/auth')}>
+              LOGIN
+            </Button>
           )}
         </Navbar.Collapse>
       </Container>
