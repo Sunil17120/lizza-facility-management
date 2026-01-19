@@ -23,10 +23,7 @@ class User(Base):
     blockchain_id = Column(String, unique=True, nullable=True)
     is_present = Column(Boolean, default=False)
     
-    # Geofencing
-    office_lat = Column(Float, default=22.5726)
-    office_lon = Column(Float, default=88.3639)
-    fence_radius = Column(Integer, default=200)
+    location_id = Column(Integer, ForeignKey("office_locations.id"), nullable=True)
     
     shift_start = Column(String, default="09:00")
     shift_end = Column(String, default="18:00")
@@ -39,6 +36,16 @@ class EmployeeLocation(Base):
     latitude = Column(String)
     longitude = Column(String)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+class OfficeLocation(Base):
+    __tablename__ = "office_locations"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True)
+    lat = Column(Float)
+    lon = Column(Float)
+    radius = Column(Integer, default=200)
+
+# Modify User class in database.py
+
 
 def init_db():
     # 1. Create tables if they don't exist
@@ -46,11 +53,16 @@ def init_db():
     
     # 2. Migration: Force add columns using raw SQL
     with engine.connect() as conn:
-        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS manager_id INTEGER REFERENCES users(id)"))
-        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS blockchain_id VARCHAR UNIQUE"))
-        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_present BOOLEAN DEFAULT FALSE"))
-        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS office_lat DOUBLE PRECISION DEFAULT 22.5726"))
-        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS office_lon DOUBLE PRECISION DEFAULT 88.3639"))
-        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS fence_radius INTEGER DEFAULT 200"))
-        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS salt VARCHAR"))
+        conn.execute(text("ALTER TABLE users DROP COLUMN IF EXISTS office_lat"))
+        conn.execute(text("ALTER TABLE users DROP COLUMN IF EXISTS office_lon"))
+        conn.execute(text("ALTER TABLE users DROP COLUMN IF EXISTS fence_radius"))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS office_locations (
+                id SERIAL PRIMARY KEY,
+                name VARCHAR UNIQUE,
+                lat DOUBLE PRECISION,
+                lon DOUBLE PRECISION,
+                radius INTEGER DEFAULT 200
+            )
+        """))
         conn.commit()

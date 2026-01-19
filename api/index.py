@@ -259,3 +259,19 @@ def set_office(admin_email: str, data: dict, db: Session = Depends(get_db)):
     })
     db.commit()
     return {"status": "Office geofence updated"}
+class LocationCreate(BaseModel):
+    name: str
+    lat: float
+    lon: float
+    radius: int
+
+@app.get("/api/admin/locations")
+def get_locations(db: Session = Depends(get_db)):
+    return db.query(OfficeLocation).all()
+
+@app.post("/api/admin/add-location")
+def add_location(data: LocationCreate, db: Session = Depends(get_db)):
+    new_loc = OfficeLocation(**data.dict())
+    db.add(new_loc)
+    db.commit()
+    return {"message": "Location Added"}
