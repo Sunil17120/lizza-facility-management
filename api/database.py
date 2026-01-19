@@ -65,4 +65,5 @@ def init_db():
                 radius INTEGER DEFAULT 200
             )
         """))
+        conn.execute(text(" ALTER TABLE users ADD COLUMN IF NOT EXISTS location_id INTEGER REFERENCES office_locations(id)"))
         conn.commit()
