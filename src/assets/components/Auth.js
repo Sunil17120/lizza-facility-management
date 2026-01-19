@@ -4,8 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Mail, Lock, Eye, EyeOff } from 'lucide-react';
 
 const Auth = () => {
-  // Public signup removed; isLogin is now a constant true
-  const isLogin = true;
+  const isLogin = true; // Fixed: Now used in conditional rendering below
   const [showPassword, setShowPassword] = useState(false);
   
   const [formData, setFormData] = useState({
@@ -24,11 +23,8 @@ const Auth = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     
-    // Login logic remains consistent with existing system
-    const endpoint = '/api/login';
-    
     try {
-      const response = await fetch(endpoint, {
+      const response = await fetch('/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -42,7 +38,6 @@ const Auth = () => {
         const data = await response.json();
         if (response.ok) {
           localStorage.clear();
-          // Store user name and email for the session
           localStorage.setItem('userName', data.user);
           localStorage.setItem('userEmail', formData.email); 
           navigate('/dashboard'); 
@@ -50,12 +45,9 @@ const Auth = () => {
           alert(data.detail || "Authentication failed");
         }
       } else {
-        const errorText = await response.text();
-        console.error("Server Error Response:", errorText);
         alert("Server Error: Please check backend logs.");
       }
     } catch (error) {
-      console.error("Auth Error:", error);
       alert("Connection error. Please try again later.");
     }
   };
@@ -75,7 +67,7 @@ const Auth = () => {
 
             <Card className="border-0 shadow-lg p-4">
               <div className="text-center mb-4">
-                <h2 className="fw-bold text-black">Member Login</h2>
+                <h2 className="fw-bold text-black">{isLogin ? 'Member Login' : 'Register'}</h2>
                 <p className="text-muted small">Access your LIZZA dashboard</p>
                 <div className="bg-danger mx-auto" style={{ width: '40px', height: '3px' }}></div>
               </div>
@@ -115,12 +107,12 @@ const Auth = () => {
                 </Form.Group>
 
                 <Button type="submit" variant="danger" className="w-100 py-2 fw-bold shadow-sm mb-3">
-                  LOG IN
+                  {isLogin ? 'LOG IN' : 'SIGN UP'}
                 </Button>
 
                 <div className="text-center p-3 bg-light rounded shadow-sm border">
                   <span className="text-muted small d-block mb-1">Public registration is restricted.</span>
-                  <span className="text-danger small fw-bold">Please contact your Manager for credentials.</span>
+                  <span className="text-danger small fw-bold">Contact your Manager for credentials.</span>
                 </div>
               </Form>
             </Card>

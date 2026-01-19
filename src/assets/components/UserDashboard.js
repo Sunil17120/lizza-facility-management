@@ -1,16 +1,16 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Container, Row, Col, Card, Spinner, Button, Alert, Badge } from 'react-bootstrap';
-import { Clock, ShieldCheck, MapPin, Navigation, Map as MapIcon } from 'lucide-react';
+import { ShieldCheck, MapPin, Navigation, Map as MapIcon } from 'lucide-react'; // Removed Clock
 
 const UserDashboard = () => {
   const [dbUser, setDbUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState({ type: 'info', msg: 'Checking Geofence...' });
+  const [isCurrentlyOnShift, setIsCurrentlyOnShift] = useState(false); // Added to track shift state
   const userEmail = localStorage.getItem('userEmail');
 
   useEffect(() => {
     if (userEmail) {
-      // Profile now includes office_lat, office_lon, fence_radius, and blockchain_id
       fetch(`/api/user/profile?email=${userEmail}`)
         .then(res => res.json())
         .then(data => { setDbUser(data); setLoading(false); })
@@ -32,15 +32,15 @@ const UserDashboard = () => {
         if (dbUser) {
           const { shift_start: s, shift_end: e } = dbUser;
           const onShift = s <= e ? (now >= s && now <= e) : (now >= s || now <= e);
+          setIsCurrentlyOnShift(onShift); // Now using the onShift value
 
-          // The API now performs the distance calculation on the backend
           fetch(`/api/user/update-location?email=${userEmail}&lat=${latitude}&lon=${longitude}`, { method: 'POST' })
             .then(res => res.json())
             .then(data => {
               if (data.is_inside) {
                 setStatus({ 
                   type: data.is_present ? 'success' : 'warning', 
-                  msg: data.is_present ? `Inside Geofence: Present (${now})` : `Inside Geofence: But Shift starts at ${s}`
+                  msg: data.is_present ? `Inside Geofence: Present (${now})` : `Inside Geofence: Shift starts at ${s}`
                 });
               } else {
                 setStatus({ type: 'danger', msg: `Outside Geofence! Attendance restricted. (${now})` });
@@ -56,7 +56,7 @@ const UserDashboard = () => {
   useEffect(() => {
     if (!dbUser) return;
     syncLocation(false);
-    const interval = setInterval(() => syncLocation(false), 60000); // Sync every minute for better geofence tracking
+    const interval = setInterval(() => syncLocation(false), 60000);
     return () => clearInterval(interval);
   }, [dbUser, syncLocation]);
 
@@ -69,7 +69,6 @@ const UserDashboard = () => {
           <Card className="border-0 shadow-lg overflow-hidden">
             <div className="bg-dark p-4 text-white text-center">
               <h2 className="fw-bold mb-1">Shift Duty Status</h2>
-              {/* Displaying the Blockchain ID */}
               <Badge bg="danger" className="p-2 px-3 mb-2">
                 <ShieldCheck size={14} className="me-1" /> ID: {dbUser?.blockchain_id || "PENDING"}
               </Badge>
@@ -94,10 +93,10 @@ const UserDashboard = () => {
               </div>
 
               <div className="p-3 bg-light rounded-3 border mb-4">
-                <p className="small text-muted mb-2">Geofence Compliance</p>
+                <p className="small text-muted mb-2">Duty Status</p>
                 <div className="d-flex align-items-center justify-content-center gap-2">
-                  <Navigation size={18} className={status.type === 'success' ? 'text-success' : 'text-danger'} />
-                  <span className="fw-bold">{status.type === 'success' ? "Safe Zone" : "Verification Required"}</span>
+                  <div className={`rounded-circle ${isCurrentlyOnShift ? 'bg-success' : 'bg-secondary'}`} style={{width: 10, height: 10}}></div>
+                  <span className="fw-bold">{isCurrentlyOnShift ? "ON DUTY" : "OFF DUTY"}</span>
                 </div>
               </div>
 
