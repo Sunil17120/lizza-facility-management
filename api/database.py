@@ -41,4 +41,16 @@ class EmployeeLocation(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 def init_db():
+    # Create tables if they don't exist
     Base.metadata.create_all(bind=engine)
+    
+    # Force add new columns if they are missing
+    with engine.connect() as conn:
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS manager_id INTEGER REFERENCES users(id)"))
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS blockchain_id VARCHAR UNIQUE"))
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_present BOOLEAN DEFAULT FALSE"))
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS office_lat DOUBLE PRECISION DEFAULT 22.5726"))
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS office_lon DOUBLE PRECISION DEFAULT 88.3639"))
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS fence_radius INTEGER DEFAULT 200"))
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS salt VARCHAR"))
+        conn.commit()
