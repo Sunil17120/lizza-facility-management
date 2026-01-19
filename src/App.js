@@ -13,6 +13,7 @@ import Services from './assets/components/Services';
 import Auth from './assets/components/Auth'; 
 import AdminDashboard from './assets/components/AdminDashboard'; 
 import UserDashboard from './assets/components/UserDashboard'; 
+import ManagerDashboard from './assets/components/ManagerDashboard'; // Added ManagerDashboard import
 import Footer from './assets/components/Footer'; 
 
 // Protected Route for Admin - ALWAYS FETCHES FROM DB
@@ -26,11 +27,9 @@ const AdminRoute = ({ children }) => {
       return;
     }
 
-    // FIX: Use the individual profile endpoint instead of the full admin list
     fetch(`/api/user/profile?email=${userEmail}`)
       .then(res => res.json())
       .then(data => {
-        // Verify user_type status from DB result
         if (data && data.user_type && data.user_type.toLowerCase() === 'admin') {
           setIsAdmin(true);
         } else {
@@ -48,6 +47,40 @@ const AdminRoute = ({ children }) => {
   );
 
   return isAdmin ? children : <Navigate to="/dashboard" replace />;
+};
+
+// NEW: Protected Route for Manager
+const ManagerRoute = ({ children }) => {
+  const [isManager, setIsManager] = useState(null);
+  const userEmail = localStorage.getItem('userEmail');
+
+  useEffect(() => {
+    if (!userEmail) {
+      setIsManager(false);
+      return;
+    }
+
+    fetch(`/api/user/profile?email=${userEmail}`)
+      .then(res => res.json())
+      .then(data => {
+        // Verify user_type status from DB result 
+        if (data && data.user_type && data.user_type.toLowerCase() === 'manager') {
+          setIsManager(true);
+        } else {
+          setIsManager(false);
+        }
+      })
+      .catch(() => setIsManager(false));
+  }, [userEmail]);
+
+  if (isManager === null) return (
+    <div className="text-center py-5">
+      <div className="spinner-border text-danger" role="status"></div>
+      <p className="mt-2">Verifying Manager Permissions...</p>
+    </div>
+  );
+
+  return isManager ? children : <Navigate to="/dashboard" replace />;
 };
 
 // Protected Route for Users
@@ -81,6 +114,15 @@ function App() {
                 <PrivateRoute>
                   <UserDashboard />
                 </PrivateRoute>
+              } 
+            />
+            {/* NEW: Added /manager route protected by ManagerRoute */}
+            <Route 
+              path="/manager" 
+              element={
+                <ManagerRoute>
+                  <ManagerDashboard />
+                </ManagerRoute>
               } 
             />
             <Route 

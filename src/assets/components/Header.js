@@ -1,18 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { Navbar, Nav, Container, Button, Dropdown, Spinner } from 'react-bootstrap';
-import { UserCheck, LogOut, Settings, LayoutDashboard } from 'lucide-react';
-import { useNavigate, useLocation } from 'react-router-dom'; // Import useLocation
+import { UserCheck, LogOut, Settings, LayoutDashboard, Users } from 'lucide-react'; // Added Users icon
+import { useNavigate, useLocation } from 'react-router-dom';
 import logoImg from './logo.png'; 
 
 const Header = () => {
   const navigate = useNavigate();
-  const location = useLocation(); // To track current page path
+  const location = useLocation();
   const [user, setUser] = useState({ name: null, email: null });
   const [dbRole, setDbRole] = useState(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    // FIX: Match 'userName' exactly as saved in Auth.js to prevent "undefined"
     const storedName = localStorage.getItem('userName'); 
     const storedEmail = localStorage.getItem('userEmail');
     
@@ -30,17 +29,13 @@ const Header = () => {
     }
   }, []);
 
-  // FIX: Added the missing handleNavClick function
   const handleNavClick = (sectionId) => {
     if (location.pathname !== '/') {
-      // If not on Home page, navigate there first
       navigate('/');
-      // Wait for navigation to complete then scroll
       setTimeout(() => {
         document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth' });
       }, 100);
     } else {
-      // If already on Home, just scroll
       document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth' });
     }
   };
@@ -63,8 +58,6 @@ const Header = () => {
         <Navbar.Collapse id="main-nav">
           <Nav className="ms-auto me-4 fw-semibold custom-nav text-dark">
             <Nav.Link onClick={() => navigate('/')}>Home</Nav.Link>
-            
-            {/* These links now have a defined handleNavClick function */}
             <Nav.Link onClick={() => handleNavClick('about')}>About</Nav.Link>
             <Nav.Link onClick={() => handleNavClick('services')}>Services</Nav.Link>
           </Nav>
@@ -79,6 +72,12 @@ const Header = () => {
                 {dbRole === 'admin' && (
                   <Dropdown.Item onClick={() => navigate('/admin')}>
                     <Settings size={14} className="me-2" /> Admin Panel
+                  </Dropdown.Item>
+                )}
+                {/* NEW: Added Manager Panel link for users with manager role */}
+                {dbRole === 'manager' && (
+                  <Dropdown.Item onClick={() => navigate('/manager')}>
+                    <Users size={14} className="me-2" /> Manager Panel
                   </Dropdown.Item>
                 )}
                 <Dropdown.Item onClick={() => navigate('/dashboard')}>
