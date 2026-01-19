@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Container, Card, Form, Button, Row, Col, Badge } from 'react-bootstrap';
-import { UserPlus, Map as MapIcon, ShieldCheck } from 'lucide-react';
+import { Container, Card, Form, Button, Row, Col, Badge, Table } from 'react-bootstrap';
+import { UserPlus, Map as MapIcon, ShieldCheck, Users } from 'lucide-react'; // ShieldCheck now used below
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
@@ -18,23 +18,20 @@ L.Marker.prototype.options.icon = DefaultIcon;
 
 const ManagerDashboard = () => {
   const [formData, setFormData] = useState({ name: '', email: '', pass: '', start: '09:00', end: '18:00' });
-  const [liveStaff, setLiveStaff] = useState({}); // Stores live locations by employee name
+  const [liveStaff, setLiveStaff] = useState({}); 
   const managerId = localStorage.getItem('userId'); 
 
-  // --- LIVE TRACKING LOGIC (WebSocket) ---
   useEffect(() => {
     if (!managerId) return;
 
-    // Establish WebSocket connection to the manager's specific channel
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const socket = new WebSocket(`${protocol}//${window.location.host}/ws/tracking/${managerId}`);
 
     socket.onmessage = (event) => {
       const data = JSON.parse(event.data);
-      // Update state with new location for the specific employee
       setLiveStaff(prev => ({
         ...prev,
-        [data.name]: { lat: data.lat, lon: data.lon, present: data.present }
+        [data.name]: { lat: data.lat, lon: data.lon, present: data.present, time: new Date().toLocaleTimeString() }
       }));
     };
 
@@ -62,13 +59,14 @@ const ManagerDashboard = () => {
   };
 
   return (
-    <Container className="py-5">
-      <h2 className="fw-bold mb-4">Manager Control Panel</h2>
+    <Container className="py-5 text-dark">
+      <h2 className="fw-bold mb-4 d-flex align-items-center">
+        <Users className="me-2 text-danger" /> Manager Control Panel
+      </h2>
       
-      <Row>
-        {/* Onboarding Section */}
+      <Row className="g-4">
         <Col lg={4}>
-          <Card className="p-4 border-0 shadow-sm mb-4">
+          <Card className="p-4 border-0 shadow-sm h-100">
             <h5 className="fw-bold mb-3"><UserPlus className="text-danger me-2"/> Onboard Staff</h5>
             <Form onSubmit={handleAddStaff}>
               <Form.Group className="mb-2">
@@ -80,14 +78,15 @@ const ManagerDashboard = () => {
               <Form.Group className="mb-3">
                 <Form.Control type="password" placeholder="Password" onChange={e => setFormData({...formData, pass: e.target.value})} required />
               </Form.Group>
-              <Button type="submit" variant="danger" className="fw-bold w-100">MINT EMPLOYEE ID</Button>
+              <Button type="submit" variant="danger" className="fw-bold w-100">
+                <ShieldCheck size={18} className="me-2" /> MINT EMPLOYEE ID
+              </Button>
             </Form>
           </Card>
         </Col>
 
-        {/* Live Tracking Section */}
         <Col lg={8}>
-          <Card className="border-0 shadow-sm mb-4 overflow-hidden">
+          <Card className="border-0 shadow-sm overflow-hidden">
             <Card.Header className="bg-white fw-bold d-flex align-items-center gap-2">
               <MapIcon className="text-danger" size={20} /> Team Live Tracking
             </Card.Header>
@@ -108,6 +107,42 @@ const ManagerDashboard = () => {
                 ))}
               </MapContainer>
             </div>
+          </Card>
+        </Col>
+
+        <Col md={12}>
+          <Card className="border-0 shadow-sm p-4">
+            <h5 className="fw-bold mb-3 d-flex align-items-center">
+              <ShieldCheck className="text-success me-2" size={20} /> Attendance Status (Live)
+            </h5>
+            <Table responsive hover>
+              <thead>
+                <tr>
+                  <th>Employee Name</th>
+                  <th>Last Update</th>
+                  <th>Geofence Status</th>
+                  <th>Attendance</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(liveStaff).length === 0 ? (
+                  <tr><td colSpan="4" className="text-center text-muted">No live data received yet.</td></tr>
+                ) : (
+                  Object.entries(liveStaff).map(([name, pos]) => (
+                    <tr key={name}>
+                      <td>{name}</td>
+                      <td>{pos.time}</td>
+                      <td>
+                        <Badge bg={pos.present ? "success" : "danger"}>
+                          {pos.present ? "Verified" : "Outside Perimeter"}
+                        </Badge>
+                      </td>
+                      <td className="fw-bold">{pos.present ? "Present" : "Absent/Away"}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </Table>
           </Card>
         </Col>
       </Row>
