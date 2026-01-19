@@ -18,6 +18,36 @@ init_db()
 
 PEPPER = os.environ.get("SECRET_PEPPER", "change_me_in_vercel_settings")
 app = FastAPI()
+def get_distance(lat1, lon1, lat2, lon2):
+    R = 6371000 # Meters
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: dict = {}
+    async def connect(self, websocket: WebSocket, manager_id: str):
+        await websocket.accept()
+        if manager_id not in self.active_connections: self.active_connections[manager_id] = []
+        self.active_connections[manager_id].append(websocket)
+    def disconnect(self, websocket: WebSocket, manager_id: str):
+        self.active_connections[manager_id].remove(websocket)
+    async def broadcast(self, manager_id: str, message: dict):
+        if manager_id in self.active_connections:
+            for connection in self.active_connections[manager_id]:
+                await connection.send_json(message)
+
+ws_manager = ConnectionManager()
+class StaffCreate(BaseModel):
+    full_name: str
+    email: str
+    password: str
+    manager_id: int
+    shift_start: str
+    shift_end: str
 class AuthRequest(BaseModel):
     full_name: str = None
     email: str
@@ -187,3 +217,58 @@ def get_live_tracking(admin_email: str, db: Session = Depends(get_db)):
             
     # Returns a list of ALL on-duty employees currently in Redis
     return active_users
+# --- ROUTES ---
+@app.websocket("/ws/tracking/{manager_id}")
+async def websocket_endpoint(websocket: WebSocket, manager_id: str):
+    await ws_manager.connect(websocket, manager_id)
+    try:
+        while True: await websocket.receive_text()
+    except WebSocketDisconnect:
+        ws_manager.disconnect(websocket, manager_id)
+
+@app.post("/api/manager/add-employee")
+def add_employee(data: StaffCreate, db: Session = Depends(SessionLocal)):
+    # Simulate Blockchain ID Generation
+    blockchain_hash = hashlib.sha256(f"{data.email}{datetime.utcnow()}".encode()).hexdigest()
+    
+    new_user = User(
+        full_name=data.full_name,
+        email=data.email.lower(),
+        password=hashlib.sha256(data.password.encode()).hexdigest(), # Simplified for demo
+        user_type="employee",
+        manager_id=data.manager_id,
+        blockchain_id=f"LIZZA-{blockchain_hash[:10]}".upper(),
+        shift_start=data.shift_start,
+        shift_end=data.shift_end
+    )
+    db.add(new_user)
+    db.commit()
+    return {"status": "success", "blockchain_id": new_user.blockchain_id}
+
+@app.post("/api/user/update-location")
+async def update_location(email: str, lat: float, lon: float, db: Session = Depends(SessionLocal)):
+    user = db.query(User).filter(User.email == email).first()
+    now_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
+    now_str = now_ist.strftime("%H:%M")
+    
+    # 1. Geofence Check
+    dist = get_distance(lat, lon, user.office_lat, user.office_lon)
+    is_inside = dist <= user.fence_radius
+    
+    # 2. 15-min Presence Logic
+    shift_dt = datetime.strptime(user.shift_start, "%H:%M")
+    grace_period = (shift_dt + timedelta(minutes=15)).strftime("%H:%M")
+    
+    if now_str <= grace_period and is_inside:
+        user.is_present = True
+    elif not is_inside:
+        user.is_present = False # Marked absent if outside
+        
+    db.commit()
+    
+    # 3. Broadcast to Manager via WebSocket
+    if user.manager_id:
+        payload = {"name": user.full_name, "lat": lat, "lon": lon, "present": user.is_present}
+        await ws_manager.broadcast(str(user.manager_id), payload)
+        
+    return {"is_inside": is_inside, "is_present": user.is_present}
