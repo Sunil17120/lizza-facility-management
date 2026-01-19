@@ -1,5 +1,5 @@
 import os
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, ForeignKey, Float, Boolean
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, ForeignKey, Float, Boolean, text # FIX: 'text' must be here
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
@@ -16,7 +16,7 @@ class User(Base):
     email = Column(String, unique=True, index=True)
     password = Column(String) 
     salt = Column(String)     
-    user_type = Column(String, default="employee") # admin, manager, employee
+    user_type = Column(String, default="employee") 
     
     # Hierarchy & Blockchain
     manager_id = Column(Integer, ForeignKey("users.id"), nullable=True)
@@ -26,7 +26,7 @@ class User(Base):
     # Geofencing
     office_lat = Column(Float, default=22.5726)
     office_lon = Column(Float, default=88.3639)
-    fence_radius = Column(Integer, default=200) # in meters
+    fence_radius = Column(Integer, default=200)
     
     shift_start = Column(String, default="09:00")
     shift_end = Column(String, default="18:00")
@@ -41,10 +41,10 @@ class EmployeeLocation(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 def init_db():
-    # Create tables if they don't exist
+    # 1. Create tables if they don't exist
     Base.metadata.create_all(bind=engine)
     
-    # Force add new columns if they are missing
+    # 2. Migration: Force add columns using raw SQL
     with engine.connect() as conn:
         conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS manager_id INTEGER REFERENCES users(id)"))
         conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS blockchain_id VARCHAR UNIQUE"))
