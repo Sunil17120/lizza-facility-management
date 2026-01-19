@@ -48,6 +48,7 @@ const ManagerDashboard = () => {
             email: formData.email, 
             password: formData.pass, 
             manager_id: parseInt(managerId),
+            // CHANGE THESE TWO LINES:
             shift_start: formData.start, 
             shift_end: formData.end
         })
