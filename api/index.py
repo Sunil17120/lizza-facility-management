@@ -188,14 +188,16 @@ async def websocket_endpoint(websocket: WebSocket, manager_id: str):
 
 @app.get("/api/admin/employees")
 def get_all_employees(admin_email: str, db: Session = Depends(get_db)):
-    """Fetches all users for the admin table."""
-    # Security check: Ensure requester is an admin
+    """Fetches all users including their assigned location IDs for the admin table."""
+    # 1. Security check: Ensure requester is an admin
     admin = db.query(User).filter(User.email == admin_email.lower().strip()).first()
     if not admin or admin.user_type.lower() != 'admin':
         raise HTTPException(status_code=403, detail="Admin access required")
     
+    # 2. Query all users
     users = db.query(User).all()
-    # Convert SQLAlchemy objects to dicts for JSON serialization
+    
+    # 3. Include location_id in the response
     return [{
         "id": u.id,
         "full_name": u.full_name,
@@ -203,7 +205,8 @@ def get_all_employees(admin_email: str, db: Session = Depends(get_db)):
         "user_type": u.user_type,
         "shift_start": u.shift_start,
         "shift_end": u.shift_end,
-        "blockchain_id": u.blockchain_id
+        "blockchain_id": u.blockchain_id,
+        "location_id": u.location_id  # CRITICAL: Added for mapping
     } for u in users]
 
 @app.get("/api/admin/live-tracking")
@@ -227,22 +230,31 @@ def get_live_tracking(admin_email: str):
 
 @app.post("/api/admin/update-employee")
 def update_employee(target_email: str, admin_email: str, data: dict, db: Session = Depends(get_db)):
-    """Allows Admin to update user roles and shifts."""
+    """Allows Admin to update user roles, shifts, names, and assigned office locations."""
+    # 1. Security check: Ensure requester is an admin
     admin = db.query(User).filter(User.email == admin_email.lower().strip()).first()
     if not admin or admin.user_type.lower() != 'admin':
         raise HTTPException(status_code=403, detail="Forbidden")
 
+    # 2. Find the target user
     user = db.query(User).filter(User.email == target_email.lower().strip()).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    # 3. Update fields based on provided data
+    user.full_name = data.get('full_name', user.full_name) # Added
     user.email = data.get('new_email', user.email)
     user.shift_start = data.get('shift_start', user.shift_start)
     user.shift_end = data.get('shift_end', user.shift_end)
     user.user_type = data.get('user_type', user.user_type)
     
+    # 4. Update the location mapping (the primary ID link)
+    # Ensure it's converted to an integer or set to None if empty
+    loc_id = data.get('location_id')
+    user.location_id = int(loc_id) if loc_id and str(loc_id).isdigit() else None
+    
     db.commit()
-    return {"message": "Update successful"}
+    return {"message": "Update successful", "employee": user.full_name}
 
 @app.post("/api/admin/set-office")
 def set_office(admin_email: str, data: dict, db: Session = Depends(get_db)):
