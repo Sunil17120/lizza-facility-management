@@ -1,19 +1,23 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Container, Row, Col, Card, Spinner, Button, Alert, Badge } from 'react-bootstrap';
-import { ShieldCheck, MapPin, Navigation, Map as MapIcon } from 'lucide-react'; // Removed Clock
+import { ShieldCheck, MapPin, Map as MapIcon } from 'lucide-react'; // Removed Navigation and Clock
 
 const UserDashboard = () => {
   const [dbUser, setDbUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState({ type: 'info', msg: 'Checking Geofence...' });
-  const [isCurrentlyOnShift, setIsCurrentlyOnShift] = useState(false); // Added to track shift state
+  const [isCurrentlyOnShift, setIsCurrentlyOnShift] = useState(false);
   const userEmail = localStorage.getItem('userEmail');
 
   useEffect(() => {
     if (userEmail) {
+      // Profile includes blockchain_id and shift details
       fetch(`/api/user/profile?email=${userEmail}`)
         .then(res => res.json())
-        .then(data => { setDbUser(data); setLoading(false); })
+        .then(data => { 
+          setDbUser(data); 
+          setLoading(false); 
+        })
         .catch(() => setLoading(false));
     }
   }, [userEmail]);
@@ -27,13 +31,16 @@ const UserDashboard = () => {
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         const { latitude, longitude } = pos.coords;
+        // Use 24H format for comparison
         const now = new Date().toLocaleTimeString('en-GB', { hour12: false, hour: '2-digit', minute: '2-digit' });
 
         if (dbUser) {
           const { shift_start: s, shift_end: e } = dbUser;
+          // Logic for shift hours including midnight crossing
           const onShift = s <= e ? (now >= s && now <= e) : (now >= s || now <= e);
-          setIsCurrentlyOnShift(onShift); // Now using the onShift value
+          setIsCurrentlyOnShift(onShift);
 
+          // Update backend with location and check geofence
           fetch(`/api/user/update-location?email=${userEmail}&lat=${latitude}&lon=${longitude}`, { method: 'POST' })
             .then(res => res.json())
             .then(data => {
@@ -104,7 +111,7 @@ const UserDashboard = () => {
                 <MapPin size={18} className="me-2" /> Manual Sync & Check-In
               </Button>
 
-              <div className="text-muted d-flex align-items-center justify-content-center gap-1 x-small">
+              <div className="text-muted d-flex align-items-center justify-content-center gap-1 small">
                  Secured via Blockchain Ledger System
               </div>
             </Card.Body>
