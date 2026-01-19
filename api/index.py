@@ -184,3 +184,78 @@ async def websocket_endpoint(websocket: WebSocket, manager_id: str):
             await websocket.receive_text()
     except WebSocketDisconnect:
         ws_manager.disconnect(websocket, manager_id)
+# --- ADMIN ROUTES ---
+
+@app.get("/api/admin/employees")
+def get_all_employees(admin_email: str, db: Session = Depends(get_db)):
+    """Fetches all users for the admin table."""
+    # Security check: Ensure requester is an admin
+    admin = db.query(User).filter(User.email == admin_email.lower().strip()).first()
+    if not admin or admin.user_type.lower() != 'admin':
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    users = db.query(User).all()
+    # Convert SQLAlchemy objects to dicts for JSON serialization
+    return [{
+        "id": u.id,
+        "full_name": u.full_name,
+        "email": u.email,
+        "user_type": u.user_type,
+        "shift_start": u.shift_start,
+        "shift_end": u.shift_end,
+        "blockchain_id": u.blockchain_id
+    } for u in users]
+
+@app.get("/api/admin/live-tracking")
+def get_live_tracking(admin_email: str):
+    """Fetches all active location keys from Redis for the admin map."""
+    # Use pattern to find all location keys
+    keys = r.keys("loc:*")
+    locations = []
+    for key in keys:
+        email = key.split(":")[1]
+        raw_data = r.get(key)
+        if raw_data:
+            lat_lon = raw_data.split(",")
+            locations.append({
+                "email": email,
+                "lat": float(lat_lon[0]),
+                "lon": float(lat_lon[1]),
+                "name": email.split("@")[0]
+            })
+    return locations
+
+@app.post("/api/admin/update-employee")
+def update_employee(target_email: str, admin_email: str, data: dict, db: Session = Depends(get_db)):
+    """Allows Admin to update user roles and shifts."""
+    admin = db.query(User).filter(User.email == admin_email.lower().strip()).first()
+    if not admin or admin.user_type.lower() != 'admin':
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    user = db.query(User).filter(User.email == target_email.lower().strip()).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user.email = data.get('new_email', user.email)
+    user.shift_start = data.get('shift_start', user.shift_start)
+    user.shift_end = data.get('shift_end', user.shift_end)
+    user.user_type = data.get('user_type', user.user_type)
+    
+    db.commit()
+    return {"message": "Update successful"}
+
+@app.post("/api/admin/set-office")
+def set_office(admin_email: str, data: dict, db: Session = Depends(get_db)):
+    """Updates global geofence settings for all employees."""
+    admin = db.query(User).filter(User.email == admin_email.lower().strip()).first()
+    if not admin or admin.user_type.lower() != 'admin':
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    # Sync geofence for all users
+    db.query(User).update({
+        "office_lat": data['lat'],
+        "office_lon": data['lon'],
+        "fence_radius": data['radius']
+    })
+    db.commit()
+    return {"status": "Office geofence updated"}
