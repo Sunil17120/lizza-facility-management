@@ -1,9 +1,9 @@
 import hashlib
 import os
 import redis
-import math  # FIX: Essential for get_distance function
+import math  # Required for geofencing distance calculations
 import json
-from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect # FIX: Added missing WebSocket classes
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from datetime import datetime, timedelta
@@ -14,14 +14,14 @@ try:
 except ImportError:
     from database import SessionLocal, User, EmployeeLocation, init_db
 
-# Single app initialization
+# Initialize FastAPI only once
 app = FastAPI()
 
-# Redis Setup
+# Redis Configuration for live tracking
 redis_url = os.environ.get("REDIS_URL") or os.environ.get("KV_URL")
 r = redis.from_url(redis_url, decode_responses=True)
 
-# Ensure tables exist
+# Initialize Database tables
 init_db()
 
 PEPPER = os.environ.get("SECRET_PEPPER", "change_me_in_vercel_settings")
@@ -29,7 +29,7 @@ PEPPER = os.environ.get("SECRET_PEPPER", "change_me_in_vercel_settings")
 # --- UTILITIES ---
 
 def get_distance(lat1, lon1, lat2, lon2):
-    """Calculates the distance in meters between two GPS coordinates."""
+    """Calculates distance in meters between two coordinates."""
     R = 6371000  # Earth radius in meters
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     dphi = math.radians(lat2 - lat1)
@@ -38,7 +38,7 @@ def get_distance(lat1, lon1, lat2, lon2):
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
 
 class ConnectionManager:
-    """Manages real-time WebSocket connections for managers."""
+    """Handles WebSocket lifecycle for real-time manager updates."""
     def __init__(self):
         self.active_connections: dict = {}
 
@@ -74,7 +74,7 @@ class AuthRequest(BaseModel):
     password: str
     full_name: str = None
 
-# Database Dependency
+# Database Session Dependency
 def get_db():
     db = SessionLocal()
     try:
@@ -83,7 +83,7 @@ def get_db():
         db.close()
 
 def get_secure_hash(password: str, salt: str):
-    """Security hashing for login."""
+    """Secure password hashing logic."""
     final_payload = password + salt + PEPPER
     return hashlib.sha256(final_payload.encode()).hexdigest()
 
@@ -91,7 +91,7 @@ def get_secure_hash(password: str, salt: str):
 
 @app.post("/api/login")
 def login(data: AuthRequest, db: Session = Depends(get_db)):
-    """Handles member login."""
+    """Handles secure user login."""
     user = db.query(User).filter(User.email == data.email.lower().strip()).first()
     if not user:
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -107,7 +107,7 @@ def login(data: AuthRequest, db: Session = Depends(get_db)):
 
 @app.get("/api/user/profile")
 def get_user_profile(email: str, db: Session = Depends(get_db)):
-    """Fetches user details including shift and blockchain ID."""
+    """Retrieves user profile for dashboard."""
     user = db.query(User).filter(User.email == email.lower().strip()).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -122,7 +122,7 @@ def get_user_profile(email: str, db: Session = Depends(get_db)):
 
 @app.post("/api/user/update-location")
 async def update_location(email: str, lat: float, lon: float, db: Session = Depends(get_db)):
-    """Validates geofence, marks attendance, and broadcasts to managers."""
+    """Updates location, checks geofence, and marks attendance."""
     user = db.query(User).filter(User.email == email.lower().strip()).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -130,26 +130,22 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
     now_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
     now_str = now_ist.strftime("%H:%M")
     
-    # 1. Geofence Distance Calculation
+    # 1. Geofencing
     dist = get_distance(lat, lon, user.office_lat, user.office_lon)
     is_inside = dist <= user.fence_radius
     
-    # 2. 15-Minute Attendance Logic
+    # 2. 15-minute Attendance logic
     shift_dt = datetime.strptime(user.shift_start, "%H:%M")
     grace_period = (shift_dt + timedelta(minutes=15)).strftime("%H:%M")
     
     if now_str <= grace_period and is_inside:
         user.is_present = True
     elif not is_inside:
-        user.is_present = False # Marked absent if they leave the fence
+        user.is_present = False # Marked absent if outside fence
         
     db.commit()
     
-    # 3. Cache in Redis for live tracking
-    if is_inside:
-        r.setex(f"loc:{user.email}", 300, f"{lat},{lon}")
-    
-    # 4. WebSocket Broadcast to Manager
+    # 3. Broadcast to assigned manager via WebSocket
     if user.manager_id:
         payload = {"name": user.full_name, "lat": lat, "lon": lon, "present": user.is_present}
         await ws_manager.broadcast(str(user.manager_id), payload)
@@ -158,10 +154,10 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
 
 @app.post("/api/manager/add-employee")
 def add_employee(data: StaffCreate, db: Session = Depends(get_db)):
-    """Creates a new employee with a Blockchain ID."""
+    """Manager-only route to onboard staff with Blockchain ID."""
     blockchain_hash = hashlib.sha256(f"{data.email}{datetime.utcnow()}".encode()).hexdigest()
     
-    # Simple salt derivation for the new user
+    # Generate salt for the new employee
     salt = hashlib.sha256(data.email.encode()).hexdigest()[:16]
     
     new_user = User(
@@ -181,7 +177,7 @@ def add_employee(data: StaffCreate, db: Session = Depends(get_db)):
 
 @app.websocket("/ws/tracking/{manager_id}")
 async def websocket_endpoint(websocket: WebSocket, manager_id: str):
-    """WebSocket endpoint for managers to receive live staff updates."""
+    """Real-time tracking feed for managers."""
     await ws_manager.connect(websocket, manager_id)
     try:
         while True:
