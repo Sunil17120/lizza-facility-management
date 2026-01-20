@@ -124,14 +124,16 @@ def get_user_profile(email: str, db: Session = Depends(get_db)):
 
 @app.post("/api/manager/add-employee")
 def add_employee(data: StaffCreate, db: Session = Depends(get_db)):
+    # 1. Generate unique identifiers
     blockchain_hash = hashlib.sha256(f"{data.email}{datetime.utcnow()}".encode()).hexdigest()
     salt = hashlib.sha256(data.email.encode()).hexdigest()[:16]
     
+    # 2. Prepare the new user object
     new_user = User(
         full_name=data.full_name,
         email=data.email.lower().strip(),
         password=get_secure_hash(data.password, salt),
-        user_type=data.user_type, # Fixed: uses dynamic role
+        user_type=data.user_type, 
         manager_id=data.manager_id,
         location_id=data.location_id,
         blockchain_id=f"LIZZA-{blockchain_hash[:10]}".upper(),
@@ -139,9 +141,21 @@ def add_employee(data: StaffCreate, db: Session = Depends(get_db)):
         shift_end=data.shift_end,
         salt=salt
     )
-    db.add(new_user)
-    db.commit()
-    return {"status": "success", "blockchain_id": new_user.blockchain_id}
+    
+    try:
+        # 3. FIX: Add error handling around the commit
+        db.add(new_user)
+        db.commit()
+        return {"status": "success", "blockchain_id": new_user.blockchain_id}
+    except Exception as e:
+        # 4. Rollback to prevent database hanging
+        db.rollback()
+        # Return the actual error message (e.g., "Email already exists")
+        error_msg = str(e.orig) if hasattr(e, 'orig') else str(e)
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Onboarding failed: {error_msg}"
+        )
 
 @app.get("/api/admin/employees")
 def get_all_employees(admin_email: str, db: Session = Depends(get_db)):
