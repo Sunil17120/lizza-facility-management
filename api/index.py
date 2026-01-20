@@ -3,12 +3,13 @@ import os
 import redis
 import math
 import json
-from typing import Optional # FIX: Added for null location support
+from typing import Optional 
 from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, Query
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from datetime import datetime, timedelta
 from sqlalchemy.exc import IntegrityError
+
 # --- 1. DATABASE IMPORTS & INIT ---
 try:
     from .database import SessionLocal, User, EmployeeLocation, OfficeLocation, init_db
@@ -22,7 +23,7 @@ redis_url = os.environ.get("REDIS_URL") or os.environ.get("KV_URL")
 if redis_url:
     r = redis.from_url(redis_url, decode_responses=True)
 else:
-    r = None # Fallback for local testing without Redis
+    r = None 
 
 init_db()
 
@@ -37,8 +38,8 @@ class StaffCreate(BaseModel):
     manager_id: int
     shift_start: str = "09:00"
     shift_end: str = "18:00"
-    user_type: str = "employee"  # Allowed: employee, manager, admin
-    location_id: Optional[int] = None # FIX: Explicitly allow None
+    user_type: str = "employee"
+    location_id: Optional[int] = None 
 
 class AuthRequest(BaseModel):
     email: str
@@ -139,11 +140,12 @@ def add_employee(data: StaffCreate, db: Session = Depends(get_db)):
     
     # If that ID is invalid (e.g. 1), find ANY Admin in the system to act as parent
     if not manager:
+        print(f"Warning: Manager ID {data.manager_id} not found. Searching for any Admin...")
         manager = db.query(User).filter(User.user_type == 'admin').first()
     
     if not manager:
-        # If still no admin found, we can't create a user
-        raise HTTPException(status_code=400, detail=f"Manager ID {data.manager_id} invalid and no Admin found in DB.")
+        # Critical failure: No admin exists in the entire database
+        raise HTTPException(status_code=400, detail=f"Manager ID {data.manager_id} invalid and NO Admins found in DB to fallback to.")
 
     final_manager_id = manager.id
 
@@ -155,7 +157,7 @@ def add_employee(data: StaffCreate, db: Session = Depends(get_db)):
         email=data.email.lower().strip(),
         password=get_secure_hash(data.password, salt),
         user_type=data.user_type, 
-        manager_id=final_manager_id, # FIX: Use the validated ID
+        manager_id=final_manager_id, 
         location_id=data.location_id if data.location_id else None,
         blockchain_id=f"LIZZA-{blockchain_hash[:10]}".upper(),
         shift_start=data.shift_start,
@@ -189,7 +191,8 @@ def get_all_employees(admin_email: str, db: Session = Depends(get_db)):
         "shift_start": u.shift_start,
         "shift_end": u.shift_end,
         "blockchain_id": u.blockchain_id,
-        "location_id": u.location_id 
+        "location_id": u.location_id,
+        "is_present": u.is_present  # <--- FIX: Added is_present for stats
     } for u in users]
 
 @app.get("/api/admin/locations")
@@ -242,10 +245,7 @@ def delete_employee(target_email: str = Query(...), admin_email: str = Query(...
         except Exception:
             pass 
         
-        # Fixed: Delete dependent location history first to avoid 500 error
         db.query(EmployeeLocation).filter(EmployeeLocation.user_id == user.id).delete()
-        
-        # Fixed: Unhook subordinates before deleting manager
         db.query(User).filter(User.manager_id == user.id).update({"manager_id": None})
         
         db.delete(user)
