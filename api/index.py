@@ -196,32 +196,36 @@ def update_employee(target_email: str, admin_email: str, data: dict, db: Session
 
 @app.delete("/api/admin/delete-employee")
 def delete_employee(target_email: str = Query(...), admin_email: str = Query(...), db: Session = Depends(get_db)):
-    # 1. Verification
+    # 1. Admin Verification
     admin = db.query(User).filter(User.email == admin_email.lower().strip()).first()
     if not admin or admin.user_type.lower() != 'admin':
         raise HTTPException(status_code=403, detail="Admin access required")
 
+    # 2. Find the target user
     user = db.query(User).filter(User.email == target_email.lower().strip()).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
     try:
-        # 2. Fix Redis Crash: Make it optional
+        # 3. FIX: Prevent Redis from crashing the whole request
         try:
             r.delete(f"loc:{target_email.lower().strip()}")
         except Exception:
-            pass # Continue even if Redis fails
+            # If Redis fails, we log it internally but let the deletion proceed
+            print("Warning: Redis key deletion failed. Check REDIS_URL.")
+            pass 
         
-        # 3. Fix IntegrityError: Set subordinates' manager to NULL
+        # 4. FIX: Integrity Error - Set subordinates' manager to NULL before deleting
         db.query(User).filter(User.manager_id == user.id).update({"manager_id": None})
         
-        # 4. Perform Deletion
+        # 5. Perform the deletion
         db.delete(user)
         db.commit()
         return {"status": "success", "message": f"Employee {target_email} deleted"}
+        
     except Exception as e:
         db.rollback()
-        # Returns the actual error message to help you debug in the browser
+        # FIX: Raise the actual error message so you can see it in the response
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @app.post("/api/user/update-location")
