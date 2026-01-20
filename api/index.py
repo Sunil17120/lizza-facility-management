@@ -223,6 +223,7 @@ def update_employee(target_email: str, admin_email: str, data: dict, db: Session
 
 @app.delete("/api/admin/delete-employee")
 def delete_employee(target_email: str = Query(...), admin_email: str = Query(...), db: Session = Depends(get_db)):
+    # 1. Verification
     admin = db.query(User).filter(User.email == admin_email.lower().strip()).first()
     if not admin or admin.user_type.lower() != 'admin':
         raise HTTPException(status_code=403, detail="Admin access required")
@@ -232,23 +233,51 @@ def delete_employee(target_email: str = Query(...), admin_email: str = Query(...
         raise HTTPException(status_code=404, detail="User not found")
     
     try:
-        # 1. Prevent Redis from crashing the app if connection fails
+        # 2. Fix Redis Crash: Make it optional
         try:
             r.delete(f"loc:{target_email.lower().strip()}")
         except Exception:
-            pass 
+            pass # Continue even if Redis fails
         
-        # 2. Fix Foreign Key Constraint: Set manager_id to NULL for subordinates
+        # 3. Fix IntegrityError: Set subordinates' manager to NULL
         db.query(User).filter(User.manager_id == user.id).update({"manager_id": None})
         
+        # 4. Perform Deletion
         db.delete(user)
         db.commit()
         return {"status": "success", "message": f"Employee {target_email} deleted"}
     except Exception as e:
         db.rollback()
-        # Log the actual error to your Vercel console
-        print(f"Delete Error: {str(e)}")
+        # Returns the actual error message to help you debug in the browser
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+@app.post("/api/user/update-location")
+async def update_location(email: str, lat: float, lon: float, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == email.lower().strip()).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # FIX: Fetch location from OfficeLocation table, not the User table
+    office = db.query(OfficeLocation).filter(OfficeLocation.id == user.location_id).first()
+    if not office:
+         raise HTTPException(status_code=400, detail="No office assigned to user")
+    
+    now_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
+    now_str = now_ist.strftime("%H:%M")
+    
+    # FIX: Use office.lat and office.lon
+    dist = get_distance(lat, lon, office.lat, office.lon)
+    is_inside = dist <= office.radius
+    
+    shift_dt = datetime.strptime(user.shift_start, "%H:%M")
+    grace_period = (shift_dt + timedelta(minutes=15)).strftime("%H:%M")
+    
+    if now_str <= grace_period and is_inside:
+        user.is_present = True
+    elif not is_inside:
+        user.is_present = False
+        
+    db.commit()
 
 @app.delete("/api/admin/delete-location/{loc_id}")
 def delete_location(loc_id: int, admin_email: str, db: Session = Depends(get_db)):
