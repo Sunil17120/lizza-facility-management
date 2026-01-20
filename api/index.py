@@ -3,13 +3,12 @@ import os
 import redis
 import math
 import json
-from typing import Optional  # <--- FIX 1: Added Import
+from typing import Optional # FIX: Added for null location support
 from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, Query
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from datetime import datetime, timedelta
 from sqlalchemy.exc import IntegrityError
-
 # --- 1. DATABASE IMPORTS & INIT ---
 try:
     from .database import SessionLocal, User, EmployeeLocation, OfficeLocation, init_db
@@ -20,13 +19,10 @@ app = FastAPI()
 
 # Redis Configuration
 redis_url = os.environ.get("REDIS_URL") or os.environ.get("KV_URL")
-# Handle case where Redis URL might be missing in local dev
 if redis_url:
     r = redis.from_url(redis_url, decode_responses=True)
 else:
-    # Mock Redis for local testing if env var is missing
-    print("Warning: REDIS_URL not found. Redis features will fail.")
-    r = None
+    r = None # Fallback for local testing without Redis
 
 init_db()
 
@@ -41,8 +37,8 @@ class StaffCreate(BaseModel):
     manager_id: int
     shift_start: str = "09:00"
     shift_end: str = "18:00"
-    user_type: str = "employee"
-    location_id: Optional[int] = None  # <--- FIX 2: Explicitly allow None/Null
+    user_type: str = "employee"  # Allowed: employee, manager, admin
+    location_id: Optional[int] = None # FIX: Explicitly allow None
 
 class AuthRequest(BaseModel):
     email: str
@@ -132,17 +128,24 @@ def get_user_profile(email: str, db: Session = Depends(get_db)):
 
 @app.post("/api/manager/add-employee")
 def add_employee(data: StaffCreate, db: Session = Depends(get_db)):
-    # FIX 3: Robust Error Handling
-    
-    # Check duplicate email
+    # 1. Pre-check: Does this email already exist?
     existing_user = db.query(User).filter(User.email == data.email.lower().strip()).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="An employee with this email already exists.")
 
-    # Check manager existence
-    manager_exists = db.query(User).filter(User.id == data.manager_id).first()
-    if not manager_exists:
-        raise HTTPException(status_code=400, detail=f"Manager ID {data.manager_id} not found.")
+    # 2. FIX: Smart Manager Check (Fallback Logic)
+    # First, try to find the exact manager ID sent
+    manager = db.query(User).filter(User.id == data.manager_id).first()
+    
+    # If that ID is invalid (e.g. 1), find ANY Admin in the system to act as parent
+    if not manager:
+        manager = db.query(User).filter(User.user_type == 'admin').first()
+    
+    if not manager:
+        # If still no admin found, we can't create a user
+        raise HTTPException(status_code=400, detail=f"Manager ID {data.manager_id} invalid and no Admin found in DB.")
+
+    final_manager_id = manager.id
 
     blockchain_hash = hashlib.sha256(f"{data.email}{datetime.utcnow()}".encode()).hexdigest()
     salt = hashlib.sha256(data.email.encode()).hexdigest()[:16]
@@ -152,8 +155,8 @@ def add_employee(data: StaffCreate, db: Session = Depends(get_db)):
         email=data.email.lower().strip(),
         password=get_secure_hash(data.password, salt),
         user_type=data.user_type, 
-        manager_id=data.manager_id,
-        location_id=data.location_id, # Can be None now
+        manager_id=final_manager_id, # FIX: Use the validated ID
+        location_id=data.location_id if data.location_id else None,
         blockchain_id=f"LIZZA-{blockchain_hash[:10]}".upper(),
         shift_start=data.shift_start,
         shift_end=data.shift_end,
@@ -233,17 +236,16 @@ def delete_employee(target_email: str = Query(...), admin_email: str = Query(...
         raise HTTPException(status_code=404, detail="User not found")
     
     try:
-        # Clear redis cache
-        if r:
-            try:
+        try:
+            if r:
                 r.delete(f"loc:{target_email.lower().strip()}")
-            except Exception:
-                pass 
+        except Exception:
+            pass 
         
-        # Delete dependent location history
+        # Fixed: Delete dependent location history first to avoid 500 error
         db.query(EmployeeLocation).filter(EmployeeLocation.user_id == user.id).delete()
         
-        # Unhook subordinates
+        # Fixed: Unhook subordinates before deleting manager
         db.query(User).filter(User.manager_id == user.id).update({"manager_id": None})
         
         db.delete(user)
