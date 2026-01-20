@@ -221,19 +221,35 @@ def update_employee(target_email: str, admin_email: str, data: dict, db: Session
     return {"message": "Update successful"}
 
 @app.delete("/api/admin/delete-employee")
-def delete_employee(target_email: str, admin_email: str, db: Session = Depends(get_db)):
+def delete_employee(
+    target_email: str = Query(...), # Explicitly tell FastAPI this comes from the URL
+    admin_email: str = Query(...), 
+    db: Session = Depends(get_db)
+):
+    """Permanently deletes an employee from the system."""
+    # 1. Security check
     admin = db.query(User).filter(User.email == admin_email.lower().strip()).first()
     if not admin or admin.user_type.lower() != 'admin':
         raise HTTPException(status_code=403, detail="Admin access required")
 
+    # 2. Find the user
     user = db.query(User).filter(User.email == target_email.lower().strip()).first()
     if not user:
+        # Returning 404 instead of crashing
         raise HTTPException(status_code=404, detail="User not found")
     
-    r.delete(f"loc:{target_email.lower().strip()}")
-    db.delete(user)
-    db.commit()
-    return {"message": "Employee deleted"}
+    try:
+        # 3. Cleanup Redis live tracking
+        r.delete(f"loc:{target_email.lower().strip()}")
+        
+        # 4. Delete the user record
+        db.delete(user)
+        db.commit()
+        return {"status": "success", "message": f"Employee {target_email} deleted"}
+    except Exception as e:
+        db.rollback()
+        print(f"Delete Error: {e}")
+        raise HTTPException(status_code=500, detail="Database deletion failed")
 
 @app.delete("/api/admin/delete-location/{loc_id}")
 def delete_location(loc_id: int, admin_email: str, db: Session = Depends(get_db)):
