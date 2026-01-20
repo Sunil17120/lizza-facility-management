@@ -3,11 +3,13 @@ import os
 import redis
 import math
 import json
+from typing import Optional  # <--- FIX 1: Added Import
 from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, Query
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from datetime import datetime, timedelta
 from sqlalchemy.exc import IntegrityError
+
 # --- 1. DATABASE IMPORTS & INIT ---
 try:
     from .database import SessionLocal, User, EmployeeLocation, OfficeLocation, init_db
@@ -18,7 +20,13 @@ app = FastAPI()
 
 # Redis Configuration
 redis_url = os.environ.get("REDIS_URL") or os.environ.get("KV_URL")
-r = redis.from_url(redis_url, decode_responses=True)
+# Handle case where Redis URL might be missing in local dev
+if redis_url:
+    r = redis.from_url(redis_url, decode_responses=True)
+else:
+    # Mock Redis for local testing if env var is missing
+    print("Warning: REDIS_URL not found. Redis features will fail.")
+    r = None
 
 init_db()
 
@@ -33,8 +41,8 @@ class StaffCreate(BaseModel):
     manager_id: int
     shift_start: str = "09:00"
     shift_end: str = "18:00"
-    user_type: str = "employee"  # Allowed: employee, manager, admin
-    location_id: int = None
+    user_type: str = "employee"
+    location_id: Optional[int] = None  # <--- FIX 2: Explicitly allow None/Null
 
 class AuthRequest(BaseModel):
     email: str
@@ -124,15 +132,16 @@ def get_user_profile(email: str, db: Session = Depends(get_db)):
 
 @app.post("/api/manager/add-employee")
 def add_employee(data: StaffCreate, db: Session = Depends(get_db)):
-    # 1. Pre-check: Does this email already exist?
+    # FIX 3: Robust Error Handling
+    
+    # Check duplicate email
     existing_user = db.query(User).filter(User.email == data.email.lower().strip()).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="An employee with this email already exists.")
 
-    # 2. Pre-check: Does the manager exist? (Avoid Foreign Key errors)
+    # Check manager existence
     manager_exists = db.query(User).filter(User.id == data.manager_id).first()
     if not manager_exists:
-        # Fallback to a default admin or return error
         raise HTTPException(status_code=400, detail=f"Manager ID {data.manager_id} not found.")
 
     blockchain_hash = hashlib.sha256(f"{data.email}{datetime.utcnow()}".encode()).hexdigest()
@@ -144,7 +153,7 @@ def add_employee(data: StaffCreate, db: Session = Depends(get_db)):
         password=get_secure_hash(data.password, salt),
         user_type=data.user_type, 
         manager_id=data.manager_id,
-        location_id=data.location_id if data.location_id else None, # Handle empty location
+        location_id=data.location_id, # Can be None now
         blockchain_id=f"LIZZA-{blockchain_hash[:10]}".upper(),
         shift_start=data.shift_start,
         shift_end=data.shift_end,
@@ -161,6 +170,7 @@ def add_employee(data: StaffCreate, db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/admin/employees")
 def get_all_employees(admin_email: str, db: Session = Depends(get_db)):
     admin = db.query(User).filter(User.email == admin_email.lower().strip()).first()
@@ -223,15 +233,17 @@ def delete_employee(target_email: str = Query(...), admin_email: str = Query(...
         raise HTTPException(status_code=404, detail="User not found")
     
     try:
-        try:
-            r.delete(f"loc:{target_email.lower().strip()}")
-        except Exception:
-            pass 
+        # Clear redis cache
+        if r:
+            try:
+                r.delete(f"loc:{target_email.lower().strip()}")
+            except Exception:
+                pass 
         
-        # Fixed: Delete dependent location history first to avoid 500 error
+        # Delete dependent location history
         db.query(EmployeeLocation).filter(EmployeeLocation.user_id == user.id).delete()
         
-        # Fixed: Unhook subordinates before deleting manager
+        # Unhook subordinates
         db.query(User).filter(User.manager_id == user.id).update({"manager_id": None})
         
         db.delete(user)
@@ -282,6 +294,8 @@ def delete_location(loc_id: int, admin_email: str, db: Session = Depends(get_db)
 
 @app.get("/api/admin/live-tracking")
 def get_live_tracking(admin_email: str):
+    if not r:
+        return []
     keys = r.keys("loc:*")
     locations = []
     for key in keys:

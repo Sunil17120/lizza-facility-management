@@ -1,7 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-// Removed 'Badge' as it was unused
 import { Table, Form, Container, Card, Spinner, Button, Row, Col, Modal, InputGroup } from 'react-bootstrap';
-// Removed 'MapIcon' and 'Navigation' as they were unused
 import { UserCog, Save, Building2, UserPlus, Search, Trash2 } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -36,7 +34,7 @@ const AdminDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [showAddEmp, setShowAddEmp] = useState(false);
   const [empSearch, setEmpSearch] = useState('');
-  const [locSearch, setLocSearch] = useState(''); // Now used in the filter below
+  const [locSearch, setLocSearch] = useState('');
   
   const [newLoc, setNewLoc] = useState({ name: '', lat: 22.5726, lon: 88.3639, radius: 200 });
   const [newEmp, setNewEmp] = useState({ name: '', email: '', pass: '', role: 'manager', locId: '' });
@@ -57,6 +55,7 @@ const AdminDashboard = () => {
       if (liveRes.ok) setLiveLocations(await liveRes.json());
       setLoading(false);
     } catch (err) {
+      console.error(err);
       setLoading(false);
     }
   }, [adminEmail]);
@@ -96,24 +95,56 @@ const AdminDashboard = () => {
     if (res.ok) { alert("Updated!"); fetchData(); }
   };
 
+  // --- FIX 1 START: Updated Onboard Function ---
   const handleOnboardEmployee = async (e) => {
     e.preventDefault();
-    const res = await fetch(`/api/manager/add-employee`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        full_name: newEmp.name,
-        email: newEmp.email,
-        password: newEmp.pass,
-        manager_id: parseInt(adminId), 
-        user_type: newEmp.role,
-        shift_start: "09:00",
-        shift_end: "18:00",
-        location_id: parseInt(newEmp.locId)
-      })
-    });
-    if (res.ok) { alert("Success!"); setShowAddEmp(false); fetchData(); }
+    
+    // Validate Manager ID
+    let mgrId = parseInt(adminId);
+    if (isNaN(mgrId)) {
+        alert("System Error: Your Admin ID is missing. Please re-login.");
+        return;
+    }
+
+    // Validate Location ID (send null if empty/NaN)
+    const locIdParsed = parseInt(newEmp.locId);
+    const finalLocId = isNaN(locIdParsed) ? null : locIdParsed;
+
+    const payload = {
+      full_name: newEmp.name,
+      email: newEmp.email,
+      password: newEmp.pass,
+      manager_id: mgrId, 
+      user_type: newEmp.role,
+      shift_start: "09:00",
+      shift_end: "18:00",
+      location_id: finalLocId 
+    };
+
+    try {
+        const res = await fetch(`/api/manager/add-employee`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        const data = await res.json();
+
+        if (res.ok) { 
+            alert(`Success! Employee ID: ${data.blockchain_id}`); 
+            setShowAddEmp(false); 
+            fetchData(); 
+            // Reset form
+            setNewEmp({ name: '', email: '', pass: '', role: 'employee', locId: '' });
+        } else {
+            // Display server error cleanly
+            alert(`Failed: ${data.detail || 'Unknown error'}`);
+        }
+    } catch (err) {
+        alert("Network Error: Could not connect to server.");
+    }
   };
+  // --- FIX 1 END ---
 
   if (loading) return <div className="text-center py-5"><Spinner animation="border" variant="danger" /></div>;
 
@@ -129,7 +160,6 @@ const AdminDashboard = () => {
           <Card className="border-0 shadow-sm p-4 h-100">
             <h5 className="fw-bold mb-3 d-flex align-items-center"><Building2 className="text-danger me-2" size={20} /> Office Branches</h5>
             
-            {/* ADDED: Branch Search Input to use locSearch variable */}
             <InputGroup className="mb-3" size="sm">
               <InputGroup.Text className="bg-white"><Search size={14}/></InputGroup.Text>
               <Form.Control 
@@ -148,7 +178,6 @@ const AdminDashboard = () => {
             </Form>
             
             <div className="overflow-auto" style={{maxHeight: '200px'}}>
-                {/* USE locSearch to filter branch list */}
                 {locations
                   .filter(l => l.name.toLowerCase().includes(locSearch.toLowerCase()))
                   .map(l => (
