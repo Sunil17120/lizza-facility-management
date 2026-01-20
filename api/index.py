@@ -119,34 +119,7 @@ def get_user_profile(email: str, db: Session = Depends(get_db)):
         "blockchain_id": user.blockchain_id
     }
 
-@app.post("/api/user/update-location")
-async def update_location(email: str, lat: float, lon: float, db: Session = Depends(get_db)):
-    # 1. Fetch user
-    user = db.query(User).filter(User.email == email.lower().strip()).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    
-    # 2. Fetch the assigned office location using the foreign key
-    office = db.query(OfficeLocation).filter(OfficeLocation.id == user.location_id).first()
-    if not office:
-        raise HTTPException(status_code=400, detail="User has no office location assigned")
-    
-    now_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
-    now_str = now_ist.strftime("%H:%M")
-    
-    # 3. Use office object coordinates instead of user object
-    dist = get_distance(lat, lon, office.lat, office.lon)
-    is_inside = dist <= office.radius
-    
-    shift_dt = datetime.strptime(user.shift_start, "%H:%M")
-    grace_period = (shift_dt + timedelta(minutes=15)).strftime("%H:%M")
-    
-    if now_str <= grace_period and is_inside:
-        user.is_present = True
-    elif not is_inside:
-        user.is_present = False
-        
-    db.commit()
+
 
 # --- 5. ADMIN & MANAGER ROUTES ---
 
