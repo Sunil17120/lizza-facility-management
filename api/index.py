@@ -3,13 +3,12 @@ import os
 import redis
 import math
 import json
-from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect,Query
+from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, Query
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from datetime import datetime, timedelta
 
 # --- 1. DATABASE IMPORTS & INIT ---
-# We handle the imports once, correctly.
 try:
     from .database import SessionLocal, User, EmployeeLocation, OfficeLocation, init_db
 except ImportError:
@@ -25,15 +24,17 @@ init_db()
 
 PEPPER = os.environ.get("SECRET_PEPPER", "change_me_in_vercel_settings")
 
-# --- 2. SCHEMAS (Defined before Routes) ---
+# --- 2. SCHEMAS ---
 
 class StaffCreate(BaseModel):
     full_name: str
     email: str
     password: str
     manager_id: int
-    shift_start: str
-    shift_end: str
+    shift_start: str = "09:00"
+    shift_end: str = "18:00"
+    user_type: str = "employee"  # Allowed: employee, manager, admin
+    location_id: int = None
 
 class AuthRequest(BaseModel):
     email: str
@@ -119,8 +120,6 @@ def get_user_profile(email: str, db: Session = Depends(get_db)):
         "blockchain_id": user.blockchain_id
     }
 
-
-
 # --- 5. ADMIN & MANAGER ROUTES ---
 
 @app.post("/api/manager/add-employee")
@@ -132,8 +131,9 @@ def add_employee(data: StaffCreate, db: Session = Depends(get_db)):
         full_name=data.full_name,
         email=data.email.lower().strip(),
         password=get_secure_hash(data.password, salt),
-        user_type="employee",
+        user_type=data.user_type, # Fixed: uses dynamic role
         manager_id=data.manager_id,
+        location_id=data.location_id,
         blockchain_id=f"LIZZA-{blockchain_hash[:10]}".upper(),
         shift_start=data.shift_start,
         shift_end=data.shift_end,
@@ -194,58 +194,46 @@ def update_employee(target_email: str, admin_email: str, data: dict, db: Session
     db.commit()
     return {"message": "Update successful"}
 
-
 @app.delete("/api/admin/delete-employee")
 def delete_employee(target_email: str = Query(...), admin_email: str = Query(...), db: Session = Depends(get_db)):
-    # 1. Admin Verification
     admin = db.query(User).filter(User.email == admin_email.lower().strip()).first()
     if not admin or admin.user_type.lower() != 'admin':
         raise HTTPException(status_code=403, detail="Admin access required")
 
-    # 2. Find the target user
     user = db.query(User).filter(User.email == target_email.lower().strip()).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
     try:
-        # 3. Redis Cleanup (Optional - wrapped to prevent 500 on Redis failure)
         try:
             r.delete(f"loc:{target_email.lower().strip()}")
         except Exception:
             pass 
         
-        # 4. FIX: Delete Location History (Foreign Key Constraint)
-        # This must happen before deleting the user
+        # Fixed: Delete dependent location history first to avoid 500 error
         db.query(EmployeeLocation).filter(EmployeeLocation.user_id == user.id).delete()
         
-        # 5. Fix Manager Links: Set subordinates' manager to NULL
+        # Fixed: Unhook subordinates before deleting manager
         db.query(User).filter(User.manager_id == user.id).update({"manager_id": None})
         
-        # 6. Perform the user deletion
         db.delete(user)
         db.commit()
-        return {"status": "success", "message": f"Employee {target_email} and history deleted"}
-        
+        return {"status": "success", "message": f"Employee {target_email} deleted"}
     except Exception as e:
         db.rollback()
-        # Returns the actual error message to the client for easier debugging
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @app.post("/api/user/update-location")
 async def update_location(email: str, lat: float, lon: float, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == email.lower().strip()).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    if not user or not user.location_id:
+        raise HTTPException(status_code=404, detail="User or office location not found")
     
-    # FIX: Fetch location from OfficeLocation table, not the User table
     office = db.query(OfficeLocation).filter(OfficeLocation.id == user.location_id).first()
-    if not office:
-         raise HTTPException(status_code=400, detail="No office assigned to user")
     
     now_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
     now_str = now_ist.strftime("%H:%M")
     
-    # FIX: Use office.lat and office.lon
     dist = get_distance(lat, lon, office.lat, office.lon)
     is_inside = dist <= office.radius
     
@@ -284,10 +272,7 @@ def get_live_tracking(admin_email: str):
         if raw_data:
             lat_lon = raw_data.split(",")
             locations.append({
-                "email": email,
-                "lat": float(lat_lon[0]),
-                "lon": float(lat_lon[1]),
-                "name": email.split("@")[0]
+                "email": email, "lat": float(lat_lon[0]), "lon": float(lat_lon[1]), "name": email.split("@")[0]
             })
     return locations
 

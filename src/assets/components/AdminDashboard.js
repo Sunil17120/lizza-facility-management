@@ -33,16 +33,14 @@ const AdminDashboard = () => {
   const [liveLocations, setLiveLocations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAddEmp, setShowAddEmp] = useState(false);
-  
-  // Search States
   const [empSearch, setEmpSearch] = useState('');
   const [locSearch, setLocSearch] = useState('');
   
-  // Form States
   const [newLoc, setNewLoc] = useState({ name: '', lat: 22.5726, lon: 88.3639, radius: 200 });
-  const [newEmp, setNewEmp] = useState({ name: '', email: '', pass: '', role: 'employee', locId: '' });
+  const [newEmp, setNewEmp] = useState({ name: '', email: '', pass: '', role: 'manager', locId: '' });
   
   const adminEmail = localStorage.getItem('userEmail');
+  const adminId = localStorage.getItem('userId') || 1; // Used for initial manager link
 
   const fetchData = useCallback(async () => {
     try {
@@ -55,10 +53,8 @@ const AdminDashboard = () => {
       if (empRes.ok) setEmployees(await empRes.json());
       if (locRes.ok) setLocations(await locRes.json());
       if (liveRes.ok) setLiveLocations(await liveRes.json());
-      
       setLoading(false);
     } catch (err) {
-      console.error("Fetch error:", err);
       setLoading(false);
     }
   }, [adminEmail]);
@@ -69,39 +65,19 @@ const AdminDashboard = () => {
     return () => clearInterval(interval);
   }, [fetchData]);
 
-  // --- DELETE HANDLERS ---
   const handleDeleteEmployee = async (email) => {
-    if (window.confirm(`Are you sure you want to delete employee: ${email}?`)) {
-      const res = await fetch(`/api/admin/delete-employee?target_email=${email}&admin_email=${adminEmail}`, {
-        method: 'DELETE'
-      });
+    if (window.confirm(`Delete employee: ${email}?`)) {
+      const res = await fetch(`/api/admin/delete-employee?target_email=${email}&admin_email=${adminEmail}`, { method: 'DELETE' });
       if (res.ok) { alert("Employee Deleted"); fetchData(); }
     }
   };
 
   const handleDeleteLocation = async (locId) => {
-    if (window.confirm(`Delete this branch? Note: This may affect employees assigned here.`)) {
-      const res = await fetch(`/api/admin/delete-location/${locId}?admin_email=${adminEmail}`, {
-        method: 'DELETE'
-      });
+    if (window.confirm(`Delete branch ID ${locId}?`)) {
+      const res = await fetch(`/api/admin/delete-location/${locId}?admin_email=${adminEmail}`, { method: 'DELETE' });
       if (res.ok) { alert("Branch Removed"); fetchData(); }
     }
   };
-
-  // --- FILTER LOGIC ---
-  const filteredLocations = locations.filter(l => 
-    l.name.toLowerCase().includes(locSearch.toLowerCase())
-  );
-
-  const filteredEmployees = employees.filter(emp => {
-    const searchStr = empSearch.toLowerCase();
-    const branchName = locations.find(l => l.id === emp.location_id)?.name || "No Office";
-    return (
-      emp.full_name.toLowerCase().includes(searchStr) ||
-      emp.email.toLowerCase().includes(searchStr) ||
-      branchName.toLowerCase().includes(searchStr)
-    );
-  });
 
   const handleUpdateEmployee = async (originalEmail, id) => {
     const updatedData = {
@@ -112,23 +88,10 @@ const AdminDashboard = () => {
       user_type: document.getElementById(`type-${id}`).value,
       location_id: document.getElementById(`loc-${id}`).value,
     };
-
     const res = await fetch(`/api/admin/update-employee?target_email=${originalEmail}&admin_email=${adminEmail}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(updatedData)
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updatedData)
     });
-
     if (res.ok) { alert("Updated!"); fetchData(); }
-  };
-
-  const handleAddLocation = async () => {
-    const res = await fetch(`/api/admin/add-location?admin_email=${adminEmail}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newLoc)
-    });
-    if (res.ok) { alert("Location Added!"); fetchData(); }
   };
 
   const handleOnboardEmployee = async (e) => {
@@ -140,13 +103,14 @@ const AdminDashboard = () => {
         full_name: newEmp.name,
         email: newEmp.email,
         password: newEmp.pass,
-        manager_id: 1, 
+        manager_id: parseInt(adminId), // Admin as initial manager
+        user_type: newEmp.role,
         shift_start: "09:00",
         shift_end: "18:00",
         location_id: parseInt(newEmp.locId)
       })
     });
-    if (res.ok) { setShowAddEmp(false); fetchData(); }
+    if (res.ok) { alert("Success!"); setShowAddEmp(false); fetchData(); }
   };
 
   if (loading) return <div className="text-center py-5"><Spinner animation="border" variant="danger" /></div>;
@@ -155,46 +119,26 @@ const AdminDashboard = () => {
     <Container className="py-5 text-dark">
       <div className="d-flex justify-content-between align-items-center mb-4">
         <h2 className="fw-bold m-0"><UserCog className="me-2 text-danger" />System Admin</h2>
-        <div className="d-flex gap-2">
-            <Button variant="danger" onClick={() => setShowAddEmp(true)}><UserPlus size={18} className="me-2"/>Onboard Staff</Button>
-            <Badge bg="dark" className="p-2 px-3 d-flex align-items-center">Admin Mode</Badge>
-        </div>
+        <Button variant="danger" onClick={() => setShowAddEmp(true)}><UserPlus size={18} className="me-2"/>Onboard Staff</Button>
       </div>
 
       <Row className="mb-5 g-4">
         <Col lg={4}>
           <Card className="border-0 shadow-sm p-4 h-100">
-            <h5 className="fw-bold mb-3 d-flex align-items-center">
-              <Building2 className="text-danger me-2" size={20} /> Office Branches
-            </h5>
-            
-            {/* Search Branches */}
-            <InputGroup className="mb-3" size="sm">
-              <InputGroup.Text className="bg-white"><Search size={14}/></InputGroup.Text>
-              <Form.Control 
-                placeholder="Find branch..." 
-                onChange={(e) => setLocSearch(e.target.value)}
-              />
-            </InputGroup>
-
+            <h5 className="fw-bold mb-3 d-flex align-items-center"><Building2 className="text-danger me-2" size={20} /> Office Branches</h5>
             <Form className="mb-4 bg-light p-3 rounded">
               <Form.Control className="mb-2" placeholder="Branch Name" onChange={e => setNewLoc({...newLoc, name: e.target.value})} />
               <Row>
                 <Col><Form.Control className="mb-2" type="number" step="any" placeholder="Lat" onChange={e => setNewLoc({...newLoc, lat: parseFloat(e.target.value)})} /></Col>
                 <Col><Form.Control className="mb-2" type="number" step="any" placeholder="Lon" onChange={e => setNewLoc({...newLoc, lon: parseFloat(e.target.value)})} /></Col>
               </Row>
-              <Button variant="outline-danger" className="w-100 btn-sm fw-bold" onClick={handleAddLocation}>ADD BRANCH</Button>
+              <Button variant="outline-danger" className="w-100 btn-sm fw-bold" onClick={() => fetch(`/api/admin/add-location?admin_email=${adminEmail}`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(newLoc) }).then(() => fetchData())}>ADD BRANCH</Button>
             </Form>
-            
             <div className="overflow-auto" style={{maxHeight: '200px'}}>
-                {filteredLocations.map(l => (
+                {locations.filter(l => l.name.toLowerCase().includes(locSearch.toLowerCase())).map(l => (
                     <div key={l.id} className="d-flex justify-content-between align-items-center border-bottom py-2 small">
-                        <div>
-                          <strong>{l.name}</strong> <span className="text-muted">(ID: {l.id})</span>
-                        </div>
-                        <Button variant="link" className="text-danger p-0" onClick={() => handleDeleteLocation(l.id)}>
-                          <Trash2 size={14}/>
-                        </Button>
+                        <strong>{l.name}</strong>
+                        <Button variant="link" className="text-danger p-0" onClick={() => handleDeleteLocation(l.id)}><Trash2 size={14}/></Button>
                     </div>
                 ))}
             </div>
@@ -203,18 +147,13 @@ const AdminDashboard = () => {
 
         <Col lg={8}>
           <Card className="border-0 shadow-sm overflow-hidden h-100">
-            <Card.Header className="bg-white fw-bold d-flex align-items-center gap-2 pt-3">
-              <MapIcon className="text-danger" size={20} /> Enterprise Live View
-            </Card.Header>
             <div style={{ height: '400px', width: '100%' }}>
               <MapContainer center={[22.5726, 88.3639]} zoom={5} style={{ height: '100%' }}>
                 <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
                 <RecenterMap locations={liveLocations} />
                 {liveLocations.map((loc) => (
                   <Marker key={loc.email} position={[parseFloat(loc.lat), parseFloat(loc.lon)]}>
-                    <Popup>
-                      <strong>{loc.name}</strong><br/>{loc.email}
-                    </Popup>
+                    <Popup><strong>{loc.name}</strong><br/>{loc.email}</Popup>
                   </Marker>
                 ))}
               </MapContainer>
@@ -224,38 +163,23 @@ const AdminDashboard = () => {
       </Row>
 
       <Card className="border-0 shadow-sm p-4">
-        <div className="d-flex justify-content-between align-items-center mb-4">
-          <h5 className="fw-bold m-0 d-flex align-items-center"><Navigation className="text-danger me-2" size={20} /> User Directory</h5>
-          
-          {/* Main Search Bar */}
-          <InputGroup style={{ maxWidth: '400px' }}>
-            <InputGroup.Text className="bg-white border-end-0"><Search size={18} className="text-muted"/></InputGroup.Text>
-            <Form.Control 
-              className="border-start-0 ps-0"
-              placeholder="Search by name, email, or branch..." 
-              onChange={(e) => setEmpSearch(e.target.value)}
-            />
-          </InputGroup>
-        </div>
-
+        <InputGroup style={{ maxWidth: '400px' }} className="mb-3">
+          <InputGroup.Text className="bg-white border-end-0"><Search size={18} className="text-muted"/></InputGroup.Text>
+          <Form.Control className="border-start-0 ps-0" placeholder="Search staff..." onChange={(e) => setEmpSearch(e.target.value)} />
+        </InputGroup>
         <Table responsive hover className="align-middle border">
           <thead className="table-light">
             <tr className="small text-uppercase">
-              <th>Full Name</th>
-              <th>Email Address</th>
-              <th>Assigned Office (ID)</th>
-              <th>Shift & Role</th>
-              <th>Blockchain ID</th>
-              <th className="text-center">Actions</th>
+              <th>Full Name</th><th>Email</th><th>Branch</th><th>Shift & Role</th><th>Blockchain ID</th><th>Actions</th>
             </tr>
           </thead>
           <tbody>
-            {filteredEmployees.map(emp => (
+            {employees.filter(emp => emp.full_name.toLowerCase().includes(empSearch.toLowerCase())).map(emp => (
               <tr key={emp.id}>
-                <td><Form.Control size="sm" defaultValue={emp.full_name} id={`name-${emp.id}`} className="fw-bold border-0" /></td>
+                <td><Form.Control size="sm" defaultValue={emp.full_name} id={`name-${emp.id}`} className="border-0 fw-bold" /></td>
                 <td><Form.Control size="sm" defaultValue={emp.email} id={`email-${emp.id}`} className="border-0" /></td>
                 <td>
-                  <Form.Select size="sm" defaultValue={emp.location_id} id={`loc-${emp.id}`} className="bg-light border-0 text-danger fw-bold">
+                  <Form.Select size="sm" defaultValue={emp.location_id} id={`loc-${emp.id}`} className="bg-light border-0">
                     <option value="">No Office</option>
                     {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
                   </Form.Select>
@@ -266,44 +190,34 @@ const AdminDashboard = () => {
                     <Form.Control size="sm" defaultValue={emp.shift_end} id={`end-${emp.id}`} className="text-center p-0" />
                   </div>
                   <Form.Select size="sm" defaultValue={emp.user_type} id={`type-${emp.id}`} className="p-0 border-0 small text-muted">
-                    <option value="employee">Employee</option>
-                    <option value="manager">Manager</option>
-                    <option value="admin">Admin</option>
+                    <option value="employee">Employee</option><option value="manager">Manager</option><option value="admin">Admin</option>
                   </Form.Select>
                 </td>
                 <td><code className="small bg-light p-1">{emp.blockchain_id || 'N/A'}</code></td>
-                <td className="text-center">
-                  <div className="d-flex gap-2 justify-content-center">
-                    <Button variant="danger" size="sm" onClick={() => handleUpdateEmployee(emp.email, emp.id)} title="Save Changes"><Save size={14}/></Button>
-                    <Button variant="outline-dark" size="sm" onClick={() => handleDeleteEmployee(emp.email)} title="Delete User"><Trash2 size={14}/></Button>
+                <td>
+                  <div className="d-flex gap-2">
+                    <Button variant="danger" size="sm" onClick={() => handleUpdateEmployee(emp.email, emp.id)}><Save size={14}/></Button>
+                    <Button variant="outline-dark" size="sm" onClick={() => handleDeleteEmployee(emp.email)}><Trash2 size={14}/></Button>
                   </div>
                 </td>
               </tr>
             ))}
           </tbody>
         </Table>
-        {filteredEmployees.length === 0 && <div className="text-center py-4 text-muted">No employees found matching your search.</div>}
       </Card>
 
-      {/* Onboarding Modal remains same */}
       <Modal show={showAddEmp} onHide={() => setShowAddEmp(false)} centered>
-         {/* ... (Same Modal Content) ... */}
-         <Modal.Header closeButton className="border-0">
-            <Modal.Title className="fw-bold">Onboard New Staff</Modal.Title>
-        </Modal.Header>
+        <Modal.Header closeButton className="border-0"><Modal.Title className="fw-bold">Onboard New Staff</Modal.Title></Modal.Header>
         <Modal.Body>
             <Form onSubmit={handleOnboardEmployee}>
+                <Form.Group className="mb-2"><Form.Label className="small fw-bold">Full Name</Form.Label><Form.Control required onChange={e => setNewEmp({...newEmp, name: e.target.value})} /></Form.Group>
+                <Form.Group className="mb-2"><Form.Label className="small fw-bold">Email</Form.Label><Form.Control type="email" required onChange={e => setNewEmp({...newEmp, email: e.target.value})} /></Form.Group>
+                <Form.Group className="mb-2"><Form.Label className="small fw-bold">Initial Password</Form.Label><Form.Control type="password" required onChange={e => setNewEmp({...newEmp, pass: e.target.value})} /></Form.Group>
                 <Form.Group className="mb-2">
-                    <Form.Label className="small fw-bold">Full Name</Form.Label>
-                    <Form.Control required onChange={e => setNewEmp({...newEmp, name: e.target.value})} />
-                </Form.Group>
-                <Form.Group className="mb-2">
-                    <Form.Label className="small fw-bold">Email</Form.Label>
-                    <Form.Control type="email" required onChange={e => setNewEmp({...newEmp, email: e.target.value})} />
-                </Form.Group>
-                <Form.Group className="mb-2">
-                    <Form.Label className="small fw-bold">Initial Password</Form.Label>
-                    <Form.Control type="password" required onChange={e => setNewEmp({...newEmp, pass: e.target.value})} />
+                  <Form.Label className="small fw-bold">Initial Role</Form.Label>
+                  <Form.Select value={newEmp.role} onChange={e => setNewEmp({...newEmp, role: e.target.value})}>
+                    <option value="manager">Manager</option><option value="employee">Employee</option><option value="admin">Admin</option>
+                  </Form.Select>
                 </Form.Group>
                 <Form.Group className="mb-3">
                     <Form.Label className="small fw-bold">Assign Primary Branch</Form.Label>
