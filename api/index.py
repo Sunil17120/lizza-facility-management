@@ -7,7 +7,7 @@ from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconn
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from datetime import datetime, timedelta
-
+from .database import SessionLocal, User, EmployeeLocation, OfficeLocation, init_db
 # Handle local vs production imports for database
 try:
     from .database import SessionLocal, User, EmployeeLocation, init_db
@@ -254,21 +254,13 @@ def update_employee(target_email: str, admin_email: str, data: dict, db: Session
     db.commit()
     return {"message": "Update successful", "employee": user.full_name}
 
-@app.post("/api/admin/set-office")
-def set_office(admin_email: str, data: dict, db: Session = Depends(get_db)):
-    """Updates global geofence settings for all employees."""
-    admin = db.query(User).filter(User.email == admin_email.lower().strip()).first()
-    if not admin or admin.user_type.lower() != 'admin':
-        raise HTTPException(status_code=403, detail="Forbidden")
-
-    # Sync geofence for all users
-    db.query(User).update({
-        "office_lat": data['lat'],
-        "office_lon": data['lon'],
-        "fence_radius": data['radius']
-    })
+@app.post("/api/admin/add-location")
+def add_location(data: LocationCreate, db: Session = Depends(get_db)):
+    # This was failing because OfficeLocation wasn't imported
+    new_loc = OfficeLocation(**data.dict())
+    db.add(new_loc)
     db.commit()
-    return {"status": "Office geofence updated"}
+    return {"message": "Location Added"}
 class LocationCreate(BaseModel):
     name: str
     lat: float
@@ -277,14 +269,24 @@ class LocationCreate(BaseModel):
 
 @app.get("/api/admin/locations")
 def get_locations(db: Session = Depends(get_db)):
+    # This was failing because OfficeLocation wasn't imported
     return db.query(OfficeLocation).all()
 
-@app.post("/api/admin/add-location")
-def add_location(data: LocationCreate, db: Session = Depends(get_db)):
-    new_loc = OfficeLocation(**data.dict())
-    db.add(new_loc)
+@app.delete("/api/admin/delete-location/{loc_id}")
+def delete_location(loc_id: int, admin_email: str, db: Session = Depends(get_db)):
+    admin = db.query(User).filter(User.email == admin_email.lower().strip()).first()
+    if not admin or admin.user_type.lower() != 'admin':
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    location = db.query(OfficeLocation).filter(OfficeLocation.id == loc_id).first()
+    if not location:
+        raise HTTPException(status_code=404, detail="Location not found")
+
+    db.query(User).filter(User.location_id == loc_id).update({"location_id": None})
+    
+    db.delete(location)
     db.commit()
-    return {"message": "Location Added"}
+    return {"message": "Location deleted and employees unassigned"}
 @app.delete("/api/admin/delete-employee")
 def delete_employee(target_email: str, admin_email: str, db: Session = Depends(get_db)):
     """Permanently deletes an employee from the system."""
