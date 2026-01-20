@@ -7,7 +7,7 @@ from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconn
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from datetime import datetime, timedelta
-
+from sqlalchemy.exc import IntegrityError
 # --- 1. DATABASE IMPORTS & INIT ---
 try:
     from .database import SessionLocal, User, EmployeeLocation, OfficeLocation, init_db
@@ -124,18 +124,27 @@ def get_user_profile(email: str, db: Session = Depends(get_db)):
 
 @app.post("/api/manager/add-employee")
 def add_employee(data: StaffCreate, db: Session = Depends(get_db)):
-    # 1. Generate unique identifiers
+    # 1. Pre-check: Does this email already exist?
+    existing_user = db.query(User).filter(User.email == data.email.lower().strip()).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="An employee with this email already exists.")
+
+    # 2. Pre-check: Does the manager exist? (Avoid Foreign Key errors)
+    manager_exists = db.query(User).filter(User.id == data.manager_id).first()
+    if not manager_exists:
+        # Fallback to a default admin or return error
+        raise HTTPException(status_code=400, detail=f"Manager ID {data.manager_id} not found.")
+
     blockchain_hash = hashlib.sha256(f"{data.email}{datetime.utcnow()}".encode()).hexdigest()
     salt = hashlib.sha256(data.email.encode()).hexdigest()[:16]
     
-    # 2. Prepare the new user object
     new_user = User(
         full_name=data.full_name,
         email=data.email.lower().strip(),
         password=get_secure_hash(data.password, salt),
         user_type=data.user_type, 
         manager_id=data.manager_id,
-        location_id=data.location_id,
+        location_id=data.location_id if data.location_id else None, # Handle empty location
         blockchain_id=f"LIZZA-{blockchain_hash[:10]}".upper(),
         shift_start=data.shift_start,
         shift_end=data.shift_end,
@@ -143,20 +152,15 @@ def add_employee(data: StaffCreate, db: Session = Depends(get_db)):
     )
     
     try:
-        # 3. FIX: Add error handling around the commit
         db.add(new_user)
         db.commit()
         return {"status": "success", "blockchain_id": new_user.blockchain_id}
-    except Exception as e:
-        # 4. Rollback to prevent database hanging
+    except IntegrityError:
         db.rollback()
-        # Return the actual error message (e.g., "Email already exists")
-        error_msg = str(e.orig) if hasattr(e, 'orig') else str(e)
-        raise HTTPException(
-            status_code=400, 
-            detail=f"Onboarding failed: {error_msg}"
-        )
-
+        raise HTTPException(status_code=400, detail="Integrity Error: Duplicate Blockchain ID or Email.")
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
 @app.get("/api/admin/employees")
 def get_all_employees(admin_email: str, db: Session = Depends(get_db)):
     admin = db.query(User).filter(User.email == admin_email.lower().strip()).first()
