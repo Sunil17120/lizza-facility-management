@@ -1,6 +1,8 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Table, Badge, Form, Container, Card, Spinner, Button, Row, Col, Modal, InputGroup } from 'react-bootstrap';
-import { UserCog, Map as MapIcon, Save, Navigation, Building2, UserPlus, Search, Trash2 } from 'lucide-react';
+// Removed 'Badge' as it was unused
+import { Table, Form, Container, Card, Spinner, Button, Row, Col, Modal, InputGroup } from 'react-bootstrap';
+// Removed 'MapIcon' and 'Navigation' as they were unused
+import { UserCog, Save, Building2, UserPlus, Search, Trash2 } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
@@ -34,13 +36,13 @@ const AdminDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [showAddEmp, setShowAddEmp] = useState(false);
   const [empSearch, setEmpSearch] = useState('');
-  const [locSearch, setLocSearch] = useState('');
+  const [locSearch, setLocSearch] = useState(''); // Now used in the filter below
   
   const [newLoc, setNewLoc] = useState({ name: '', lat: 22.5726, lon: 88.3639, radius: 200 });
   const [newEmp, setNewEmp] = useState({ name: '', email: '', pass: '', role: 'manager', locId: '' });
   
   const adminEmail = localStorage.getItem('userEmail');
-  const adminId = localStorage.getItem('userId') || 1; // Used for initial manager link
+  const adminId = localStorage.getItem('userId') || 1;
 
   const fetchData = useCallback(async () => {
     try {
@@ -103,7 +105,7 @@ const AdminDashboard = () => {
         full_name: newEmp.name,
         email: newEmp.email,
         password: newEmp.pass,
-        manager_id: parseInt(adminId), // Admin as initial manager
+        manager_id: parseInt(adminId), 
         user_type: newEmp.role,
         shift_start: "09:00",
         shift_end: "18:00",
@@ -126,6 +128,16 @@ const AdminDashboard = () => {
         <Col lg={4}>
           <Card className="border-0 shadow-sm p-4 h-100">
             <h5 className="fw-bold mb-3 d-flex align-items-center"><Building2 className="text-danger me-2" size={20} /> Office Branches</h5>
+            
+            {/* ADDED: Branch Search Input to use locSearch variable */}
+            <InputGroup className="mb-3" size="sm">
+              <InputGroup.Text className="bg-white"><Search size={14}/></InputGroup.Text>
+              <Form.Control 
+                placeholder="Find branch..." 
+                onChange={(e) => setLocSearch(e.target.value)} 
+              />
+            </InputGroup>
+
             <Form className="mb-4 bg-light p-3 rounded">
               <Form.Control className="mb-2" placeholder="Branch Name" onChange={e => setNewLoc({...newLoc, name: e.target.value})} />
               <Row>
@@ -134,8 +146,12 @@ const AdminDashboard = () => {
               </Row>
               <Button variant="outline-danger" className="w-100 btn-sm fw-bold" onClick={() => fetch(`/api/admin/add-location?admin_email=${adminEmail}`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(newLoc) }).then(() => fetchData())}>ADD BRANCH</Button>
             </Form>
+            
             <div className="overflow-auto" style={{maxHeight: '200px'}}>
-                {locations.filter(l => l.name.toLowerCase().includes(locSearch.toLowerCase())).map(l => (
+                {/* USE locSearch to filter branch list */}
+                {locations
+                  .filter(l => l.name.toLowerCase().includes(locSearch.toLowerCase()))
+                  .map(l => (
                     <div key={l.id} className="d-flex justify-content-between align-items-center border-bottom py-2 small">
                         <strong>{l.name}</strong>
                         <Button variant="link" className="text-danger p-0" onClick={() => handleDeleteLocation(l.id)}><Trash2 size={14}/></Button>
