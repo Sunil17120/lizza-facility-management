@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Table, Badge, Form, Container, Card, Spinner, Button, Row, Col, Modal } from 'react-bootstrap';
-import { UserCog, Map as MapIcon, Save, Navigation, Building2, UserPlus } from 'lucide-react';
+import { Table, Badge, Form, Container, Card, Spinner, Button, Row, Col, Modal, InputGroup } from 'react-bootstrap';
+import { UserCog, Map as MapIcon, Save, Navigation, Building2, UserPlus, Search, Trash2 } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
@@ -34,7 +34,11 @@ const AdminDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [showAddEmp, setShowAddEmp] = useState(false);
   
-  // States for forms
+  // Search States
+  const [empSearch, setEmpSearch] = useState('');
+  const [locSearch, setLocSearch] = useState('');
+  
+  // Form States
   const [newLoc, setNewLoc] = useState({ name: '', lat: 22.5726, lon: 88.3639, radius: 200 });
   const [newEmp, setNewEmp] = useState({ name: '', email: '', pass: '', role: 'employee', locId: '' });
   
@@ -44,7 +48,7 @@ const AdminDashboard = () => {
     try {
       const [empRes, locRes, liveRes] = await Promise.all([
         fetch(`/api/admin/employees?admin_email=${adminEmail}`),
-        fetch(`/api/admin/locations`), // New endpoint for locations
+        fetch(`/api/admin/locations`),
         fetch(`/api/admin/live-tracking?admin_email=${adminEmail}`)
       ]);
 
@@ -64,6 +68,40 @@ const AdminDashboard = () => {
     const interval = setInterval(fetchData, 30000);
     return () => clearInterval(interval);
   }, [fetchData]);
+
+  // --- DELETE HANDLERS ---
+  const handleDeleteEmployee = async (email) => {
+    if (window.confirm(`Are you sure you want to delete employee: ${email}?`)) {
+      const res = await fetch(`/api/admin/delete-employee?target_email=${email}&admin_email=${adminEmail}`, {
+        method: 'DELETE'
+      });
+      if (res.ok) { alert("Employee Deleted"); fetchData(); }
+    }
+  };
+
+  const handleDeleteLocation = async (locId) => {
+    if (window.confirm(`Delete this branch? Note: This may affect employees assigned here.`)) {
+      const res = await fetch(`/api/admin/delete-location/${locId}?admin_email=${adminEmail}`, {
+        method: 'DELETE'
+      });
+      if (res.ok) { alert("Branch Removed"); fetchData(); }
+    }
+  };
+
+  // --- FILTER LOGIC ---
+  const filteredLocations = locations.filter(l => 
+    l.name.toLowerCase().includes(locSearch.toLowerCase())
+  );
+
+  const filteredEmployees = employees.filter(emp => {
+    const searchStr = empSearch.toLowerCase();
+    const branchName = locations.find(l => l.id === emp.location_id)?.name || "No Office";
+    return (
+      emp.full_name.toLowerCase().includes(searchStr) ||
+      emp.email.toLowerCase().includes(searchStr) ||
+      branchName.toLowerCase().includes(searchStr)
+    );
+  });
 
   const handleUpdateEmployee = async (originalEmail, id) => {
     const updatedData = {
@@ -95,14 +133,14 @@ const AdminDashboard = () => {
 
   const handleOnboardEmployee = async (e) => {
     e.preventDefault();
-    const res = await fetch(`/api/manager/add-employee`, { // Reusing manager onboarding logic
+    const res = await fetch(`/api/manager/add-employee`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         full_name: newEmp.name,
         email: newEmp.email,
         password: newEmp.pass,
-        manager_id: 1, // Default or select from list
+        manager_id: 1, 
         shift_start: "09:00",
         shift_end: "18:00",
         location_id: parseInt(newEmp.locId)
@@ -124,12 +162,21 @@ const AdminDashboard = () => {
       </div>
 
       <Row className="mb-5 g-4">
-        {/* Branch / Location Management */}
         <Col lg={4}>
           <Card className="border-0 shadow-sm p-4 h-100">
             <h5 className="fw-bold mb-3 d-flex align-items-center">
               <Building2 className="text-danger me-2" size={20} /> Office Branches
             </h5>
+            
+            {/* Search Branches */}
+            <InputGroup className="mb-3" size="sm">
+              <InputGroup.Text className="bg-white"><Search size={14}/></InputGroup.Text>
+              <Form.Control 
+                placeholder="Find branch..." 
+                onChange={(e) => setLocSearch(e.target.value)}
+              />
+            </InputGroup>
+
             <Form className="mb-4 bg-light p-3 rounded">
               <Form.Control className="mb-2" placeholder="Branch Name" onChange={e => setNewLoc({...newLoc, name: e.target.value})} />
               <Row>
@@ -140,17 +187,20 @@ const AdminDashboard = () => {
             </Form>
             
             <div className="overflow-auto" style={{maxHeight: '200px'}}>
-                {locations.map(l => (
-                    <div key={l.id} className="d-flex justify-content-between border-bottom py-2 small">
-                        <span><strong>{l.name}</strong> (ID: {l.id})</span>
-                        <span className="text-muted">{l.radius}m</span>
+                {filteredLocations.map(l => (
+                    <div key={l.id} className="d-flex justify-content-between align-items-center border-bottom py-2 small">
+                        <div>
+                          <strong>{l.name}</strong> <span className="text-muted">(ID: {l.id})</span>
+                        </div>
+                        <Button variant="link" className="text-danger p-0" onClick={() => handleDeleteLocation(l.id)}>
+                          <Trash2 size={14}/>
+                        </Button>
                     </div>
                 ))}
             </div>
           </Card>
         </Col>
 
-        {/* Live Map Area */}
         <Col lg={8}>
           <Card className="border-0 shadow-sm overflow-hidden h-100">
             <Card.Header className="bg-white fw-bold d-flex align-items-center gap-2 pt-3">
@@ -173,9 +223,21 @@ const AdminDashboard = () => {
         </Col>
       </Row>
 
-      {/* Main Directory */}
       <Card className="border-0 shadow-sm p-4">
-        <h5 className="fw-bold mb-4 d-flex align-items-center"><Navigation className="text-danger me-2" size={20} /> User Directory</h5>
+        <div className="d-flex justify-content-between align-items-center mb-4">
+          <h5 className="fw-bold m-0 d-flex align-items-center"><Navigation className="text-danger me-2" size={20} /> User Directory</h5>
+          
+          {/* Main Search Bar */}
+          <InputGroup style={{ maxWidth: '400px' }}>
+            <InputGroup.Text className="bg-white border-end-0"><Search size={18} className="text-muted"/></InputGroup.Text>
+            <Form.Control 
+              className="border-start-0 ps-0"
+              placeholder="Search by name, email, or branch..." 
+              onChange={(e) => setEmpSearch(e.target.value)}
+            />
+          </InputGroup>
+        </div>
+
         <Table responsive hover className="align-middle border">
           <thead className="table-light">
             <tr className="small text-uppercase">
@@ -184,18 +246,18 @@ const AdminDashboard = () => {
               <th>Assigned Office (ID)</th>
               <th>Shift & Role</th>
               <th>Blockchain ID</th>
-              <th className="text-center">Action</th>
+              <th className="text-center">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {employees.map(emp => (
+            {filteredEmployees.map(emp => (
               <tr key={emp.id}>
                 <td><Form.Control size="sm" defaultValue={emp.full_name} id={`name-${emp.id}`} className="fw-bold border-0" /></td>
                 <td><Form.Control size="sm" defaultValue={emp.email} id={`email-${emp.id}`} className="border-0" /></td>
                 <td>
                   <Form.Select size="sm" defaultValue={emp.location_id} id={`loc-${emp.id}`} className="bg-light border-0 text-danger fw-bold">
                     <option value="">No Office</option>
-                    {locations.map(l => <option key={l.id} value={l.id}>{l.name} (ID: {l.id})</option>)}
+                    {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
                   </Form.Select>
                 </td>
                 <td>
@@ -211,17 +273,22 @@ const AdminDashboard = () => {
                 </td>
                 <td><code className="small bg-light p-1">{emp.blockchain_id || 'N/A'}</code></td>
                 <td className="text-center">
-                  <Button variant="danger" size="sm" onClick={() => handleUpdateEmployee(emp.email, emp.id)}><Save size={14}/></Button>
+                  <div className="d-flex gap-2 justify-content-center">
+                    <Button variant="danger" size="sm" onClick={() => handleUpdateEmployee(emp.email, emp.id)} title="Save Changes"><Save size={14}/></Button>
+                    <Button variant="outline-dark" size="sm" onClick={() => handleDeleteEmployee(emp.email)} title="Delete User"><Trash2 size={14}/></Button>
+                  </div>
                 </td>
               </tr>
             ))}
           </tbody>
         </Table>
+        {filteredEmployees.length === 0 && <div className="text-center py-4 text-muted">No employees found matching your search.</div>}
       </Card>
 
-      {/* Onboarding Modal */}
+      {/* Onboarding Modal remains same */}
       <Modal show={showAddEmp} onHide={() => setShowAddEmp(false)} centered>
-        <Modal.Header closeButton className="border-0">
+         {/* ... (Same Modal Content) ... */}
+         <Modal.Header closeButton className="border-0">
             <Modal.Title className="fw-bold">Onboard New Staff</Modal.Title>
         </Modal.Header>
         <Modal.Body>

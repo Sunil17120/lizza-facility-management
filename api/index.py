@@ -188,16 +188,14 @@ async def websocket_endpoint(websocket: WebSocket, manager_id: str):
 
 @app.get("/api/admin/employees")
 def get_all_employees(admin_email: str, db: Session = Depends(get_db)):
-    """Fetches all users including their assigned location IDs for the admin table."""
-    # 1. Security check: Ensure requester is an admin
     admin = db.query(User).filter(User.email == admin_email.lower().strip()).first()
     if not admin or admin.user_type.lower() != 'admin':
         raise HTTPException(status_code=403, detail="Admin access required")
     
-    # 2. Query all users
     users = db.query(User).all()
     
-    # 3. Include location_id in the response
+    # We return the list as before, but the frontend "filteredEmployees" logic 
+    # will now use the location_id to match with the location list for search.
     return [{
         "id": u.id,
         "full_name": u.full_name,
@@ -206,7 +204,7 @@ def get_all_employees(admin_email: str, db: Session = Depends(get_db)):
         "shift_start": u.shift_start,
         "shift_end": u.shift_end,
         "blockchain_id": u.blockchain_id,
-        "location_id": u.location_id  # CRITICAL: Added for mapping
+        "location_id": u.location_id 
     } for u in users]
 
 @app.get("/api/admin/live-tracking")
@@ -287,3 +285,45 @@ def add_location(data: LocationCreate, db: Session = Depends(get_db)):
     db.add(new_loc)
     db.commit()
     return {"message": "Location Added"}
+@app.delete("/api/admin/delete-employee")
+def delete_employee(target_email: str, admin_email: str, db: Session = Depends(get_db)):
+    """Permanently deletes an employee from the system."""
+    # 1. Security check
+    admin = db.query(User).filter(User.email == admin_email.lower().strip()).first()
+    if not admin or admin.user_type.lower() != 'admin':
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    # 2. Find and delete user
+    user = db.query(User).filter(User.email == target_email.lower().strip()).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # 3. Cleanup Redis live tracking if exists
+    r.delete(f"loc:{target_email.lower().strip()}")
+    
+    db.delete(user)
+    db.commit()
+    return {"message": f"Employee {target_email} deleted successfully"}
+
+
+@app.delete("/api/admin/delete-location/{loc_id}")
+def delete_location(loc_id: int, admin_email: str, db: Session = Depends(get_db)):
+    """Deletes an office branch and unassigns users associated with it."""
+    # 1. Security check
+    admin = db.query(User).filter(User.email == admin_email.lower().strip()).first()
+    if not admin or admin.user_type.lower() != 'admin':
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    # 2. Find the location
+    # Note: Using OfficeLocation as per your existing schema
+    location = db.query(OfficeLocation).filter(OfficeLocation.id == loc_id).first()
+    if not location:
+        raise HTTPException(status_code=404, detail="Location not found")
+
+    # 3. Unassign employees from this location (Set location_id to null)
+    # This prevents foreign key constraint errors
+    db.query(User).filter(User.location_id == loc_id).update({"location_id": None})
+    
+    db.delete(location)
+    db.commit()
+    return {"message": "Location deleted and employees unassigned"}
