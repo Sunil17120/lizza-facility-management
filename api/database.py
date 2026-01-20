@@ -53,5 +53,9 @@ def init_db():
     
     # 2. Migration: Force add columns using raw SQL
     with engine.connect() as conn:
-       
-        conn.commit()
+        try:
+            # Force add location_id if the table already existed before the change
+            conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS location_id INTEGER"))
+            conn.commit()
+        except Exception as e:
+            print(f"Migration notice: {e}")

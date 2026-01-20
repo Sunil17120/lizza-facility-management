@@ -194,6 +194,7 @@ def update_employee(target_email: str, admin_email: str, data: dict, db: Session
     db.commit()
     return {"message": "Update successful"}
 
+
 @app.delete("/api/admin/delete-employee")
 def delete_employee(target_email: str = Query(...), admin_email: str = Query(...), db: Session = Depends(get_db)):
     # 1. Admin Verification
@@ -207,25 +208,27 @@ def delete_employee(target_email: str = Query(...), admin_email: str = Query(...
         raise HTTPException(status_code=404, detail="User not found")
     
     try:
-        # 3. FIX: Prevent Redis from crashing the whole request
+        # 3. Redis Cleanup (Optional - wrapped to prevent 500 on Redis failure)
         try:
             r.delete(f"loc:{target_email.lower().strip()}")
         except Exception:
-            # If Redis fails, we log it internally but let the deletion proceed
-            print("Warning: Redis key deletion failed. Check REDIS_URL.")
             pass 
         
-        # 4. FIX: Integrity Error - Set subordinates' manager to NULL before deleting
+        # 4. FIX: Delete Location History (Foreign Key Constraint)
+        # This must happen before deleting the user
+        db.query(EmployeeLocation).filter(EmployeeLocation.user_id == user.id).delete()
+        
+        # 5. Fix Manager Links: Set subordinates' manager to NULL
         db.query(User).filter(User.manager_id == user.id).update({"manager_id": None})
         
-        # 5. Perform the deletion
+        # 6. Perform the user deletion
         db.delete(user)
         db.commit()
-        return {"status": "success", "message": f"Employee {target_email} deleted"}
+        return {"status": "success", "message": f"Employee {target_email} and history deleted"}
         
     except Exception as e:
         db.rollback()
-        # FIX: Raise the actual error message so you can see it in the response
+        # Returns the actual error message to the client for easier debugging
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @app.post("/api/user/update-location")
