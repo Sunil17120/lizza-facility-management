@@ -53,17 +53,5 @@ def init_db():
     
     # 2. Migration: Force add columns using raw SQL
     with engine.connect() as conn:
-        conn.execute(text("ALTER TABLE users DROP COLUMN IF EXISTS office_lat"))
-        conn.execute(text("ALTER TABLE users DROP COLUMN IF EXISTS office_lon"))
-        conn.execute(text("ALTER TABLE users DROP COLUMN IF EXISTS fence_radius"))
-        conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS office_locations (
-                id SERIAL PRIMARY KEY,
-                name VARCHAR UNIQUE,
-                lat DOUBLE PRECISION,
-                lon DOUBLE PRECISION,
-                radius INTEGER DEFAULT 200
-            )
-        """))
-        conn.execute(text(" ALTER TABLE users ADD COLUMN IF NOT EXISTS location_id INTEGER REFERENCES office_locations(id)"))
+       
         conn.commit()
