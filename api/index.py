@@ -272,21 +272,8 @@ def get_locations(db: Session = Depends(get_db)):
     # This was failing because OfficeLocation wasn't imported
     return db.query(OfficeLocation).all()
 
-@app.delete("/api/admin/delete-location/{loc_id}")
-def delete_location(loc_id: int, admin_email: str, db: Session = Depends(get_db)):
-    admin = db.query(User).filter(User.email == admin_email.lower().strip()).first()
-    if not admin or admin.user_type.lower() != 'admin':
-        raise HTTPException(status_code=403, detail="Admin access required")
 
-    location = db.query(OfficeLocation).filter(OfficeLocation.id == loc_id).first()
-    if not location:
-        raise HTTPException(status_code=404, detail="Location not found")
-
-    db.query(User).filter(User.location_id == loc_id).update({"location_id": None})
     
-    db.delete(location)
-    db.commit()
-    return {"message": "Location deleted and employees unassigned"}
 @app.delete("/api/admin/delete-employee")
 def delete_employee(target_email: str, admin_email: str, db: Session = Depends(get_db)):
     """Permanently deletes an employee from the system."""
