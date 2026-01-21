@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Container, Card, Form, Button, Row, Col, Badge, Table, Modal, Spinner, InputGroup } from 'react-bootstrap';
-import { UserPlus, Map as MapIcon, ShieldCheck, Users, Search, MapPin, Crosshair, Save, Trash2 } from 'lucide-react';
+// FIX: Removed unused imports (Crosshair, Save, Trash2) to solve build error
+import { UserPlus, Map as MapIcon, ShieldCheck, Users, Search, MapPin } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
