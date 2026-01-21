@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Mail, Lock, Eye, EyeOff } from 'lucide-react';
 
 const Auth = () => {
-  const isLogin = true; // Fixed: Now used in conditional rendering below
+  const isLogin = true; 
   const [showPassword, setShowPassword] = useState(false);
   
   const [formData, setFormData] = useState({
@@ -38,9 +38,22 @@ const Auth = () => {
         const data = await response.json();
         if (response.ok) {
           localStorage.clear();
+          
+          // --- FIX START ---
+          // We must save the user ID so the Manager Dashboard can use it
+          localStorage.setItem('userId', data.user_id); 
+          // --- FIX END ---
+          
           localStorage.setItem('userName', data.user);
           localStorage.setItem('userEmail', formData.email); 
-          navigate('/dashboard'); 
+          
+          // Navigate based on role (Optional better UX)
+          if (data.user_type === 'manager') {
+             navigate('/manager');
+          } else {
+             navigate('/dashboard');
+          }
+
         } else {
           alert(data.detail || "Authentication failed");
         }
