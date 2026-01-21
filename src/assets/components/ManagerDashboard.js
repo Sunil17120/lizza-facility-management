@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Container, Card, Form, Button, Row, Col, Badge, Table, Modal, Spinner, InputGroup } from 'react-bootstrap';
-import { UserPlus, Map as MapIcon, ShieldCheck, Users, Search, MapPin } from 'lucide-react';
+import { UserPlus, Map as MapIcon, ShieldCheck, Users, Search, MapPin, Crosshair, Save, Trash2 } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
@@ -27,47 +27,58 @@ const ManagerDashboard = () => {
   const [showAddEmp, setShowAddEmp] = useState(false);
   const [empSearch, setEmpSearch] = useState('');
 
-  // Form State (Updated to include 'role')
+  // Form State
   const [newEmp, setNewEmp] = useState({ name: '', email: '', pass: '', role: 'employee', locId: '' });
 
   const managerId = localStorage.getItem('userId'); 
 
-  // --- 1. FETCH DATA ---
-  const fetchData = useCallback(async () => {
+  // --- 1. CRITICAL FIX: FETCH LOCATIONS INDEPENDENTLY ---
+  // This ensures the dropdown fills up even if Manager ID has issues
+  useEffect(() => {
+    const fetchGlobalData = async () => {
+        try {
+            // Added timestamp to force fresh data (bypass cache)
+            const locRes = await fetch(`/api/admin/locations?_t=${Date.now()}`);
+            if (locRes.ok) {
+                const locData = await locRes.json();
+                console.log("Global Locations Loaded:", locData);
+                setLocations(locData);
+            } else {
+                console.error("Failed to load locations");
+            }
+        } catch (err) {
+            console.error("Network error loading locations:", err);
+        }
+    };
+    fetchGlobalData();
+  }, []); // Run once on mount
+
+  // --- 2. FETCH EMPLOYEES (DEPENDS ON MANAGER ID) ---
+  const fetchEmployees = useCallback(async () => {
     if (!managerId) {
         setLoading(false);
         return;
     }
-
     try {
         const cleanId = parseInt(managerId, 10);
-        
-        // A. Fetch Locations
-        const locRes = await fetch(`/api/admin/locations`); 
-        if (locRes.ok) {
-            const locData = await locRes.json();
-            console.log("Locations from DB:", locData); // Check Console (F12)
-            setLocations(locData);
-        }
+        if (isNaN(cleanId)) return;
 
-        // B. Fetch Employees
         const staffRes = await fetch(`/api/manager/my-employees?manager_id=${cleanId}`);
         if(staffRes.ok) {
             setMyEmployees(await staffRes.json());
         }
-        
         setLoading(false);
     } catch (err) {
-        console.error("Error fetching data:", err);
+        console.error("Error fetching staff:", err);
         setLoading(false);
     }
   }, [managerId]);
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    fetchEmployees();
+  }, [fetchEmployees]);
 
-  // --- 2. WEBSOCKET FOR LIVE TRACKING ---
+  // --- 3. WEBSOCKET FOR LIVE TRACKING ---
   useEffect(() => {
     if (!managerId) return;
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -83,7 +94,7 @@ const ManagerDashboard = () => {
     return () => socket.close();
   }, [managerId]);
 
-  // --- 3. HANDLE ONBOARDING ---
+  // --- 4. HANDLE ONBOARDING ---
   const handleOnboardEmployee = async (e) => {
     e.preventDefault();
     
@@ -92,9 +103,7 @@ const ManagerDashboard = () => {
         return;
     }
     
-    // Ensure locId is treated as a number
     const locationId = parseInt(newEmp.locId, 10);
-
     if (!locationId) {
         alert("Please select a valid branch from the list.");
         return;
@@ -105,7 +114,7 @@ const ManagerDashboard = () => {
         email: newEmp.email, 
         password: newEmp.pass, 
         manager_id: parseInt(managerId, 10), 
-        user_type: newEmp.role, // Uses the selected role from dropdown
+        user_type: newEmp.role,
         location_id: locationId, 
         shift_start: "09:00", 
         shift_end: "18:00"
@@ -124,7 +133,7 @@ const ManagerDashboard = () => {
             alert(`Success! Employee ID: ${data.blockchain_id}`);
             setShowAddEmp(false);
             setNewEmp({ name: '', email: '', pass: '', role: 'employee', locId: '' }); 
-            fetchData(); 
+            fetchEmployees(); // Refresh list
         } else {
             alert(`Error: ${data.detail || "Failed to add employee"}`);
         }
@@ -141,6 +150,8 @@ const ManagerDashboard = () => {
     <Container className="py-5 text-dark">
       <div className="d-flex justify-content-between align-items-center mb-4">
         <h2 className="fw-bold m-0"><Users className="me-2 text-danger" />Manager Panel</h2>
+        {/* DEBUG: Visual check to see if locations loaded */}
+        {/* <span className="small text-muted">Branches Loaded: {locations.length}</span> */}
         <Button variant="danger" onClick={() => setShowAddEmp(true)}>
             <UserPlus size={18} className="me-2"/>Onboard Staff
         </Button>
@@ -158,7 +169,7 @@ const ManagerDashboard = () => {
               <MapContainer center={[22.5726, 88.3639]} zoom={5} style={{ height: '100%' }}>
                 <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
                 
-                {/* Geofence Circles */}
+                {/* Geofences */}
                 {locations.map(loc => (
                     <Circle 
                         key={`fence-${loc.id}`}
@@ -191,7 +202,7 @@ const ManagerDashboard = () => {
           </Card>
         </Col>
 
-        {/* --- TEAM TABLE --- */}
+        {/* --- TEAM LIST --- */}
         <Col md={12}>
           <Card className="border-0 shadow-sm p-4">
             <div className="d-flex justify-content-between align-items-center mb-3">
@@ -258,7 +269,7 @@ const ManagerDashboard = () => {
         </Col>
       </Row>
 
-      {/* --- ADD USER MODAL (EXACTLY AS REQUESTED) --- */}
+      {/* --- ADD STAFF MODAL --- */}
       <Modal show={showAddEmp} onHide={() => setShowAddEmp(false)} centered>
         <Modal.Header closeButton className="border-0"><Modal.Title className="fw-bold">Onboard New Staff</Modal.Title></Modal.Header>
         <Modal.Body>
@@ -287,9 +298,13 @@ const ManagerDashboard = () => {
                     <Form.Label className="small fw-bold">Assign Branch</Form.Label>
                     <Form.Select required onChange={e => setNewEmp({...newEmp, locId: e.target.value})}>
                         <option value="">Select Branch...</option>
-                        {locations.map(l => (
-                            <option key={l.id} value={l.id}>{l.name}</option>
-                        ))}
+                        {locations.length > 0 ? (
+                            locations.map(l => (
+                                <option key={l.id} value={l.id}>{l.name}</option>
+                            ))
+                        ) : (
+                            <option disabled>Loading branches...</option>
+                        )}
                     </Form.Select>
                 </Form.Group>
                 <Button type="submit" variant="danger" className="w-100 fw-bold">SAVE STAFF</Button>
