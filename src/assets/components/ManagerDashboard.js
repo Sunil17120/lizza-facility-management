@@ -16,69 +16,38 @@ let DefaultIcon = L.icon({
 });
 L.Marker.prototype.options.icon = DefaultIcon;
 
-// --- YOUR DATA (Used if API fails) ---
-const FALLBACK_LOCATIONS = [
-  {
-    "name": "Lizza facility management",
-    "id": 2,
-    "radius": 200,
-    "lat": 12.939416,
-    "lon": 77.626692
-  },
-  {
-    "name": "Doddabulapur temp test",
-    "id": 3,
-    "radius": 200,
-    "lat": 13.166798,
-    "lon": 77.528548
-  }
-];
-
 const ManagerDashboard = () => {
   // --- STATE ---
   const [myEmployees, setMyEmployees] = useState([]);
-  const [locations, setLocations] = useState([]); // Will load Fallback if API fails
+  const [locations, setLocations] = useState([]); // Empty by default (Real Data Only)
   const [liveStaff, setLiveStaff] = useState({}); 
   const [loading, setLoading] = useState(true);
   
   // UI State
   const [showAddEmp, setShowAddEmp] = useState(false);
   const [empSearch, setEmpSearch] = useState('');
-
-  // Form State
   const [newEmp, setNewEmp] = useState({ name: '', email: '', pass: '', role: 'employee', locId: '' });
 
-  // Get logged in Manager ID
   const managerId = localStorage.getItem('userId'); 
 
-  // --- 1. FETCH DATA ---
+  // --- 1. FETCH REAL DATA ---
   const fetchData = useCallback(async () => {
-    // Force Int
-    const cleanId = parseInt(managerId, 10);
-    if (!managerId || isNaN(cleanId)) {
-        console.warn("No valid Manager ID found.");
+    if (!managerId) {
         setLoading(false);
         return;
     }
 
     try {
-        // A. Fetch Locations (Try API first, then Fallback)
-        try {
-            const locRes = await fetch(`/api/admin/locations`); 
-            if (locRes.ok) {
-                const locData = await locRes.json();
-                if (locData.length > 0) {
-                    setLocations(locData);
-                } else {
-                    console.warn("API returned empty list, using fallback.");
-                    setLocations(FALLBACK_LOCATIONS);
-                }
-            } else {
-                throw new Error("API Failed");
-            }
-        } catch (e) {
-            console.warn("Location API failed, using manual data:", e);
-            setLocations(FALLBACK_LOCATIONS); // <--- THIS WILL FIX YOUR DROPDOWN
+        const cleanId = parseInt(managerId, 10);
+        
+        // A. Fetch Locations from Live Database
+        const locRes = await fetch(`/api/admin/locations`); 
+        if (locRes.ok) {
+            const locData = await locRes.json();
+            console.log("Live Locations:", locData); // Check Console (F12) to see data
+            setLocations(locData);
+        } else {
+            console.error("Failed to fetch locations from server.");
         }
 
         // B. Fetch Employees
@@ -119,11 +88,11 @@ const ManagerDashboard = () => {
     e.preventDefault();
     
     if (!managerId) {
-        alert("Error: Manager ID missing. Please log out and log in again.");
+        alert("System Error: You are not logged in (Manager ID missing).");
         return;
     }
     if (!newEmp.locId) {
-        alert("Please assign a branch/site to the employee.");
+        alert("Please select a valid branch from the list.");
         return;
     }
 
@@ -148,17 +117,15 @@ const ManagerDashboard = () => {
         const data = await res.json();
 
         if(res.ok) {
-            alert(`Staff Onboarded Successfully!\nID: ${data.blockchain_id}`);
+            alert(`Success! Employee ID: ${data.blockchain_id}`);
             setShowAddEmp(false);
             setNewEmp({ name: '', email: '', pass: '', role: 'employee', locId: '' }); 
             fetchData(); 
         } else {
-            console.error("Backend Error:", data);
-            alert(`Failed: ${data.detail || "Check console for details"}`);
+            alert(`Error: ${data.detail || "Failed to add employee"}`);
         }
     } catch (error) {
-        console.error("Network Error:", error);
-        alert("Network error. Please try again.");
+        alert("Network Error: Check internet connection.");
     }
   };
 
@@ -176,7 +143,6 @@ const ManagerDashboard = () => {
       </div>
       
       <Row className="g-4">
-        {/* --- MAP SECTION --- */}
         <Col lg={12}>
           <Card className="border-0 shadow-sm overflow-hidden">
             <Card.Header className="bg-white fw-bold d-flex align-items-center justify-content-between">
@@ -184,10 +150,10 @@ const ManagerDashboard = () => {
               <Badge bg="danger">Live</Badge>
             </Card.Header>
             <div style={{ height: '450px', width: '100%' }}>
-              <MapContainer center={[12.9394, 77.6266]} zoom={10} style={{ height: '100%' }}>
+              <MapContainer center={[22.5726, 88.3639]} zoom={5} style={{ height: '100%' }}>
                 <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
                 
-                {/* 1. Geofence Circles */}
+                {/* Geofence Circles */}
                 {locations.map(loc => (
                     <Circle 
                         key={`fence-${loc.id}`}
@@ -202,7 +168,7 @@ const ManagerDashboard = () => {
                     </Circle>
                 ))}
 
-                {/* 2. Live Employee Markers */}
+                {/* Live Markers */}
                 {Object.entries(liveStaff).map(([email, data]) => (
                   <Marker key={email} position={[data.lat, data.lon]}>
                     <Popup>
@@ -220,7 +186,6 @@ const ManagerDashboard = () => {
           </Card>
         </Col>
 
-        {/* --- TEAM LIST SECTION --- */}
         <Col md={12}>
           <Card className="border-0 shadow-sm p-4">
             <div className="d-flex justify-content-between align-items-center mb-3">
@@ -308,6 +273,7 @@ const ManagerDashboard = () => {
                     <Form.Label className="small fw-bold">Assign Site/Branch</Form.Label>
                     <Form.Select required onChange={e => setNewEmp({...newEmp, locId: e.target.value})}>
                         <option value="">Select Location...</option>
+                        {/* NO FALLBACK: This will be empty until you add data in Admin Panel */}
                         {locations.map(l => (
                             <option key={l.id} value={l.id}>{l.name}</option>
                         ))}
