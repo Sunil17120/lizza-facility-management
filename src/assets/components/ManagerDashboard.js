@@ -33,34 +33,37 @@ const ManagerDashboard = () => {
   // Get logged in Manager ID
   const managerId = localStorage.getItem('userId'); 
 
-  // --- 1. FETCH DATA (FIXED 422 ERROR) ---
+  // --- 1. FETCH DATA ---
   const fetchData = useCallback(async () => {
-    // A. SAFEGUARD: Check if ID exists in storage
     if (!managerId) {
-        console.warn("No Manager ID found in LocalStorage");
+        console.warn("No Manager ID found. Please log in.");
         setLoading(false);
         return;
     }
 
-    // B. CONVERSION: Force ID to be an Integer (Fixes 422 Error)
+    // Force Integer ID
     const cleanId = parseInt(managerId, 10);
     if (isNaN(cleanId)) {
-        console.error("Manager ID is invalid (not a number):", managerId);
+        console.error("Manager ID is invalid:", managerId);
         setLoading(false);
         return;
     }
 
     try {
-        // Fetch Locations (Public list)
+        // A. Fetch Locations
         const locRes = await fetch(`/api/admin/locations`); 
-        if (locRes.ok) setLocations(await locRes.json());
+        if (locRes.ok) {
+            const locData = await locRes.json();
+            console.log("DEBUG: Locations loaded from DB:", locData); // <--- CHECK CONSOLE FOR THIS
+            setLocations(locData);
+        } else {
+            console.error("Failed to load locations");
+        }
 
-        // Fetch Employees using the CLEAN INTEGER ID
+        // B. Fetch Employees
         const staffRes = await fetch(`/api/manager/my-employees?manager_id=${cleanId}`);
         if(staffRes.ok) {
             setMyEmployees(await staffRes.json());
-        } else {
-            console.error("Failed to fetch staff. Status:", staffRes.status);
         }
         
         setLoading(false);
@@ -104,14 +107,14 @@ const ManagerDashboard = () => {
         return;
     }
 
-    // DATA CONVERSION: Ensure IDs are Integers
+    // PAYLOAD PREPARATION
     const payload = {
         full_name: newEmp.name, 
         email: newEmp.email, 
         password: newEmp.pass, 
-        manager_id: parseInt(managerId, 10), // Safe Int Conversion
+        manager_id: parseInt(managerId, 10), 
         user_type: 'employee',
-        location_id: parseInt(newEmp.locId, 10), // Safe Int Conversion
+        location_id: parseInt(newEmp.locId, 10), 
         shift_start: "09:00", 
         shift_end: "18:00"
     };
@@ -287,9 +290,14 @@ const ManagerDashboard = () => {
                     <Form.Label className="small fw-bold">Assign Site/Branch</Form.Label>
                     <Form.Select required onChange={e => setNewEmp({...newEmp, locId: e.target.value})}>
                         <option value="">Select Location...</option>
-                        {locations.map(l => (
-                            <option key={l.id} value={l.id}>{l.name}</option>
-                        ))}
+                        {/* FALLBACK: Show message if no branches exist */}
+                        {locations.length === 0 ? (
+                            <option disabled>No Branches Found (Contact Admin)</option>
+                        ) : (
+                            locations.map(l => (
+                                <option key={l.id} value={l.id}>{l.name}</option>
+                            ))
+                        )}
                     </Form.Select>
                 </Form.Group>
                 <Button type="submit" variant="danger" className="w-100 fw-bold">
