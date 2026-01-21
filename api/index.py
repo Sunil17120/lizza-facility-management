@@ -400,3 +400,18 @@ async def websocket_endpoint(websocket: WebSocket, manager_id: str):
             await websocket.receive_text()
     except WebSocketDisconnect:
         ws_manager.disconnect(websocket, manager_id)
+@app.get("/api/manager/my-employees")
+def get_manager_employees(manager_id: int, db: Session = Depends(get_db)):
+    # Fetch employees where manager_id matches
+    employees = db.query(User).filter(User.manager_id == manager_id).all()
+    
+    return [{
+        "id": u.id,
+        "full_name": u.full_name,
+        "email": u.email,
+        "location_id": u.location_id,
+        "shift_start": u.shift_start,
+        "shift_end": u.shift_end,
+        "is_present": u.is_present,
+        "blockchain_id": u.blockchain_id
+    } for u in employees]
