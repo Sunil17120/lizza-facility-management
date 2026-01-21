@@ -314,6 +314,19 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
     dist = get_distance(lat, lon, office.lat, office.lon)
     is_inside = dist <= office.radius
     
+    # --- FIX START: BROADCAST TO MANAGER ---
+    # This sends the live data to the specific manager's dashboard
+    if user.manager_id:
+        await ws_manager.broadcast(str(user.manager_id), {
+            "email": user.email,
+            "name": user.full_name,
+            "lat": lat,
+            "lon": lon,
+            "present": is_inside,
+            "status": "inside" if is_inside else "outside"
+        })
+    # --- FIX END ---
+    
     # Time calculations
     now_utc = datetime.utcnow()
     # Assuming IST (UTC+5:30)
@@ -391,7 +404,6 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
                     r.delete(oob_key) # Reset on error
 
         return status_response
-
 @app.websocket("/ws/tracking/{manager_id}")
 async def websocket_endpoint(websocket: WebSocket, manager_id: str):
     await ws_manager.connect(websocket, manager_id)
