@@ -1,12 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Container, Card, Form, Button, Row, Col, Badge, Table, Modal, Spinner, InputGroup } from 'react-bootstrap';
-// REMOVED 'RefreshCcw' from imports to fix build error
 import { UserPlus, Map as MapIcon, ShieldCheck, Users, Search, MapPin } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
-// Leaflet marker fix
+// --- LEAFLET ICON FIX ---
 import markerIcon from 'leaflet/dist/images/marker-icon.png';
 import markerShadow from 'leaflet/dist/images/marker-shadow.png';
 let DefaultIcon = L.icon({ 
@@ -31,22 +30,21 @@ const ManagerDashboard = () => {
   // Form State
   const [newEmp, setNewEmp] = useState({ name: '', email: '', pass: '', role: 'employee', locId: '' });
 
+  // Get logged in Manager ID
   const managerId = localStorage.getItem('userId'); 
-  // REMOVED unused 'managerEmail' variable to fix build error
 
   // --- 1. FETCH DATA (Locations & My Staff) ---
   const fetchData = useCallback(async () => {
+    if (!managerId) return;
     try {
-        // Fetch Locations for the dropdown and Map Geofences
+        // Fetch Locations (Public list for dropdown & Map Geofences)
         const locRes = await fetch(`/api/admin/locations`); 
-        const locData = await locRes.json();
-        setLocations(locData);
+        if (locRes.ok) setLocations(await locRes.json());
 
-        // Fetch My Assigned Employees
+        // Fetch My Assigned Employees (Requires new backend route below)
         const staffRes = await fetch(`/api/manager/my-employees?manager_id=${managerId}`);
-        if(staffRes.ok) {
-            setMyEmployees(await staffRes.json());
-        }
+        if(staffRes.ok) setMyEmployees(await staffRes.json());
+        
         setLoading(false);
     } catch (err) {
         console.error("Error fetching data:", err);
@@ -75,51 +73,66 @@ const ManagerDashboard = () => {
     return () => socket.close();
   }, [managerId]);
 
-  // --- 3. HANDLE ONBOARDING ---
+  // --- 3. HANDLE ONBOARDING (FIXED 422 ERROR) ---
   const handleOnboardEmployee = async (e) => {
     e.preventDefault();
     
-    // Validate Location
+    // VALIDATION 1: Check Manager ID
+    if (!managerId) {
+        alert("Error: Manager ID missing. Please log out and log in again.");
+        return;
+    }
+    
+    // VALIDATION 2: Check Location
     if (!newEmp.locId) {
         alert("Please assign a branch/site to the employee.");
         return;
     }
 
+    // DATA CONVERSION: Ensure IDs are Integers (Fixes 422)
     const payload = {
         full_name: newEmp.name, 
         email: newEmp.email, 
         password: newEmp.pass, 
-        manager_id: parseInt(managerId),
+        manager_id: parseInt(managerId, 10), // <--- Critical Fix
         user_type: 'employee',
-        location_id: parseInt(newEmp.locId),
+        location_id: parseInt(newEmp.locId, 10), // <--- Critical Fix
         shift_start: "09:00", 
         shift_end: "18:00"
     };
 
-    const res = await fetch('/api/manager/add-employee', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-    });
+    console.log("Sending Payload:", payload); // Debugging
 
-    if(res.ok) {
+    try {
+        const res = await fetch('/api/manager/add-employee', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
         const data = await res.json();
-        alert(`Staff Onboarded Successfully!\nID: ${data.blockchain_id}`);
-        setShowAddEmp(false);
-        fetchData(); // Refresh list
-    } else {
-        alert("Failed to onboard. Email might exist.");
+
+        if(res.ok) {
+            alert(`Staff Onboarded Successfully!\nID: ${data.blockchain_id}`);
+            setShowAddEmp(false);
+            setNewEmp({ name: '', email: '', pass: '', role: 'employee', locId: '' }); // Reset form
+            fetchData(); // Refresh list
+        } else {
+            console.error("Backend Error:", data);
+            alert(`Failed: ${data.detail || "Check console for details"}`);
+        }
+    } catch (error) {
+        console.error("Network Error:", error);
+        alert("Network error. Please try again.");
     }
   };
 
-  // Helper: Find geofence info for a user
   const getBranchInfo = (locId) => locations.find(l => l.id === locId);
 
   if (loading) return <div className="text-center py-5"><Spinner animation="border" variant="danger" /></div>;
 
   return (
     <Container className="py-5 text-dark">
-      {/* HEADER */}
       <div className="d-flex justify-content-between align-items-center mb-4">
         <h2 className="fw-bold m-0"><Users className="me-2 text-danger" />Manager Panel</h2>
         <Button variant="danger" onClick={() => setShowAddEmp(true)}>
@@ -139,7 +152,7 @@ const ManagerDashboard = () => {
               <MapContainer center={[22.5726, 88.3639]} zoom={11} style={{ height: '100%' }}>
                 <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
                 
-                {/* 1. DRAW GEOFENCES (Circles) */}
+                {/* Geofence Circles */}
                 {locations.map(loc => (
                     <Circle 
                         key={`fence-${loc.id}`}
@@ -154,7 +167,7 @@ const ManagerDashboard = () => {
                     </Circle>
                 ))}
 
-                {/* 2. DRAW LIVE EMPLOYEES */}
+                {/* Live Employee Markers */}
                 {Object.entries(liveStaff).map(([email, data]) => (
                   <Marker key={email} position={[data.lat, data.lon]}>
                     <Popup>
@@ -200,7 +213,6 @@ const ManagerDashboard = () => {
                     <tr><td colSpan="5" className="text-center">No employees assigned yet.</td></tr>
                 ) : (
                     myEmployees.filter(e => e.full_name.toLowerCase().includes(empSearch.toLowerCase())).map(emp => {
-                        // Check if we have live data for this person
                         const liveData = liveStaff[emp.email]; 
                         const branch = getBranchInfo(emp.location_id);
 
@@ -225,7 +237,6 @@ const ManagerDashboard = () => {
                                     )}
                                 </td>
                                 <td>
-                                    {/* Logic: If DB says present OR live data says present */}
                                     {emp.is_present || (liveData && liveData.present) ? 
                                         <span className="text-success fw-bold">Present</span> : 
                                         <span className="text-danger">Absent</span>
@@ -241,7 +252,7 @@ const ManagerDashboard = () => {
         </Col>
       </Row>
 
-      {/* --- ADD STAFF MODAL (Admin Style) --- */}
+      {/* --- ADD STAFF MODAL --- */}
       <Modal show={showAddEmp} onHide={() => setShowAddEmp(false)} centered>
         <Modal.Header closeButton className="border-0"><Modal.Title className="fw-bold">Onboard New Staff</Modal.Title></Modal.Header>
         <Modal.Body>
@@ -258,7 +269,6 @@ const ManagerDashboard = () => {
                     <Form.Label className="small fw-bold">Password</Form.Label>
                     <Form.Control type="password" required onChange={e => setNewEmp({...newEmp, pass: e.target.value})} />
                 </Form.Group>
-                
                 <Form.Group className="mb-3">
                     <Form.Label className="small fw-bold">Assign Site/Branch</Form.Label>
                     <Form.Select required onChange={e => setNewEmp({...newEmp, locId: e.target.value})}>
@@ -268,14 +278,12 @@ const ManagerDashboard = () => {
                         ))}
                     </Form.Select>
                 </Form.Group>
-
                 <Button type="submit" variant="danger" className="w-100 fw-bold">
                     <ShieldCheck size={18} className="me-2" /> CREATE & ASSIGN
                 </Button>
             </Form>
         </Modal.Body>
       </Modal>
-
     </Container>
   );
 };
