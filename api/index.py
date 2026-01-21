@@ -265,19 +265,33 @@ def delete_location(loc_id: int, admin_email: str, db: Session = Depends(get_db)
     return {"message": "Location deleted"}
 
 @app.get("/api/admin/live-tracking")
-def get_live_tracking(admin_email: str):
+def get_live_tracking(admin_email: str, db: Session = Depends(get_db)): # <--- 1. Add 'db' here
     if not r:
         return []
+    
     keys = r.keys("loc:*")
     locations = []
+    
     for key in keys:
         email = key.split(":")[1]
         raw_data = r.get(key)
+        
         if raw_data:
             lat_lon = raw_data.split(",")
+            
+            # --- 2. QUERY DATABASE FOR REAL NAME ---
+            user = db.query(User).filter(User.email == email).first()
+            
+            # If user exists, use their stored full_name. Otherwise fall back to email.
+            display_name = user.full_name if user else email.split("@")[0]
+
             locations.append({
-                "email": email, "lat": float(lat_lon[0]), "lon": float(lat_lon[1]), "name": email.split("@")[0]
+                "email": email, 
+                "lat": float(lat_lon[0]), 
+                "lon": float(lat_lon[1]), 
+                "name": display_name  # <--- 3. Send the real name
             })
+            
     return locations
 
 # --- 6. CRITICAL: UPDATED LOCATION ENDPOINT WITH TIMERS ---
