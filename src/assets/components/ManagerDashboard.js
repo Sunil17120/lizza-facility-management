@@ -33,17 +33,35 @@ const ManagerDashboard = () => {
   // Get logged in Manager ID
   const managerId = localStorage.getItem('userId'); 
 
-  // --- 1. FETCH DATA (Locations & My Staff) ---
+  // --- 1. FETCH DATA (FIXED 422 ERROR) ---
   const fetchData = useCallback(async () => {
-    if (!managerId) return;
+    // A. SAFEGUARD: Check if ID exists in storage
+    if (!managerId) {
+        console.warn("No Manager ID found in LocalStorage");
+        setLoading(false);
+        return;
+    }
+
+    // B. CONVERSION: Force ID to be an Integer (Fixes 422 Error)
+    const cleanId = parseInt(managerId, 10);
+    if (isNaN(cleanId)) {
+        console.error("Manager ID is invalid (not a number):", managerId);
+        setLoading(false);
+        return;
+    }
+
     try {
-        // Fetch Locations (Public list for dropdown & Map Geofences)
+        // Fetch Locations (Public list)
         const locRes = await fetch(`/api/admin/locations`); 
         if (locRes.ok) setLocations(await locRes.json());
 
-        // Fetch My Assigned Employees (Requires new backend route below)
-        const staffRes = await fetch(`/api/manager/my-employees?manager_id=${managerId}`);
-        if(staffRes.ok) setMyEmployees(await staffRes.json());
+        // Fetch Employees using the CLEAN INTEGER ID
+        const staffRes = await fetch(`/api/manager/my-employees?manager_id=${cleanId}`);
+        if(staffRes.ok) {
+            setMyEmployees(await staffRes.json());
+        } else {
+            console.error("Failed to fetch staff. Status:", staffRes.status);
+        }
         
         setLoading(false);
     } catch (err) {
@@ -64,7 +82,6 @@ const ManagerDashboard = () => {
 
     socket.onmessage = (event) => {
       const data = JSON.parse(event.data);
-      // Update the liveStaff map with latest coordinates
       setLiveStaff(prev => ({
         ...prev,
         [data.email]: { ...data, time: new Date().toLocaleTimeString() }
@@ -73,35 +90,31 @@ const ManagerDashboard = () => {
     return () => socket.close();
   }, [managerId]);
 
-  // --- 3. HANDLE ONBOARDING (FIXED 422 ERROR) ---
+  // --- 3. HANDLE ONBOARDING ---
   const handleOnboardEmployee = async (e) => {
     e.preventDefault();
     
-    // VALIDATION 1: Check Manager ID
+    // VALIDATION
     if (!managerId) {
         alert("Error: Manager ID missing. Please log out and log in again.");
         return;
     }
-    
-    // VALIDATION 2: Check Location
     if (!newEmp.locId) {
         alert("Please assign a branch/site to the employee.");
         return;
     }
 
-    // DATA CONVERSION: Ensure IDs are Integers (Fixes 422)
+    // DATA CONVERSION: Ensure IDs are Integers
     const payload = {
         full_name: newEmp.name, 
         email: newEmp.email, 
         password: newEmp.pass, 
-        manager_id: parseInt(managerId, 10), // <--- Critical Fix
+        manager_id: parseInt(managerId, 10), // Safe Int Conversion
         user_type: 'employee',
-        location_id: parseInt(newEmp.locId, 10), // <--- Critical Fix
+        location_id: parseInt(newEmp.locId, 10), // Safe Int Conversion
         shift_start: "09:00", 
         shift_end: "18:00"
     };
-
-    console.log("Sending Payload:", payload); // Debugging
 
     try {
         const res = await fetch('/api/manager/add-employee', {
@@ -115,8 +128,8 @@ const ManagerDashboard = () => {
         if(res.ok) {
             alert(`Staff Onboarded Successfully!\nID: ${data.blockchain_id}`);
             setShowAddEmp(false);
-            setNewEmp({ name: '', email: '', pass: '', role: 'employee', locId: '' }); // Reset form
-            fetchData(); // Refresh list
+            setNewEmp({ name: '', email: '', pass: '', role: 'employee', locId: '' }); 
+            fetchData(); 
         } else {
             console.error("Backend Error:", data);
             alert(`Failed: ${data.detail || "Check console for details"}`);
@@ -133,6 +146,7 @@ const ManagerDashboard = () => {
 
   return (
     <Container className="py-5 text-dark">
+      {/* HEADER */}
       <div className="d-flex justify-content-between align-items-center mb-4">
         <h2 className="fw-bold m-0"><Users className="me-2 text-danger" />Manager Panel</h2>
         <Button variant="danger" onClick={() => setShowAddEmp(true)}>
@@ -152,7 +166,7 @@ const ManagerDashboard = () => {
               <MapContainer center={[22.5726, 88.3639]} zoom={11} style={{ height: '100%' }}>
                 <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
                 
-                {/* Geofence Circles */}
+                {/* 1. Geofence Circles */}
                 {locations.map(loc => (
                     <Circle 
                         key={`fence-${loc.id}`}
@@ -167,7 +181,7 @@ const ManagerDashboard = () => {
                     </Circle>
                 ))}
 
-                {/* Live Employee Markers */}
+                {/* 2. Live Employee Markers */}
                 {Object.entries(liveStaff).map(([email, data]) => (
                   <Marker key={email} position={[data.lat, data.lon]}>
                     <Popup>
