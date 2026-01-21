@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Container, Card, Form, Button, Row, Col, Badge, Table, Modal, Spinner, InputGroup } from 'react-bootstrap';
-import { UserPlus, Map as MapIcon, ShieldCheck, Users, Search, RefreshCcw, MapPin } from 'lucide-react';
+// REMOVED 'RefreshCcw' from imports to fix build error
+import { UserPlus, Map as MapIcon, ShieldCheck, Users, Search, MapPin } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
@@ -31,17 +32,17 @@ const ManagerDashboard = () => {
   const [newEmp, setNewEmp] = useState({ name: '', email: '', pass: '', role: 'employee', locId: '' });
 
   const managerId = localStorage.getItem('userId'); 
-  const managerEmail = localStorage.getItem('userEmail');
+  // REMOVED unused 'managerEmail' variable to fix build error
 
   // --- 1. FETCH DATA (Locations & My Staff) ---
   const fetchData = useCallback(async () => {
     try {
         // Fetch Locations for the dropdown and Map Geofences
-        const locRes = await fetch(`/api/admin/locations`); // Managers can read public location list
+        const locRes = await fetch(`/api/admin/locations`); 
         const locData = await locRes.json();
         setLocations(locData);
 
-        // Fetch My Assigned Employees (See Backend Update Below)
+        // Fetch My Assigned Employees
         const staffRes = await fetch(`/api/manager/my-employees?manager_id=${managerId}`);
         if(staffRes.ok) {
             setMyEmployees(await staffRes.json());
@@ -74,7 +75,7 @@ const ManagerDashboard = () => {
     return () => socket.close();
   }, [managerId]);
 
-  // --- 3. HANDLE ONBOARDING (Updated to match Admin) ---
+  // --- 3. HANDLE ONBOARDING ---
   const handleOnboardEmployee = async (e) => {
     e.preventDefault();
     
@@ -91,7 +92,7 @@ const ManagerDashboard = () => {
         manager_id: parseInt(managerId),
         user_type: 'employee',
         location_id: parseInt(newEmp.locId),
-        shift_start: "09:00", // Default or add inputs for this
+        shift_start: "09:00", 
         shift_end: "18:00"
     };
 
