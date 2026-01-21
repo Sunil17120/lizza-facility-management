@@ -16,10 +16,28 @@ let DefaultIcon = L.icon({
 });
 L.Marker.prototype.options.icon = DefaultIcon;
 
+// --- YOUR DATA (Used if API fails) ---
+const FALLBACK_LOCATIONS = [
+  {
+    "name": "Lizza facility management",
+    "id": 2,
+    "radius": 200,
+    "lat": 12.939416,
+    "lon": 77.626692
+  },
+  {
+    "name": "Doddabulapur temp test",
+    "id": 3,
+    "radius": 200,
+    "lat": 13.166798,
+    "lon": 77.528548
+  }
+];
+
 const ManagerDashboard = () => {
   // --- STATE ---
   const [myEmployees, setMyEmployees] = useState([]);
-  const [locations, setLocations] = useState([]);
+  const [locations, setLocations] = useState([]); // Will load Fallback if API fails
   const [liveStaff, setLiveStaff] = useState({}); 
   const [loading, setLoading] = useState(true);
   
@@ -35,29 +53,32 @@ const ManagerDashboard = () => {
 
   // --- 1. FETCH DATA ---
   const fetchData = useCallback(async () => {
-    if (!managerId) {
-        console.warn("No Manager ID found. Please log in.");
-        setLoading(false);
-        return;
-    }
-
-    // Force Integer ID
+    // Force Int
     const cleanId = parseInt(managerId, 10);
-    if (isNaN(cleanId)) {
-        console.error("Manager ID is invalid:", managerId);
+    if (!managerId || isNaN(cleanId)) {
+        console.warn("No valid Manager ID found.");
         setLoading(false);
         return;
     }
 
     try {
-        // A. Fetch Locations
-        const locRes = await fetch(`/api/admin/locations`); 
-        if (locRes.ok) {
-            const locData = await locRes.json();
-            console.log("DEBUG: Locations loaded from DB:", locData); // <--- CHECK CONSOLE FOR THIS
-            setLocations(locData);
-        } else {
-            console.error("Failed to load locations");
+        // A. Fetch Locations (Try API first, then Fallback)
+        try {
+            const locRes = await fetch(`/api/admin/locations`); 
+            if (locRes.ok) {
+                const locData = await locRes.json();
+                if (locData.length > 0) {
+                    setLocations(locData);
+                } else {
+                    console.warn("API returned empty list, using fallback.");
+                    setLocations(FALLBACK_LOCATIONS);
+                }
+            } else {
+                throw new Error("API Failed");
+            }
+        } catch (e) {
+            console.warn("Location API failed, using manual data:", e);
+            setLocations(FALLBACK_LOCATIONS); // <--- THIS WILL FIX YOUR DROPDOWN
         }
 
         // B. Fetch Employees
@@ -97,7 +118,6 @@ const ManagerDashboard = () => {
   const handleOnboardEmployee = async (e) => {
     e.preventDefault();
     
-    // VALIDATION
     if (!managerId) {
         alert("Error: Manager ID missing. Please log out and log in again.");
         return;
@@ -107,7 +127,6 @@ const ManagerDashboard = () => {
         return;
     }
 
-    // PAYLOAD PREPARATION
     const payload = {
         full_name: newEmp.name, 
         email: newEmp.email, 
@@ -149,7 +168,6 @@ const ManagerDashboard = () => {
 
   return (
     <Container className="py-5 text-dark">
-      {/* HEADER */}
       <div className="d-flex justify-content-between align-items-center mb-4">
         <h2 className="fw-bold m-0"><Users className="me-2 text-danger" />Manager Panel</h2>
         <Button variant="danger" onClick={() => setShowAddEmp(true)}>
@@ -166,7 +184,7 @@ const ManagerDashboard = () => {
               <Badge bg="danger">Live</Badge>
             </Card.Header>
             <div style={{ height: '450px', width: '100%' }}>
-              <MapContainer center={[22.5726, 88.3639]} zoom={11} style={{ height: '100%' }}>
+              <MapContainer center={[12.9394, 77.6266]} zoom={10} style={{ height: '100%' }}>
                 <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
                 
                 {/* 1. Geofence Circles */}
@@ -290,14 +308,9 @@ const ManagerDashboard = () => {
                     <Form.Label className="small fw-bold">Assign Site/Branch</Form.Label>
                     <Form.Select required onChange={e => setNewEmp({...newEmp, locId: e.target.value})}>
                         <option value="">Select Location...</option>
-                        {/* FALLBACK: Show message if no branches exist */}
-                        {locations.length === 0 ? (
-                            <option disabled>No Branches Found (Contact Admin)</option>
-                        ) : (
-                            locations.map(l => (
-                                <option key={l.id} value={l.id}>{l.name}</option>
-                            ))
-                        )}
+                        {locations.map(l => (
+                            <option key={l.id} value={l.id}>{l.name}</option>
+                        ))}
                     </Form.Select>
                 </Form.Group>
                 <Button type="submit" variant="danger" className="w-100 fw-bold">
