@@ -19,18 +19,20 @@ L.Marker.prototype.options.icon = DefaultIcon;
 const ManagerDashboard = () => {
   // --- STATE ---
   const [myEmployees, setMyEmployees] = useState([]);
-  const [locations, setLocations] = useState([]); // Empty by default (Real Data Only)
+  const [locations, setLocations] = useState([]); 
   const [liveStaff, setLiveStaff] = useState({}); 
   const [loading, setLoading] = useState(true);
   
   // UI State
   const [showAddEmp, setShowAddEmp] = useState(false);
   const [empSearch, setEmpSearch] = useState('');
+
+  // Form State (Updated to include 'role')
   const [newEmp, setNewEmp] = useState({ name: '', email: '', pass: '', role: 'employee', locId: '' });
 
   const managerId = localStorage.getItem('userId'); 
 
-  // --- 1. FETCH REAL DATA ---
+  // --- 1. FETCH DATA ---
   const fetchData = useCallback(async () => {
     if (!managerId) {
         setLoading(false);
@@ -40,14 +42,12 @@ const ManagerDashboard = () => {
     try {
         const cleanId = parseInt(managerId, 10);
         
-        // A. Fetch Locations from Live Database
+        // A. Fetch Locations
         const locRes = await fetch(`/api/admin/locations`); 
         if (locRes.ok) {
             const locData = await locRes.json();
-            console.log("Live Locations:", locData); // Check Console (F12) to see data
+            console.log("Locations from DB:", locData); // Check Console (F12)
             setLocations(locData);
-        } else {
-            console.error("Failed to fetch locations from server.");
         }
 
         // B. Fetch Employees
@@ -91,7 +91,11 @@ const ManagerDashboard = () => {
         alert("System Error: You are not logged in (Manager ID missing).");
         return;
     }
-    if (!newEmp.locId) {
+    
+    // Ensure locId is treated as a number
+    const locationId = parseInt(newEmp.locId, 10);
+
+    if (!locationId) {
         alert("Please select a valid branch from the list.");
         return;
     }
@@ -101,8 +105,8 @@ const ManagerDashboard = () => {
         email: newEmp.email, 
         password: newEmp.pass, 
         manager_id: parseInt(managerId, 10), 
-        user_type: 'employee',
-        location_id: parseInt(newEmp.locId, 10), 
+        user_type: newEmp.role, // Uses the selected role from dropdown
+        location_id: locationId, 
         shift_start: "09:00", 
         shift_end: "18:00"
     };
@@ -143,6 +147,7 @@ const ManagerDashboard = () => {
       </div>
       
       <Row className="g-4">
+        {/* --- MAP SECTION --- */}
         <Col lg={12}>
           <Card className="border-0 shadow-sm overflow-hidden">
             <Card.Header className="bg-white fw-bold d-flex align-items-center justify-content-between">
@@ -186,6 +191,7 @@ const ManagerDashboard = () => {
           </Card>
         </Col>
 
+        {/* --- TEAM TABLE --- */}
         <Col md={12}>
           <Card className="border-0 shadow-sm p-4">
             <div className="d-flex justify-content-between align-items-center mb-3">
@@ -252,7 +258,7 @@ const ManagerDashboard = () => {
         </Col>
       </Row>
 
-      {/* --- ADD STAFF MODAL --- */}
+      {/* --- ADD USER MODAL (EXACTLY AS REQUESTED) --- */}
       <Modal show={showAddEmp} onHide={() => setShowAddEmp(false)} centered>
         <Modal.Header closeButton className="border-0"><Modal.Title className="fw-bold">Onboard New Staff</Modal.Title></Modal.Header>
         <Modal.Body>
@@ -269,19 +275,24 @@ const ManagerDashboard = () => {
                     <Form.Label className="small fw-bold">Password</Form.Label>
                     <Form.Control type="password" required onChange={e => setNewEmp({...newEmp, pass: e.target.value})} />
                 </Form.Group>
+                <Form.Group className="mb-2">
+                    <Form.Label className="small fw-bold">Role</Form.Label>
+                    <Form.Select value={newEmp.role} onChange={e => setNewEmp({...newEmp, role: e.target.value})}>
+                        <option value="manager">Manager</option>
+                        <option value="employee">Employee</option>
+                        <option value="admin">Admin</option>
+                    </Form.Select>
+                </Form.Group>
                 <Form.Group className="mb-3">
-                    <Form.Label className="small fw-bold">Assign Site/Branch</Form.Label>
+                    <Form.Label className="small fw-bold">Assign Branch</Form.Label>
                     <Form.Select required onChange={e => setNewEmp({...newEmp, locId: e.target.value})}>
-                        <option value="">Select Location...</option>
-                        {/* NO FALLBACK: This will be empty until you add data in Admin Panel */}
+                        <option value="">Select Branch...</option>
                         {locations.map(l => (
                             <option key={l.id} value={l.id}>{l.name}</option>
                         ))}
                     </Form.Select>
                 </Form.Group>
-                <Button type="submit" variant="danger" className="w-100 fw-bold">
-                    <ShieldCheck size={18} className="me-2" /> CREATE & ASSIGN
-                </Button>
+                <Button type="submit" variant="danger" className="w-100 fw-bold">SAVE STAFF</Button>
             </Form>
         </Modal.Body>
       </Modal>
