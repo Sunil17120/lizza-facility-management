@@ -24,6 +24,7 @@ if redis_url:
     r = redis.from_url(redis_url, decode_responses=True)
 else:
     r = None 
+    print("WARNING: Redis not connected. Live tracking features will not work.")
 
 init_db()
 
@@ -129,26 +130,18 @@ def get_user_profile(email: str, db: Session = Depends(get_db)):
 
 @app.post("/api/manager/add-employee")
 def add_employee(data: StaffCreate, db: Session = Depends(get_db)):
-    # 1. Pre-check: Does this email already exist?
     existing_user = db.query(User).filter(User.email == data.email.lower().strip()).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="An employee with this email already exists.")
 
-    # 2. FIX: Smart Manager Check (Fallback Logic)
-    # First, try to find the exact manager ID sent
     manager = db.query(User).filter(User.id == data.manager_id).first()
-    
-    # If that ID is invalid (e.g. 1), find ANY Admin in the system to act as parent
     if not manager:
-        print(f"Warning: Manager ID {data.manager_id} not found. Searching for any Admin...")
         manager = db.query(User).filter(User.user_type == 'admin').first()
     
     if not manager:
-        # Critical failure: No admin exists in the entire database
-        raise HTTPException(status_code=400, detail=f"Manager ID {data.manager_id} invalid and NO Admins found in DB to fallback to.")
+        raise HTTPException(status_code=400, detail=f"Manager ID {data.manager_id} invalid and NO Admins found.")
 
     final_manager_id = manager.id
-
     blockchain_hash = hashlib.sha256(f"{data.email}{datetime.utcnow()}".encode()).hexdigest()
     salt = hashlib.sha256(data.email.encode()).hexdigest()[:16]
     
@@ -192,7 +185,7 @@ def get_all_employees(admin_email: str, db: Session = Depends(get_db)):
         "shift_end": u.shift_end,
         "blockchain_id": u.blockchain_id,
         "location_id": u.location_id,
-        "is_present": u.is_present  # <--- FIX: Added is_present for stats
+        "is_present": u.is_present
     } for u in users]
 
 @app.get("/api/admin/locations")
@@ -242,6 +235,7 @@ def delete_employee(target_email: str = Query(...), admin_email: str = Query(...
         try:
             if r:
                 r.delete(f"loc:{target_email.lower().strip()}")
+                r.delete(f"oob:{target_email.lower().strip()}") # Clear any active warnings
         except Exception:
             pass 
         
@@ -254,30 +248,6 @@ def delete_employee(target_email: str = Query(...), admin_email: str = Query(...
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
-
-@app.post("/api/user/update-location")
-async def update_location(email: str, lat: float, lon: float, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == email.lower().strip()).first()
-    if not user or not user.location_id:
-        raise HTTPException(status_code=404, detail="User or office location not found")
-    
-    office = db.query(OfficeLocation).filter(OfficeLocation.id == user.location_id).first()
-    
-    now_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
-    now_str = now_ist.strftime("%H:%M")
-    
-    dist = get_distance(lat, lon, office.lat, office.lon)
-    is_inside = dist <= office.radius
-    
-    shift_dt = datetime.strptime(user.shift_start, "%H:%M")
-    grace_period = (shift_dt + timedelta(minutes=15)).strftime("%H:%M")
-    
-    if now_str <= grace_period and is_inside:
-        user.is_present = True
-    elif not is_inside:
-        user.is_present = False
-        
-    db.commit()
 
 @app.delete("/api/admin/delete-location/{loc_id}")
 def delete_location(loc_id: int, admin_email: str, db: Session = Depends(get_db)):
@@ -309,6 +279,104 @@ def get_live_tracking(admin_email: str):
                 "email": email, "lat": float(lat_lon[0]), "lon": float(lat_lon[1]), "name": email.split("@")[0]
             })
     return locations
+
+# --- 6. CRITICAL: UPDATED LOCATION ENDPOINT WITH TIMERS ---
+
+@app.post("/api/user/update-location")
+async def update_location(email: str, lat: float, lon: float, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == email.lower().strip()).first()
+    if not user or not user.location_id:
+        raise HTTPException(status_code=404, detail="User or office not found")
+    
+    office = db.query(OfficeLocation).filter(OfficeLocation.id == user.location_id).first()
+    
+    # 1. Update Live Location in Redis for Admin Map
+    if r:
+        r.set(f"loc:{email}", f"{lat},{lon}")
+        # Set expiry to 60s so stale data disappears
+        r.expire(f"loc:{email}", 60)
+
+    # 2. Check Geofence
+    dist = get_distance(lat, lon, office.lat, office.lon)
+    is_inside = dist <= office.radius
+    
+    # Time calculations
+    now_utc = datetime.utcnow()
+    # Assuming IST (UTC+5:30)
+    now_ist = now_utc + timedelta(hours=5, minutes=30) 
+    now_str = now_ist.strftime("%H:%M")
+    
+    status_response = {
+        "is_inside": is_inside,
+        "status": "normal",
+        "message": "On Duty",
+        "warning_seconds": 0
+    }
+
+    # --- SCENARIO A: INSIDE GEOFENCE ---
+    if is_inside:
+        # 1. Clear any "Out of Bounds" warning timer
+        if r: r.delete(f"oob:{email}")
+        
+        # 2. Check-in Logic (15 min grace period)
+        shift_dt = datetime.strptime(user.shift_start, "%H:%M")
+        grace_end = (shift_dt + timedelta(minutes=15)).strftime("%H:%M")
+        
+        # If not yet present, valid time, and inside -> Mark Present
+        if not user.is_present:
+            if now_str >= user.shift_start and now_str <= grace_end:
+                user.is_present = True
+                status_response["message"] = "Marked Present"
+            elif now_str > grace_end:
+                 status_response["message"] = "Inside Zone (Late)"
+        else:
+            status_response["message"] = "Present & Inside Zone"
+        
+        db.commit()
+        return status_response
+
+    # --- SCENARIO B: OUTSIDE GEOFENCE ---
+    else:
+        # If they were never present, just return outside status
+        if not user.is_present:
+             status_response["status"] = "outside"
+             status_response["message"] = "Outside Geofence"
+             return status_response
+
+        # If they ARE present, start the 5-minute violation timer
+        if r:
+            oob_key = f"oob:{email}"
+            first_out_time = r.get(oob_key)
+            
+            if not first_out_time:
+                # Start Timer: Record when they first left
+                r.set(oob_key, now_utc.isoformat())
+                status_response["status"] = "warning"
+                status_response["message"] = "Return to Zone!"
+                status_response["warning_seconds"] = 300 # 5 mins start
+            else:
+                # Calculate elapsed time
+                fmt = "%Y-%m-%dT%H:%M:%S.%f"
+                try:
+                    start_t = datetime.strptime(first_out_time, fmt)
+                    elapsed = (now_utc - start_t).total_seconds()
+                    remaining = 300 - elapsed
+                    
+                    if remaining <= 0:
+                        # VIOLATION: Exceeded 5 mins
+                        user.is_present = False # Mark Absent
+                        db.commit()
+                        r.delete(oob_key) # Reset timer
+                        status_response["status"] = "violation"
+                        status_response["message"] = "Marked Absent (Geofence Violation)"
+                    else:
+                        # WARNING: Counting down
+                        status_response["status"] = "warning"
+                        status_response["warning_seconds"] = int(remaining)
+                except ValueError:
+                    r.delete(oob_key) # Reset on error
+
+        return status_response
 
 @app.websocket("/ws/tracking/{manager_id}")
 async def websocket_endpoint(websocket: WebSocket, manager_id: str):

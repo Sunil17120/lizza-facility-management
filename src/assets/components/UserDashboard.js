@@ -1,17 +1,27 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Container, Row, Col, Card, Spinner, Button, Alert, Badge } from 'react-bootstrap';
-import { ShieldCheck, MapPin, Map as MapIcon } from 'lucide-react'; // Removed Navigation and Clock
+import { Container, Row, Col, Card, Spinner, Button, Alert, Badge, ProgressBar } from 'react-bootstrap';
+import { ShieldCheck, MapPin, Map as MapIcon, Clock, AlertTriangle } from 'lucide-react';
 
 const UserDashboard = () => {
   const [dbUser, setDbUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [status, setStatus] = useState({ type: 'info', msg: 'Checking Geofence...' });
-  const [isCurrentlyOnShift, setIsCurrentlyOnShift] = useState(false);
+  
+  // Status State
+  const [status, setStatus] = useState({ 
+    type: 'info', 
+    msg: 'Initializing...', 
+    code: 'normal' 
+  });
+  
+  // Timers State
+  const [violationTime, setViolationTime] = useState(null); // 5 min "Return" timer
+  const [checkInTimeLeft, setCheckInTimeLeft] = useState(null); // 15 min check-in timer
+  
   const userEmail = localStorage.getItem('userEmail');
 
+  // --- 1. Load User Profile ---
   useEffect(() => {
     if (userEmail) {
-      // Profile includes blockchain_id and shift details
       fetch(`/api/user/profile?email=${userEmail}`)
         .then(res => res.json())
         .then(data => { 
@@ -22,48 +32,98 @@ const UserDashboard = () => {
     }
   }, [userEmail]);
 
+  // --- 2. Calculate Check-In Timer (Frontend Visual Only) ---
+  useEffect(() => {
+    if (!dbUser) return;
+    
+    const interval = setInterval(() => {
+      // Parse Shift Start (HH:MM)
+      const [h, m] = dbUser.shift_start.split(':');
+      const now = new Date();
+      const shiftStart = new Date();
+      shiftStart.setHours(parseInt(h), parseInt(m), 0);
+      
+      // Calculate Grace Period End (15 mins)
+      const graceEnd = new Date(shiftStart.getTime() + 15 * 60000); 
+      
+      const diff = graceEnd - now;
+      
+      // Only show if positive and less than 15 mins (meaning shift has started)
+      if (diff > 0 && diff < 15 * 60000) {
+        const mins = Math.floor(diff / 60000);
+        const secs = Math.floor((diff % 60000) / 1000);
+        setCheckInTimeLeft(`${mins}m ${secs}s`);
+      } else {
+        setCheckInTimeLeft(null);
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [dbUser]);
+
+  // --- 3. Sync Location & Handle Alerts ---
   const syncLocation = useCallback((isManual = false) => {
     if (!navigator.geolocation) {
-      setStatus({ type: 'danger', msg: 'GPS not supported.' });
-      return;
+         setStatus({ type: 'danger', msg: 'GPS not supported', code: 'error' });
+         return;
     }
 
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         const { latitude, longitude } = pos.coords;
-        // Use 24H format for comparison
-        const now = new Date().toLocaleTimeString('en-GB', { hour12: false, hour: '2-digit', minute: '2-digit' });
 
-        if (dbUser) {
-          const { shift_start: s, shift_end: e } = dbUser;
-          // Logic for shift hours including midnight crossing
-          const onShift = s <= e ? (now >= s && now <= e) : (now >= s || now <= e);
-          setIsCurrentlyOnShift(onShift);
-
-          // Update backend with location and check geofence
-          fetch(`/api/user/update-location?email=${userEmail}&lat=${latitude}&lon=${longitude}`, { method: 'POST' })
-            .then(res => res.json())
-            .then(data => {
-              if (data.is_inside) {
-                setStatus({ 
-                  type: data.is_present ? 'success' : 'warning', 
-                  msg: data.is_present ? `Inside Geofence: Present (${now})` : `Inside Geofence: Shift starts at ${s}`
-                });
-              } else {
-                setStatus({ type: 'danger', msg: `Outside Geofence! Attendance restricted. (${now})` });
-              }
-            });
-        }
+        fetch(`/api/user/update-location?email=${userEmail}&lat=${latitude}&lon=${longitude}`, { method: 'POST' })
+          .then(res => res.json())
+          .then(data => {
+            // -- LOGIC FOR ALERTS --
+            
+            // 1. Violation Warning (Outside after being present)
+            if (data.status === 'warning') {
+              setViolationTime(data.warning_seconds);
+              setStatus({ 
+                  type: 'danger', 
+                  msg: `OUT OF BOUNDS! Return in ${data.warning_seconds}s`, 
+                  code: 'warning' 
+              });
+            } 
+            // 2. Violation Confirmed (Marked Absent)
+            else if (data.status === 'violation') {
+              setViolationTime(0);
+              setStatus({ 
+                  type: 'danger', 
+                  msg: 'MARKED ABSENT: Geofence Timeout', 
+                  code: 'violation' 
+              });
+            }
+            // 3. Normal / Inside
+            else if (data.is_inside) {
+              setViolationTime(null);
+              setStatus({ 
+                type: 'success', 
+                msg: data.message || 'You are Inside Geofence', 
+                code: 'inside' 
+              });
+            } 
+            // 4. Outside (Before shift or if never present)
+            else {
+              setViolationTime(null);
+              setStatus({ type: 'warning', msg: 'Outside Geofence', code: 'outside' });
+            }
+          })
+          .catch(() => setStatus({ type: 'danger', msg: 'Sync Error', code: 'error' }));
       },
-      () => setStatus({ type: 'danger', msg: 'Location blocked. Enable GPS.' }),
-      { enableHighAccuracy: true, timeout: 10000 }
+      (err) => {
+          console.error("Loc Error", err);
+          setStatus({ type: 'danger', msg: 'Location blocked. Enable GPS.', code: 'gps_error' });
+      },
+      { enableHighAccuracy: true }
     );
-  }, [dbUser, userEmail]);
+  }, [userEmail]);
 
+  // Auto-sync loop (Every 10 seconds)
   useEffect(() => {
     if (!dbUser) return;
-    syncLocation(false);
-    const interval = setInterval(() => syncLocation(false), 60000);
+    syncLocation();
+    const interval = setInterval(syncLocation, 10000);
     return () => clearInterval(interval);
   }, [dbUser, syncLocation]);
 
@@ -72,22 +132,39 @@ const UserDashboard = () => {
   return (
     <Container className="py-5">
       <Row className="justify-content-center">
-        <Col md={8}>
-          <Card className="border-0 shadow-lg overflow-hidden">
-            <div className="bg-dark p-4 text-white text-center">
-              <h2 className="fw-bold mb-1">Shift Duty Status</h2>
-              <Badge bg="danger" className="p-2 px-3 mb-2">
+        <Col md={8} lg={6}>
+          <Card className={`border-0 shadow-lg overflow-hidden ${status.code === 'warning' ? 'border-danger border-5' : ''}`}>
+            
+            {/* --- HEADER --- */}
+            <div className={`p-4 text-white text-center ${status.code === 'warning' ? 'bg-danger' : 'bg-dark'}`}>
+              <h2 className="fw-bold mb-1">
+                 {status.code === 'warning' ? '⚠️ RETURN TO OFFICE' : 'Shift Duty Status'}
+              </h2>
+              <Badge bg="light" text="dark" className="p-2 px-3 mb-2 shadow-sm">
                 <ShieldCheck size={14} className="me-1" /> ID: {dbUser?.blockchain_id || "PENDING"}
               </Badge>
-              <p className="opacity-75 mb-0 small">{userEmail}</p>
+              <div className="opacity-75 small">{userEmail}</div>
             </div>
             
-            <Card.Body className="p-5 text-center">
-              <Alert variant={status.type} className="mb-4 small fw-bold py-3 text-start d-flex align-items-center">
-                <MapIcon size={18} className="me-3" /> {status.msg}
+            <Card.Body className="p-4 text-center">
+              
+              {/* --- 5 MINUTE VIOLATION ALERT --- */}
+              {violationTime !== null && (
+                <div className="mb-4">
+                    <h1 className="display-4 fw-bold text-danger">{violationTime}s</h1>
+                    <ProgressBar animated variant="danger" now={(violationTime / 300) * 100} className="mb-2" style={{height: '10px'}} />
+                    <small className="text-danger fw-bold">If this reaches 0, you will be marked ABSENT.</small>
+                </div>
+              )}
+
+              {/* --- STATUS ALERT --- */}
+              <Alert variant={status.type} className="mb-4 small fw-bold py-3 text-start d-flex align-items-center justify-content-center">
+                {status.code === 'warning' ? <AlertTriangle size={18} className="me-2" /> : <MapIcon size={18} className="me-2" />} 
+                {status.msg}
               </Alert>
 
-              <div className="d-flex justify-content-center gap-4 mb-4">
+              {/* --- SHIFT TIMES --- */}
+              <div className="d-flex justify-content-center gap-5 mb-4">
                 <div className="text-center">
                   <p className="text-muted small fw-bold mb-1">SHIFT START</p>
                   <h3 className="fw-bold text-dark">{dbUser?.shift_start}</h3>
@@ -99,19 +176,34 @@ const UserDashboard = () => {
                 </div>
               </div>
 
+              {/* --- 15 MIN CHECK-IN TIMER --- */}
+              {checkInTimeLeft && status.code !== 'violation' && (
+                  <div className="mb-4 p-2 bg-warning bg-opacity-10 rounded border border-warning">
+                      <div className="d-flex align-items-center justify-content-center text-warning fw-bold">
+                          <Clock size={16} className="me-2"/>
+                          Time remaining to mark Present:
+                      </div>
+                      <h4 className="fw-bold text-dark mt-1">{checkInTimeLeft}</h4>
+                  </div>
+              )}
+
+              {/* --- DUTY INDICATOR --- */}
               <div className="p-3 bg-light rounded-3 border mb-4">
                 <p className="small text-muted mb-2">Duty Status</p>
                 <div className="d-flex align-items-center justify-content-center gap-2">
-                  <div className={`rounded-circle ${isCurrentlyOnShift ? 'bg-success' : 'bg-secondary'}`} style={{width: 10, height: 10}}></div>
-                  <span className="fw-bold">{isCurrentlyOnShift ? "ON DUTY" : "OFF DUTY"}</span>
+                  <div className={`rounded-circle ${status.code === 'inside' ? 'bg-success' : 'bg-secondary'}`} style={{width: 10, height: 10}}></div>
+                  <span className="fw-bold">
+                      {status.code === 'inside' ? "ON DUTY" : (status.code === 'violation' ? "ABSENT (VIOLATION)" : "OFF DUTY / OUTSIDE")}
+                  </span>
                 </div>
               </div>
 
-              <Button variant="danger" className="mb-4 fw-bold px-5 py-2 shadow-sm" onClick={() => syncLocation(true)}>
+              {/* --- MANUAL SYNC BUTTON --- */}
+              <Button variant="danger" className="mb-4 fw-bold w-100 py-3 shadow-sm" onClick={() => syncLocation(true)}>
                 <MapPin size={18} className="me-2" /> Manual Sync & Check-In
               </Button>
 
-              <div className="text-muted d-flex align-items-center justify-content-center gap-1 small">
+              <div className="text-muted small">
                  Secured via Blockchain Ledger System
               </div>
             </Card.Body>
