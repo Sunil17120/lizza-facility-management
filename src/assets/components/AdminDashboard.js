@@ -1,11 +1,11 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Table, Form, Container, Card, Spinner, Button, Row, Col, Modal, InputGroup, Badge } from 'react-bootstrap';
-import { UserCog, Save, Building2, UserPlus, Search, Trash2, Users, UserCheck, UserX, MapPin } from 'lucide-react';
-import { MapContainer, TileLayer, Marker, Popup, useMap, Circle } from 'react-leaflet'; // Added Circle import
+import { UserCog, Save, Building2, UserPlus, Search, Trash2, Users, UserCheck, UserX, MapPin, Crosshair } from 'lucide-react';
+import { MapContainer, TileLayer, Marker, Popup, useMap, Circle } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
-// Leaflet marker fix
+// --- LEAFLET ICON FIX ---
 import markerIcon from 'leaflet/dist/images/marker-icon.png';
 import markerShadow from 'leaflet/dist/images/marker-shadow.png';
 let DefaultIcon = L.icon({ 
@@ -16,41 +16,47 @@ let DefaultIcon = L.icon({
 });
 L.Marker.prototype.options.icon = DefaultIcon;
 
-const RecenterMap = ({ locations, live }) => {
+// --- MAP CONTROLLER: Handles Zoom/Fly Animations ---
+const MapController = ({ focusTarget }) => {
   const map = useMap();
   useEffect(() => {
-    // Collect all points (offices + live workers) to fit map bounds
-    const allPoints = [
-        ...locations.map(l => [l.lat, l.lon]),
-        ...live.map(l => [l.lat, l.lon])
-    ];
-
-    if (allPoints.length > 0) {
-      const bounds = L.latLngBounds(allPoints);
-      map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
+    if (focusTarget) {
+      map.flyTo([focusTarget.lat, focusTarget.lon], 18, {
+        animate: true,
+        duration: 1.5
+      });
     }
-  }, [locations, live, map]);
+  }, [focusTarget, map]);
   return null;
 };
 
 const AdminDashboard = () => {
+  // --- STATE MANAGEMENT ---
   const [employees, setEmployees] = useState([]);
   const [locations, setLocations] = useState([]);
   const [liveLocations, setLiveLocations] = useState([]);
   const [loading, setLoading] = useState(true);
+  
+  // UI Toggles
   const [showAddEmp, setShowAddEmp] = useState(false);
   const [empSearch, setEmpSearch] = useState('');
   const [locSearch, setLocSearch] = useState('');
   
-  // Stats State
+  // Stats
   const [stats, setStats] = useState({ total: 0, assigned: 0, present: 0, absent: 0 });
   
+  // **NEW: Focus & Filter State**
+  const [selectedBranchId, setSelectedBranchId] = useState(null);
+  const [mapFocus, setMapFocus] = useState(null);
+  
+  // Forms
   const [newLoc, setNewLoc] = useState({ name: '', lat: 22.5726, lon: 88.3639, radius: 200 });
   const [newEmp, setNewEmp] = useState({ name: '', email: '', pass: '', role: 'manager', locId: '' });
   
   const adminEmail = localStorage.getItem('userEmail');
   const adminId = localStorage.getItem('userId') || 1;
 
+  // --- DATA FETCHING ---
   const fetchData = useCallback(async () => {
     try {
       const [empRes, locRes, liveRes] = await Promise.all([
@@ -59,30 +65,74 @@ const AdminDashboard = () => {
         fetch(`/api/admin/live-tracking?admin_email=${adminEmail}`)
       ]);
 
-      if (empRes.ok) {
+      if (empRes.ok && locRes.ok && liveRes.ok) {
           const empData = await empRes.json();
-          setEmployees(empData);
+          const locData = await locRes.json();
+          const liveData = await liveRes.json();
           
-          // --- CALCULATE STATS ---
-          const total = empData.length;
-          const assigned = empData.filter(e => e.location_id).length;
-          const present = empData.filter(e => e.is_present).length;
-          const absent = assigned - present; // Or total - present, depending on logic
+          setEmployees(empData);
+          setLocations(locData);
+          setLiveLocations(liveData);
+          
+          // **Dynamic Stats Logic**
+          // If a branch is selected, show stats ONLY for that branch. Otherwise, show global.
+          const filteredEmps = selectedBranchId 
+            ? empData.filter(e => e.location_id === selectedBranchId) 
+            : empData;
+
+          const total = filteredEmps.length;
+          const assigned = filteredEmps.filter(e => e.location_id).length;
+          const present = filteredEmps.filter(e => e.is_present).length;
+          const absent = total - present; // Simplified logic
+
           setStats({ total, assigned, present, absent });
+          setLoading(false);
       }
-      if (locRes.ok) setLocations(await locRes.json());
-      if (liveRes.ok) setLiveLocations(await liveRes.json());
-      setLoading(false);
     } catch (err) {
+      console.error(err);
       setLoading(false);
     }
-  }, [adminEmail]);
+  }, [adminEmail, selectedBranchId]); // Re-run when branch selection changes
 
   useEffect(() => { 
     fetchData(); 
-    const interval = setInterval(fetchData, 10000); // Faster refresh for live stats
+    const interval = setInterval(fetchData, 5000); // 5s Refresh
     return () => clearInterval(interval);
   }, [fetchData]);
+
+  // --- ACTIONS ---
+
+  // **NEW: Handle Locate Button Click**
+  const handleLocateAndFilter = (employee) => {
+    // 1. Filter Dashboard Stats
+    if (employee.location_id) {
+        setSelectedBranchId(employee.location_id);
+    } else {
+        setSelectedBranchId(null);
+    }
+
+    // 2. Determine Map Focus Target
+    const isLive = liveLocations.find(l => l.email === employee.email);
+    const branch = locations.find(l => l.id === employee.location_id);
+
+    if (isLive) {
+        // Priority 1: Live Location
+        setMapFocus({ lat: parseFloat(isLive.lat), lon: parseFloat(isLive.lon) });
+    } else if (branch) {
+        // Priority 2: Office Location
+        setMapFocus({ lat: branch.lat, lon: branch.lon });
+    } else {
+        alert("No location data (Live or Office) available for this user.");
+    }
+
+    // 3. Smooth Scroll to Map
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleResetView = () => {
+      setSelectedBranchId(null);
+      fetchData(); // Reset to global stats
+  };
 
   const handleDeleteEmployee = async (email) => {
     if (window.confirm(`Delete employee: ${email}?`)) {
@@ -115,12 +165,8 @@ const AdminDashboard = () => {
 
   const handleOnboardEmployee = async (e) => {
     e.preventDefault();
-    
-    // 1. SMART FIX: Find Real Admin ID from loaded employees
     const currentAdminUser = employees.find(emp => emp.email === adminEmail);
     let mgrId = currentAdminUser ? currentAdminUser.id : (parseInt(adminId) || 1);
-
-    // 2. Validate Location ID
     const locIdParsed = parseInt(newEmp.locId);
     const finalLocId = isNaN(locIdParsed) ? null : locIdParsed;
 
@@ -137,13 +183,9 @@ const AdminDashboard = () => {
 
     try {
       const res = await fetch(`/api/manager/add-employee`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
       });
-      
       const data = await res.json();
-
       if (res.ok) { 
         alert(`Success! Employee ID: ${data.blockchain_id}`); 
         setShowAddEmp(false); 
@@ -153,7 +195,7 @@ const AdminDashboard = () => {
         alert(`Failed: ${data.detail || 'Unknown error'}`);
       }
     } catch (err) {
-      alert("Network Error: Could not connect to server.");
+      alert("Network Error");
     }
   };
 
@@ -163,37 +205,47 @@ const AdminDashboard = () => {
     <Container className="py-5 text-dark">
       <div className="d-flex justify-content-between align-items-center mb-4">
         <h2 className="fw-bold m-0"><UserCog className="me-2 text-danger" />System Admin</h2>
-        <Button variant="danger" onClick={() => setShowAddEmp(true)}><UserPlus size={18} className="me-2"/>Onboard Staff</Button>
+        <div>
+            {selectedBranchId && (
+                <Button variant="outline-secondary" className="me-2" onClick={handleResetView}>
+                    Show Global Stats
+                </Button>
+            )}
+            <Button variant="danger" onClick={() => setShowAddEmp(true)}><UserPlus size={18} className="me-2"/>Onboard Staff</Button>
+        </div>
       </div>
 
       {/* --- STATS DASHBOARD --- */}
       <Row className="mb-4 g-3">
         <Col md={3} xs={6}>
-            <Card className="border-0 shadow-sm p-3 text-center h-100">
-                <div className="text-muted small fw-bold text-uppercase mb-1">Total Staff</div>
+            <Card className={`border-0 shadow-sm p-3 text-center h-100 ${selectedBranchId ? 'bg-light border border-danger' : ''}`}>
+                <div className="text-muted small fw-bold text-uppercase mb-1">
+                    {selectedBranchId ? 'Branch Total' : 'Total Staff'}
+                </div>
                 <h3 className="fw-bold m-0 text-dark"><Users size={24} className="me-2"/>{stats.total}</h3>
             </Card>
         </Col>
         <Col md={3} xs={6}>
             <Card className="border-0 shadow-sm p-3 text-center h-100">
-                <div className="text-muted small fw-bold text-uppercase mb-1">Assigned to Branch</div>
+                <div className="text-muted small fw-bold text-uppercase mb-1">Assigned</div>
                 <h3 className="fw-bold m-0 text-primary"><MapPin size={24} className="me-2"/>{stats.assigned}</h3>
             </Card>
         </Col>
         <Col md={3} xs={6}>
             <Card className="border-0 shadow-sm p-3 text-center h-100">
-                <div className="text-muted small fw-bold text-uppercase mb-1">Present Today</div>
+                <div className="text-muted small fw-bold text-uppercase mb-1">Present</div>
                 <h3 className="fw-bold m-0 text-success"><UserCheck size={24} className="me-2"/>{stats.present}</h3>
             </Card>
         </Col>
         <Col md={3} xs={6}>
             <Card className="border-0 shadow-sm p-3 text-center h-100">
-                <div className="text-muted small fw-bold text-uppercase mb-1">Absent/Inactive</div>
+                <div className="text-muted small fw-bold text-uppercase mb-1">Absent</div>
                 <h3 className="fw-bold m-0 text-danger"><UserX size={24} className="me-2"/>{stats.absent}</h3>
             </Card>
         </Col>
       </Row>
 
+      {/* --- MAP SECTION --- */}
       <Row className="mb-5 g-4">
         <Col lg={4}>
           <Card className="border-0 shadow-sm p-4 h-100">
@@ -216,7 +268,7 @@ const AdminDashboard = () => {
             <div className="overflow-auto" style={{maxHeight: '200px'}}>
                 {locations.filter(l => l.name.toLowerCase().includes(locSearch.toLowerCase())).map(l => (
                     <div key={l.id} className="d-flex justify-content-between align-items-center border-bottom py-2 small">
-                        <strong>{l.name}</strong>
+                        <strong style={{cursor:'pointer'}} onClick={() => setMapFocus({lat: l.lat, lon: l.lon})}>{l.name}</strong>
                         <Button variant="link" className="text-danger p-0" onClick={() => handleDeleteLocation(l.id)}><Trash2 size={14}/></Button>
                     </div>
                 ))}
@@ -230,16 +282,20 @@ const AdminDashboard = () => {
               <MapContainer center={[22.5726, 88.3639]} zoom={5} style={{ height: '100%' }}>
                 <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
                 
-                {/* Auto-center map on all points */}
-                <RecenterMap locations={locations} live={liveLocations} />
+                {/* Controls Map Animation */}
+                <MapController focusTarget={mapFocus} />
                 
-                {/* Render Geofences (Red Circles) */}
+                {/* Render Geofences */}
                 {locations.map(loc => (
                     <Circle 
                         key={`circle-${loc.id}`}
                         center={[loc.lat, loc.lon]}
                         radius={loc.radius}
-                        pathOptions={{ color: 'red', fillColor: 'red', fillOpacity: 0.1 }}
+                        pathOptions={{ 
+                            color: selectedBranchId === loc.id ? 'blue' : 'red', 
+                            fillColor: selectedBranchId === loc.id ? 'blue' : 'red', 
+                            fillOpacity: 0.1 
+                        }}
                     >
                         <Popup>{loc.name} (Radius: {loc.radius}m)</Popup>
                     </Circle>
@@ -264,6 +320,7 @@ const AdminDashboard = () => {
         </Col>
       </Row>
 
+      {/* --- EMPLOYEE TABLE --- */}
       <Card className="border-0 shadow-sm p-4">
         <InputGroup style={{ maxWidth: '400px' }} className="mb-3">
           <InputGroup.Text className="bg-white border-end-0"><Search size={18} className="text-muted"/></InputGroup.Text>
@@ -277,7 +334,7 @@ const AdminDashboard = () => {
           </thead>
           <tbody>
             {employees.filter(emp => emp.full_name.toLowerCase().includes(empSearch.toLowerCase())).map(emp => (
-              <tr key={emp.id}>
+              <tr key={emp.id} className={selectedBranchId && emp.location_id !== selectedBranchId ? "opacity-50" : ""}>
                 <td><Form.Control size="sm" defaultValue={emp.full_name} id={`name-${emp.id}`} className="border-0 fw-bold" /></td>
                 <td><Form.Control size="sm" defaultValue={emp.email} id={`email-${emp.id}`} className="border-0" /></td>
                 <td>
@@ -304,6 +361,17 @@ const AdminDashboard = () => {
                 </td>
                 <td>
                   <div className="d-flex gap-2">
+                    {/* --- THE NEW BUTTON: LOCATE & FILTER --- */}
+                    <Button 
+                        variant="info" 
+                        size="sm" 
+                        title="Locate Staff & Filter Stats"
+                        className="text-white"
+                        onClick={() => handleLocateAndFilter(emp)}
+                    >
+                        <Crosshair size={14}/>
+                    </Button>
+
                     <Button variant="danger" size="sm" onClick={() => handleUpdateEmployee(emp.email, emp.id)}><Save size={14}/></Button>
                     <Button variant="outline-dark" size="sm" onClick={() => handleDeleteEmployee(emp.email)}><Trash2 size={14}/></Button>
                   </div>
@@ -313,7 +381,8 @@ const AdminDashboard = () => {
           </tbody>
         </Table>
       </Card>
-      {/* ... Keep the Modal code exact same as before ... */}
+
+      {/* --- ONBOARD MODAL --- */}
       <Modal show={showAddEmp} onHide={() => setShowAddEmp(false)} centered>
         <Modal.Header closeButton className="border-0"><Modal.Title className="fw-bold">Onboard New Staff</Modal.Title></Modal.Header>
         <Modal.Body>
