@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Table, Form, Container, Card, Spinner, Button, Row, Col, Modal, InputGroup, Badge, Tab, Tabs, Alert } from 'react-bootstrap';
-import { UserCog, Save, Building2, UserPlus, Search, Trash2, Users, UserCheck, UserX, MapPin, Crosshair, Target, FileText, Briefcase, User as UserIcon, ShieldCheck } from 'lucide-react';
+import { Table, Form, Container, Card, Spinner, Button, Row, Col, Modal, InputGroup, Badge, Tab, Tabs, Alert, ListGroup } from 'react-bootstrap';
+import { UserCog, Save, Building2, UserPlus, Search, Trash2, Users, UserCheck, UserX, MapPin, Crosshair, Target, FileText, Briefcase, User as UserIcon, ShieldCheck, Bell, ChevronRight, FileSearch } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, useMap, Circle } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
@@ -13,10 +13,7 @@ L.Marker.prototype.options.icon = DefaultIcon;
 const MapController = ({ focusTarget }) => {
   const map = useMap();
   useEffect(() => {
-    if (focusTarget) {
-      const zoomLevel = focusTarget.zoom || 16;
-      map.flyTo([focusTarget.lat, focusTarget.lon], zoomLevel, { animate: true, duration: 1.5 });
-    }
+    if (focusTarget) map.flyTo([focusTarget.lat, focusTarget.lon], focusTarget.zoom || 16, { animate: true, duration: 1.5 });
   }, [focusTarget, map]);
   return null;
 };
@@ -34,6 +31,12 @@ const AdminDashboard = () => {
   const [selectedBranchId, setSelectedBranchId] = useState(null);
   const [mapFocus, setMapFocus] = useState(null);
   
+  // Notification Center State
+  const [showNotifCenter, setShowNotifCenter] = useState(false);
+  const [selectedPendingEmp, setSelectedPendingEmp] = useState(null);
+  const [activeDoc, setActiveDoc] = useState(null); // URL for iframe preview
+  const [docLabel, setDocLabel] = useState('');
+
   const [newLoc, setNewLoc] = useState({ name: '', lat: 22.5726, lon: 88.3639, radius: 200 });
   const [formData, setFormData] = useState({
     firstName: '', lastName: '', personalEmail: '', phone: '', dob: '', fatherName: '', motherName: '', bloodGroup: '', emergencyContact: '',
@@ -70,6 +73,8 @@ const AdminDashboard = () => {
   }, [fetchData]);
 
   const filteredEmployees = selectedBranchId ? employees.filter(e => e.location_id === selectedBranchId) : employees;
+  const pendingVerifications = employees.filter(e => !e.is_verified && e.user_type !== 'admin');
+  
   const stats = {
       total: filteredEmployees.length, assigned: filteredEmployees.filter(e => e.location_id).length,
       present: filteredEmployees.filter(e => e.is_present).length, absent: filteredEmployees.length - filteredEmployees.filter(e => e.is_present).length
@@ -91,19 +96,11 @@ const AdminDashboard = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleResetView = () => setSelectedBranchId(null);
-
   const handleDeleteEmployee = async (email) => {
     if (window.confirm(`Delete ${email}?`)) {
       await fetch(`/api/admin/delete-employee?target_email=${email}&admin_email=${adminEmail}`, { method: 'DELETE' });
       fetchData();
-    }
-  };
-
-  const handleDeleteLocation = async (locId) => {
-    if (window.confirm(`Delete branch?`)) {
-      await fetch(`/api/admin/delete-location/${locId}?admin_email=${adminEmail}`, { method: 'DELETE' });
-      fetchData();
+      if(selectedPendingEmp && selectedPendingEmp.email === email) setSelectedPendingEmp(null);
     }
   };
 
@@ -119,92 +116,67 @@ const AdminDashboard = () => {
     fetchData();
   };
 
-  // --- NEW: Verify Employee & View Documents ---
+  // --- Verification Flow ---
   const handleVerifyEmployee = async (targetEmail) => {
-      if(window.confirm(`Are you sure you want to verify ${targetEmail}?\n\nThis will generate their Blockchain ID and send them an email with login credentials.`)) {
+      if(window.confirm(`Approve this profile?\n\nThis will generate an official ID and email their password.`)) {
           try {
               const res = await fetch(`/api/admin/verify-employee?target_email=${targetEmail}&admin_email=${adminEmail}`, { method: 'POST' });
               const data = await res.json();
               if(res.ok) {
-                  alert(`Success! Employee Verified.\nBlockchain ID: ${data.blockchain_id}\nEmail Sent.`);
+                  alert(`Success! ID Created: ${data.blockchain_id}\nEmail Sent.`);
+                  setSelectedPendingEmp(null);
+                  setActiveDoc(null);
                   fetchData();
               } else { alert("Verification Failed: " + data.detail); }
           } catch(err) { alert("Network Error"); }
       }
   };
 
-  const handleViewDoc = async (email, docType) => {
+  const fetchDocPreview = async (email, docType, label) => {
+      setDocLabel("Loading..."); setActiveDoc(null);
       try {
           const res = await fetch(`/api/admin/employee-doc?email=${email}&doc_type=${docType}&admin_email=${adminEmail}`);
           const data = await res.json();
           if (data.data) {
-              const win = window.open();
-              win.document.write(`<iframe src="${data.data}" frameborder="0" style="border:0; top:0px; left:0px; bottom:0px; right:0px; width:100%; height:100%;" allowfullscreen></iframe>`);
-          } else { alert("No document uploaded for this user."); }
-      } catch(e) { alert("Network error fetching document."); }
+              setActiveDoc(data.data);
+              setDocLabel(label);
+          } else { 
+              setDocLabel(""); 
+              alert("No document uploaded for this user."); 
+          }
+      } catch(e) { setDocLabel(""); alert("Error fetching document."); }
   };
 
-  // --- File Change Limits ---
+  // --- Add Employee Logic ---
   const handleFileChange = (e, type) => {
     const file = e.target.files[0];
     if (!file) return;
-
     if (type === 'filledForm') {
-        if (file.size > 2 * 1024 * 1024) {
-            alert("Filled Form size cannot exceed 2MB.");
-            e.target.value = null; return;
-        }
-        if (file.type !== 'application/pdf') {
-            alert("Filled Form must be a PDF file.");
-            e.target.value = null; return;
-        }
+        if (file.size > 2 * 1024 * 1024) { alert("Filled Form size cannot exceed 2MB."); e.target.value = null; return; }
+        if (file.type !== 'application/pdf') { alert("Filled Form must be a PDF file."); e.target.value = null; return; }
     } else {
-        if (file.size > 5 * 1024 * 1024) {
-            alert("File size cannot exceed 5MB.");
-            e.target.value = null; return;
-        }
+        if (file.size > 5 * 1024 * 1024) { alert("File size cannot exceed 5MB."); e.target.value = null; return; }
     }
-
     setFiles({ ...files, [type]: file });
     if (type !== 'filledForm') {
-        const fileUrl = URL.createObjectURL(file);
-        setPreviews({ ...previews, [type]: { url: fileUrl, isImage: file.type.includes('image') } });
+        setPreviews({ ...previews, [type]: { url: URL.createObjectURL(file), isImage: file.type.includes('image') } });
     }
-  };
-
-  const handleModalClose = () => {
-      setShowAddEmp(false);
-      setPreviews({ profile: null, aadhar: null, pan: null });
-      setFiles({ profile: null, aadhar: null, pan: null, filledForm: null });
   };
 
   const handleOnboardEmployee = async (e) => {
     e.preventDefault();
-    const currentAdminUser = employees.find(emp => emp.email === adminEmail);
-    let mgrId = currentAdminUser ? currentAdminUser.id : (parseInt(adminId) || 1);
     const locIdParsed = parseInt(formData.locId);
-
     const submitData = new FormData();
-    submitData.append('first_name', formData.firstName);
-    submitData.append('last_name', formData.lastName);
-    submitData.append('personal_email', formData.personalEmail);
-    submitData.append('phone_number', formData.phone);
-    submitData.append('dob', formData.dob);
-    submitData.append('father_name', formData.fatherName);
-    submitData.append('mother_name', formData.motherName);
-    submitData.append('blood_group', formData.bloodGroup);
-    submitData.append('emergency_contact', formData.emergencyContact);
-    submitData.append('designation', formData.designation);
-    submitData.append('department', formData.department);
-    submitData.append('experience_years', formData.experience || 0);
-    submitData.append('prev_company', formData.prevCompany);
-    submitData.append('prev_role', formData.prevRole);
-    submitData.append('aadhar_number', formData.aadhar);
-    submitData.append('pan_number', formData.pan);
-    submitData.append('manager_id', mgrId);
-    submitData.append('user_type', formData.role);
+    submitData.append('first_name', formData.firstName); submitData.append('last_name', formData.lastName);
+    submitData.append('personal_email', formData.personalEmail); submitData.append('phone_number', formData.phone);
+    submitData.append('dob', formData.dob); submitData.append('father_name', formData.fatherName);
+    submitData.append('mother_name', formData.motherName); submitData.append('blood_group', formData.bloodGroup);
+    submitData.append('emergency_contact', formData.emergencyContact); submitData.append('designation', formData.designation);
+    submitData.append('department', formData.department); submitData.append('experience_years', formData.experience || 0);
+    submitData.append('prev_company', formData.prevCompany); submitData.append('prev_role', formData.prevRole);
+    submitData.append('aadhar_number', formData.aadhar); submitData.append('pan_number', formData.pan);
+    submitData.append('manager_id', adminId); submitData.append('user_type', formData.role);
     if (!isNaN(locIdParsed)) submitData.append('location_id', locIdParsed);
-    
     if (files.profile) submitData.append('profile_photo', files.profile);
     if (files.aadhar) submitData.append('aadhar_photo', files.aadhar);
     if (files.pan) submitData.append('pan_photo', files.pan);
@@ -212,23 +184,34 @@ const AdminDashboard = () => {
 
     const res = await fetch(`/api/manager/add-employee`, { method: 'POST', body: submitData });
     const result = await res.json();
-    
     if (res.ok) { 
-        alert(`Employee Form Submitted!\nOfficial Email: ${result.official_email}\n\nStatus: Pending Your Verification.`); 
-        handleModalClose();
+        alert(`Submitted!\nStatus: Added to Verification Queue.`); 
+        setShowAddEmp(false); setPreviews({ profile: null, aadhar: null, pan: null }); setFiles({ profile: null, aadhar: null, pan: null, filledForm: null });
         fetchData(); 
-    } else { alert("Failed to add employee: " + result.detail); }
+    } else { alert("Error: " + result.detail); }
   };
 
   if (loading) return <div className="text-center py-5"><Spinner animation="border" variant="danger" /></div>;
 
   return (
-    <Container className="py-5 text-dark">
+    <Container className="py-5 text-dark" fluid style={{maxWidth: '1400px'}}>
+      {/* HEADER */}
       <div className="d-flex justify-content-between align-items-center mb-4">
         <h2 className="fw-bold m-0"><UserCog className="me-2 text-danger" />System Admin</h2>
-        <div>
-            {selectedBranchId && <Button variant="secondary" className="me-2 shadow-sm" onClick={handleResetView}>Reset Global View</Button>}
-            <Button variant="danger" onClick={() => setShowAddEmp(true)}><UserPlus size={18} className="me-2"/>Onboard Staff</Button>
+        <div className="d-flex align-items-center">
+            {selectedBranchId && <Button variant="secondary" className="me-3 shadow-sm" onClick={handleResetView}>Reset Global View</Button>}
+            
+            {/* NOTIFICATION BELL */}
+            <Button variant="light" className="position-relative me-3 border shadow-sm px-3" onClick={() => setShowNotifCenter(true)}>
+                <Bell size={20} className="text-dark" />
+                {pendingVerifications.length > 0 && (
+                    <span className="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger border border-light">
+                        {pendingVerifications.length}
+                    </span>
+                )}
+            </Button>
+
+            <Button variant="danger" className="shadow-sm" onClick={() => setShowAddEmp(true)}><UserPlus size={18} className="me-2"/>Onboard Staff</Button>
         </div>
       </div>
 
@@ -256,27 +239,19 @@ const AdminDashboard = () => {
                 {locations.filter(l => l.name.toLowerCase().includes(locSearch.toLowerCase())).map(l => (
                     <div key={l.id} className={`d-flex justify-content-between align-items-center border-bottom py-2 small ${selectedBranchId === l.id ? 'bg-primary bg-opacity-10' : ''}`}>
                         <strong style={{cursor:'pointer'}} onClick={() => handleBranchLocate(l)}>{l.name}</strong>
-                        <div className="d-flex gap-2">
-                            <Button variant={selectedBranchId === l.id ? "primary" : "outline-primary"} size="sm" className="p-1 px-2" onClick={() => handleBranchLocate(l)}><Target size={14}/></Button>
-                            <Button variant="link" className="text-danger p-0" onClick={() => handleDeleteLocation(l.id)}><Trash2 size={14}/></Button>
-                        </div>
+                        <div className="d-flex gap-2"><Button variant={selectedBranchId === l.id ? "primary" : "outline-primary"} size="sm" className="p-1 px-2" onClick={() => handleBranchLocate(l)}><Target size={14}/></Button><Button variant="link" className="text-danger p-0" onClick={() => handleDeleteLocation(l.id)}><Trash2 size={14}/></Button></div>
                     </div>
                 ))}
             </div>
           </Card>
         </Col>
-
         <Col lg={8}>
           <Card className="border-0 shadow-sm overflow-hidden h-100">
             <div style={{ height: '400px', width: '100%' }}>
               <MapContainer center={[22.5726, 88.3639]} zoom={5} style={{ height: '100%' }}>
                 <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
                 <MapController focusTarget={mapFocus} />
-                {locations.map(loc => (
-                    <Circle key={`circle-${loc.id}`} center={[loc.lat, loc.lon]} radius={loc.radius} pathOptions={{ color: selectedBranchId === loc.id ? '#0d6efd' : 'red', fillColor: selectedBranchId === loc.id ? '#0d6efd' : 'red', fillOpacity: 0.1 }}>
-                        <Popup><strong>{loc.name}</strong><br/>Total Assigned: {employees.filter(e => e.location_id === loc.id).length}</Popup>
-                    </Circle>
-                ))}
+                {locations.map(loc => (<Circle key={`circle-${loc.id}`} center={[loc.lat, loc.lon]} radius={loc.radius} pathOptions={{ color: selectedBranchId === loc.id ? '#0d6efd' : 'red', fillColor: selectedBranchId === loc.id ? '#0d6efd' : 'red', fillOpacity: 0.1 }}><Popup><strong>{loc.name}</strong><br/>Total Assigned: {employees.filter(e => e.location_id === loc.id).length}</Popup></Circle>))}
                 {locations.map((loc) => (<Marker key={`office-${loc.id}`} position={[loc.lat, loc.lon]}><Popup>🏢 {loc.name}</Popup></Marker>))}
                 {liveLocations.map((loc) => (<Marker key={`worker-${loc.email}`} position={[parseFloat(loc.lat), parseFloat(loc.lon)]}><Popup><strong>👷 {loc.name}</strong><br/><Badge bg="success">Live Now</Badge></Popup></Marker>))}
               </MapContainer>
@@ -285,40 +260,30 @@ const AdminDashboard = () => {
         </Col>
       </Row>
 
+      {/* --- REFINED MAIN TABLE --- */}
       <Card className="border-0 shadow-sm p-4">
         <InputGroup style={{ maxWidth: '400px' }} className="mb-3"><InputGroup.Text className="bg-white border-end-0"><Search size={18} className="text-muted"/></InputGroup.Text><Form.Control className="border-start-0 ps-0" placeholder="Search staff..." onChange={(e) => setEmpSearch(e.target.value)} /></InputGroup>
         <Table responsive hover className="align-middle border">
-          <thead className="table-light"><tr className="small text-uppercase"><th>Full Name</th><th>Email</th><th>Branch</th><th>Shift & Role</th><th>Verification</th><th>Actions</th></tr></thead>
+          <thead className="table-light"><tr className="small text-uppercase">
+            <th>ID & Name</th><th>Phone No</th><th>Branch</th><th>Shift & Role</th><th>Status</th><th>Actions</th>
+          </tr></thead>
           <tbody>
             {employees.filter(emp => emp.full_name.toLowerCase().includes(empSearch.toLowerCase())).map(emp => (
               <tr key={emp.id} className={selectedBranchId && emp.location_id !== selectedBranchId ? "opacity-25" : ""}>
-                <td><Form.Control size="sm" defaultValue={emp.full_name} id={`name-${emp.id}`} className="border-0 fw-bold" /></td>
-                <td><Form.Control size="sm" defaultValue={emp.email} id={`email-${emp.id}`} className="border-0" /></td>
                 <td>
-                  <Form.Select size="sm" defaultValue={emp.location_id} id={`loc-${emp.id}`} className="bg-light border-0">
-                    <option value="">No Office</option>
-                    {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
-                  </Form.Select>
+                    <div className="mb-1">{emp.blockchain_id ? <Badge bg="dark" className="font-monospace fw-normal">{emp.blockchain_id}</Badge> : <Badge bg="warning" text="dark" className="fw-normal">Pending Verification</Badge>}</div>
+                    <Form.Control size="sm" defaultValue={emp.full_name} id={`name-${emp.id}`} className="border-0 fw-bold p-0 bg-transparent" />
+                    <Form.Control size="sm" defaultValue={emp.email} id={`email-${emp.id}`} className="border-0 text-muted p-0 bg-transparent" style={{fontSize:'12px'}} />
+                </td>
+                <td className="fw-bold">{emp.phone_number || <span className="text-muted fw-normal">N/A</span>}</td>
+                <td>
+                  <Form.Select size="sm" defaultValue={emp.location_id} id={`loc-${emp.id}`} className="bg-light border-0"><option value="">No Office</option>{locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</Form.Select>
                 </td>
                 <td>
-                  <div className="d-flex gap-1 mb-1"><Form.Control size="sm" defaultValue={emp.shift_start} id={`start-${emp.id}`} className="text-center p-0" /><Form.Control size="sm" defaultValue={emp.shift_end} id={`end-${emp.id}`} className="text-center p-0" /></div>
-                  <Form.Select size="sm" defaultValue={emp.user_type} id={`type-${emp.id}`} className="p-0 border-0 small text-muted"><option value="employee">Employee</option><option value="manager">Manager</option><option value="admin">Admin</option></Form.Select>
+                  <div className="d-flex gap-1 mb-1"><Form.Control size="sm" defaultValue={emp.shift_start} id={`start-${emp.id}`} className="text-center p-0 bg-transparent" /><Form.Control size="sm" defaultValue={emp.shift_end} id={`end-${emp.id}`} className="text-center p-0 bg-transparent" /></div>
+                  <Form.Select size="sm" defaultValue={emp.user_type} id={`type-${emp.id}`} className="p-0 border-0 small text-muted bg-transparent"><option value="employee">Employee</option><option value="manager">Manager</option><option value="admin">Admin</option></Form.Select>
                 </td>
-                
-                {/* NEW: Verification Actions Column */}
-                <td>
-                  <div className="d-flex flex-column gap-2 align-items-start">
-                      {emp.is_verified ? (
-                          <Badge bg="success" className="px-3 py-2"><ShieldCheck size={14} className="me-1"/> Verified</Badge>
-                      ) : (
-                          <Button variant="success" size="sm" className="fw-bold" onClick={() => handleVerifyEmployee(emp.email)}>✓ Verify & Send ID</Button>
-                      )}
-                      <Button variant="outline-primary" size="sm" style={{fontSize: '11px'}} onClick={() => handleViewDoc(emp.email, 'filled_form')}>
-                          <FileText size={12} className="me-1"/> View PDF Form
-                      </Button>
-                  </div>
-                </td>
-
+                <td>{emp.is_present ? <Badge bg="success">Present</Badge> : <Badge bg="secondary">Absent</Badge>}</td>
                 <td>
                   <div className="d-flex gap-2">
                     <Button variant="info" size="sm" className="text-white" onClick={() => handleLocateEmployee(emp)}><Crosshair size={14}/></Button>
@@ -332,7 +297,110 @@ const AdminDashboard = () => {
         </Table>
       </Card>
       
-      {/* --- ADD USER MODAL --- */}
+      {/* --- NOTIFICATION CENTER MODAL (VERIFICATION QUEUE) --- */}
+      <Modal show={showNotifCenter} onHide={() => {setShowNotifCenter(false); setSelectedPendingEmp(null); setActiveDoc(null);}} size="xl" scrollable backdrop="static">
+        <Modal.Header closeButton className="bg-light border-0">
+            <Modal.Title className="fw-bold h5 d-flex align-items-center">
+                <Bell size={20} className="me-2 text-danger"/> 
+                Verification Center {pendingVerifications.length > 0 && <Badge bg="danger" className="ms-2">{pendingVerifications.length}</Badge>}
+            </Modal.Title>
+        </Modal.Header>
+        <Modal.Body className="p-0" style={{backgroundColor: '#f8f9fa'}}>
+            {pendingVerifications.length === 0 ? (
+                <div className="text-center py-5 text-muted"><ShieldCheck size={48} className="mb-3 opacity-50"/><p>All employee profiles are verified and up to date.</p></div>
+            ) : selectedPendingEmp ? (
+                /* REVIEW SCREEN */
+                <Row className="g-0 h-100">
+                    {/* Left: Data View */}
+                    <Col lg={4} className="border-end bg-white p-4 h-100" style={{overflowY: 'auto'}}>
+                        <Button variant="link" className="text-muted p-0 text-decoration-none mb-3 d-flex align-items-center" onClick={() => {setSelectedPendingEmp(null); setActiveDoc(null);}}>
+                            <ChevronRight size={18} className="me-1" style={{transform: 'rotate(180deg)'}} /> Back to Queue
+                        </Button>
+                        <h4 className="fw-bold">{selectedPendingEmp.full_name}</h4>
+                        <Badge bg="primary" className="mb-4">{selectedPendingEmp.designation || 'Employee'}</Badge>
+                        
+                        <div className="mb-4">
+                            <h6 className="fw-bold border-bottom pb-2 text-muted text-uppercase" style={{fontSize:'12px'}}>Contact & Personal</h6>
+                            <dl className="row small mb-0">
+                                <dt className="col-5 text-muted">Phone No.</dt><dd className="col-7 fw-bold">{selectedPendingEmp.phone_number}</dd>
+                                <dt className="col-5 text-muted">Official Email</dt><dd className="col-7">{selectedPendingEmp.email}</dd>
+                                <dt className="col-5 text-muted">Personal Email</dt><dd className="col-7 text-truncate">{selectedPendingEmp.personal_email}</dd>
+                                <dt className="col-5 text-muted">DOB</dt><dd className="col-7">{selectedPendingEmp.dob}</dd>
+                            </dl>
+                        </div>
+                        <div className="mb-4">
+                            <h6 className="fw-bold border-bottom pb-2 text-muted text-uppercase" style={{fontSize:'12px'}}>Professional</h6>
+                            <dl className="row small mb-0">
+                                <dt className="col-5 text-muted">Department</dt><dd className="col-7">{selectedPendingEmp.department}</dd>
+                                <dt className="col-5 text-muted">Role Request</dt><dd className="col-7 text-capitalize">{selectedPendingEmp.user_type}</dd>
+                                <dt className="col-5 text-muted">Shift</dt><dd className="col-7">{selectedPendingEmp.shift_start} - {selectedPendingEmp.shift_end}</dd>
+                            </dl>
+                        </div>
+                        <div>
+                            <Button variant="success" className="w-100 fw-bold mb-2 py-2 shadow-sm" onClick={() => handleVerifyEmployee(selectedPendingEmp.email)}>
+                                <ShieldCheck size={18} className="me-2"/> Approve & Generate ID
+                            </Button>
+                            <Button variant="outline-danger" className="w-100 fw-bold py-2" onClick={() => handleDeleteEmployee(selectedPendingEmp.email)}>
+                                Reject & Delete Record
+                            </Button>
+                        </div>
+                    </Col>
+                    
+                    {/* Right: Document Viewer */}
+                    <Col lg={8} className="p-4 d-flex flex-column h-100">
+                        <div className="d-flex gap-2 mb-3 bg-white p-2 rounded shadow-sm">
+                            <Button variant={docLabel === 'Filled Form PDF' ? 'primary' : 'light'} className="flex-grow-1 fw-bold" onClick={() => fetchDocPreview(selectedPendingEmp.email, 'filled_form', 'Filled Form PDF')}>
+                                <FileSearch size={16} className="me-2"/> View Form (PDF)
+                            </Button>
+                            <Button variant={docLabel === 'Aadhaar' ? 'primary' : 'light'} className="flex-grow-1 fw-bold" onClick={() => fetchDocPreview(selectedPendingEmp.email, 'aadhar', 'Aadhaar')}>
+                                Aadhaar Preview
+                            </Button>
+                            <Button variant={docLabel === 'PAN' ? 'primary' : 'light'} className="flex-grow-1 fw-bold" onClick={() => fetchDocPreview(selectedPendingEmp.email, 'pan', 'PAN')}>
+                                PAN Preview
+                            </Button>
+                        </div>
+
+                        <div className="flex-grow-1 bg-white border rounded shadow-sm overflow-hidden d-flex align-items-center justify-content-center position-relative" style={{minHeight: '400px'}}>
+                            {docLabel === "Loading..." ? (
+                                <Spinner animation="border" variant="primary" />
+                            ) : activeDoc ? (
+                                activeDoc.includes('application/pdf') ? (
+                                    <iframe src={activeDoc} title="Document Preview" width="100%" height="100%" style={{border: 'none'}} />
+                                ) : (
+                                    <img src={activeDoc} alt="Document" style={{maxWidth: '100%', maxHeight: '100%', objectFit: 'contain'}} />
+                                )
+                            ) : (
+                                <div className="text-center text-muted">
+                                    <FileSearch size={48} className="mb-2 opacity-50" />
+                                    <h5>Select a document above to verify</h5>
+                                </div>
+                            )}
+                            {docLabel && docLabel !== "Loading..." && (
+                                <Badge bg="dark" className="position-absolute top-0 end-0 m-2 opacity-75">{docLabel}</Badge>
+                            )}
+                        </div>
+                    </Col>
+                </Row>
+            ) : (
+                /* LIST SCREEN */
+                <Table hover className="align-middle m-0 bg-white">
+                    <thead className="table-light"><tr className="small text-uppercase"><th>Applicant Name</th><th>Designation</th><th>Applied Date</th><th>Action</th></tr></thead>
+                    <tbody>
+                        {pendingVerifications.map(emp => (
+                            <tr key={emp.id} style={{cursor: 'pointer'}} onClick={() => setSelectedPendingEmp(emp)}>
+                                <td className="fw-bold">{emp.full_name} <br/><span className="text-muted small fw-normal">{emp.email}</span></td>
+                                <td>{emp.designation || 'N/A'}</td>
+                                <td>{emp.created_at ? new Date(emp.created_at).toLocaleDateString() : 'Recent'}</td>
+                                <td><Button variant="primary" size="sm" className="px-3 rounded-pill fw-bold">Review Application <ChevronRight size={14}/></Button></td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </Table>
+            )}
+        </Modal.Body>
+      </Modal>
+
+      {/* --- ADD USER MODAL (REMAINS SAME) --- */}
       <Modal show={showAddEmp} onHide={handleModalClose} size="lg" centered>
         <Modal.Header closeButton className="border-0 bg-light"><Modal.Title className="fw-bold h5">Onboard New Talent</Modal.Title></Modal.Header>
         <Modal.Body className="p-4">
@@ -368,7 +436,6 @@ const AdminDashboard = () => {
                             <Col md={4} className="mb-3"><Form.Label className="small fw-bold">Role</Form.Label><Form.Select value={formData.role} onChange={e => setFormData({...formData, role: e.target.value})}><option value="manager">Manager</option><option value="employee">Employee</option></Form.Select></Col>
                             <Col md={4} className="mb-3"><Form.Label className="small fw-bold">Assign Branch</Form.Label><Form.Select required onChange={e => setFormData({...formData, locId: e.target.value})}><option value="">Select Branch...</option>{locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</Form.Select></Col>
                             <Col md={4} className="mb-3"><Form.Label className="small fw-bold">Experience (Yrs)</Form.Label><Form.Control type="number" step="0.1" required onChange={e => setFormData({...formData, experience: e.target.value})} /></Col>
-                            
                             {formData.experience > 0 && (
                                 <>
                                     <Col md={6} className="mb-3"><Form.Label className="small fw-bold">Previous Company</Form.Label><Form.Control onChange={e => setFormData({...formData, prevCompany: e.target.value})} /></Col>
@@ -380,7 +447,6 @@ const AdminDashboard = () => {
                     <Tab eventKey="documents" title={<><FileText size={16} className="me-2"/>Documents</>}>
                         <Alert variant="warning" className="small py-2 mt-3"><ShieldCheck size={14} className="me-2"/>Files and Numbers are securely processed and encrypted.</Alert>
                         <Row>
-                            {/* NEW: PDF Form Upload */}
                             <Col md={12} className="mb-4 border border-primary bg-light p-3 rounded">
                                 <Form.Label className="fw-bold text-primary mb-1">Upload Filled Onboarding Form</Form.Label>
                                 <p className="small text-muted mb-2">Must be a PDF document. Maximum size: 2MB.</p>
@@ -399,20 +465,10 @@ const AdminDashboard = () => {
                             <Col md={6} className="mb-3 border-top pt-3">
                                 <Form.Label className="small fw-bold">Upload Aadhaar (Max 5MB)</Form.Label>
                                 <Form.Control type="file" accept="image/*,.pdf" onChange={(e) => handleFileChange(e, 'aadhar')} className="mb-2" />
-                                {previews.aadhar && (
-                                    <div className="border rounded p-1 text-center bg-light" style={{ height: '120px' }}>
-                                        {previews.aadhar.isImage ? <img src={previews.aadhar.url} alt="Aadhaar Preview" style={{maxHeight: '100%', maxWidth: '100%'}} /> : <Badge bg="danger" className="mt-4">PDF Selected</Badge>}
-                                    </div>
-                                )}
                             </Col>
                             <Col md={6} className="mb-3 border-top pt-3">
                                 <Form.Label className="small fw-bold">Upload PAN (Max 5MB)</Form.Label>
                                 <Form.Control type="file" accept="image/*,.pdf" onChange={(e) => handleFileChange(e, 'pan')} className="mb-2" />
-                                {previews.pan && (
-                                    <div className="border rounded p-1 text-center bg-light" style={{ height: '120px' }}>
-                                        {previews.pan.isImage ? <img src={previews.pan.url} alt="PAN Preview" style={{maxHeight: '100%', maxWidth: '100%'}} /> : <Badge bg="danger" className="mt-4">PDF Selected</Badge>}
-                                    </div>
-                                )}
                             </Col>
                         </Row>
                     </Tab>
