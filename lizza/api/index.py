@@ -4,11 +4,10 @@ import redis
 import math
 import json
 import smtplib
-import shutil # NEW: For file saving
+import base64 # NEW: Used to convert images to text strings
 from email.mime.text import MIMEText
 from typing import Optional 
 from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, Query, File, UploadFile, Form
-from fastapi.staticfiles import StaticFiles # NEW: To serve uploaded files
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from datetime import datetime, timedelta
@@ -31,21 +30,18 @@ init_db()
 
 PEPPER = os.environ.get("SECRET_PEPPER", "change_me_in_vercel_settings")
 
-# --- FILE UPLOAD SETUP ---
-UPLOAD_DIR = "uploads"
-os.makedirs(os.path.join(UPLOAD_DIR, "profiles"), exist_ok=True)
-os.makedirs(os.path.join(UPLOAD_DIR, "documents"), exist_ok=True)
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
-
-def save_upload_file(upload_file: UploadFile, subfolder: str, prefix: str) -> str:
+# --- FILE UPLOAD SETUP (BASE64 VER) ---
+# Vercel is read-only. We convert images to Base64 text to store directly in the database.
+def process_upload_base64(upload_file: UploadFile) -> str:
     if not upload_file or not upload_file.filename:
         return None
-    ext = upload_file.filename.split('.')[-1]
-    filename = f"{prefix}_{datetime.now().strftime('%Y%m%d%H%M%S')}.{ext}"
-    filepath = os.path.join(UPLOAD_DIR, subfolder, filename)
-    with open(filepath, "wb") as buffer:
-        shutil.copyfileobj(upload_file.file, buffer)
-    return f"/{filepath}"
+    try:
+        encoded = base64.b64encode(upload_file.file.read()).decode('utf-8')
+        mime_type = upload_file.content_type
+        return f"data:{mime_type};base64,{encoded}"
+    except Exception as e:
+        print(f"File processing error: {e}")
+        return None
 
 # --- EMAIL CONFIGURATION ---
 SMTP_SERVER = os.environ.get("SMTP_SERVER", "smtp.gmail.com")
@@ -89,7 +85,6 @@ HR & Admin Team
         return False
 
 # --- SCHEMAS ---
-
 class AuthRequest(BaseModel):
     email: str
     password: str
@@ -99,13 +94,13 @@ class LocationCreate(BaseModel):
     lat: float
     lon: float
     radius: int
+
 class PasswordChange(BaseModel):
     email: str
     old_password: str
-    new_password: st
+    new_password: str
 
 # --- UTILITIES ---
-
 def get_distance(lat1, lon1, lat2, lon2):
     R = 6371000 
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
@@ -147,7 +142,6 @@ def get_secure_hash(password: str, salt: str):
     return hashlib.sha256(final_payload.encode()).hexdigest()
 
 # --- GENERAL ROUTES ---
-
 @app.post("/api/login")
 def login(data: AuthRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == data.email.lower().strip()).first()
@@ -163,6 +157,21 @@ def login(data: AuthRequest, db: Session = Depends(get_db)):
             "force_password_change": not user.is_password_changed
         }
     raise HTTPException(status_code=401, detail="Invalid credentials")
+
+@app.post("/api/change-password")
+def change_password(data: PasswordChange, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == data.email.lower().strip()).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    if get_secure_hash(data.old_password, user.salt) != user.password:
+        raise HTTPException(status_code=400, detail="Incorrect current password")
+        
+    user.password = get_secure_hash(data.new_password, user.salt)
+    user.is_password_changed = True 
+    db.commit()
+    
+    return {"message": "Password updated successfully"}
 
 @app.get("/api/user/profile")
 def get_user_profile(email: str, db: Session = Depends(get_db)):
@@ -180,8 +189,6 @@ def get_user_profile(email: str, db: Session = Depends(get_db)):
     }
 
 # --- ADMIN & MANAGER ROUTES ---
-
-# NEW: Converted to handle FormData instead of raw JSON for file uploads
 @app.post("/api/manager/add-employee")
 async def add_employee(
     first_name: str = Form(...),
@@ -232,11 +239,10 @@ async def add_employee(
     aadhar_encrypted = cipher.encrypt(aadhar_number.encode()).decode()
     pan_encrypted = cipher.encrypt(pan_number.encode()).decode()
 
-    # Save files securely
-    file_prefix = base_email.split('@')[0]
-    prof_path = save_upload_file(profile_photo, "profiles", f"prof_{file_prefix}")
-    aadhar_path = save_upload_file(aadhar_photo, "documents", f"aadhar_{file_prefix}")
-    pan_path = save_upload_file(pan_photo, "documents", f"pan_{file_prefix}")
+    # Vercel Fix: Save as Base64 strings instead of local files
+    prof_path = process_upload_base64(profile_photo)
+    aadhar_path = process_upload_base64(aadhar_photo)
+    pan_path = process_upload_base64(pan_photo)
 
     blockchain_hash = hashlib.sha256(f"{base_email}{datetime.utcnow()}".encode()).hexdigest()
     full_name_combined = f"{first_name} {last_name}"
@@ -458,19 +464,3 @@ def get_manager_employees(manager_id: int, db: Session = Depends(get_db)):
         "location_id": u.location_id, "shift_start": u.shift_start, "shift_end": u.shift_end,
         "is_present": u.is_present, "blockchain_id": u.blockchain_id
     } for u in employees]
-@app.post("/api/change-password")
-def change_password(data: PasswordChange, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == data.email.lower().strip()).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-        
-    # Verify Old Password matches what is in the database
-    if get_secure_hash(data.old_password, user.salt) != user.password:
-        raise HTTPException(status_code=400, detail="Incorrect current password")
-        
-    # Generate new hash and update user record
-    user.password = get_secure_hash(data.new_password, user.salt)
-    user.is_password_changed = True # This removes the force-change flag
-    db.commit()
-    
-    return {"message": "Password updated successfully"}
