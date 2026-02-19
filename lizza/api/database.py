@@ -6,8 +6,6 @@ from datetime import datetime
 from cryptography.fernet import Fernet 
 
 # --- SECURITY CONFIG ---
-# In production, ensure this is set in your hosting environment variables!
-# If it's missing, it creates a temporary one (good for dev, but reset on restart)
 ENCRYPTION_KEY = os.environ.get("DATA_KEY", Fernet.generate_key().decode())
 cipher = Fernet(ENCRYPTION_KEY)
 
@@ -20,12 +18,13 @@ class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
     
-    # 1. Professional Identity (Kept full_name for backward compatibility)
+    # 1. Professional Identity 
     full_name = Column(String) 
     first_name = Column(String, nullable=True)
     last_name = Column(String, nullable=True)
     email = Column(String, unique=True, index=True) 
     personal_email = Column(String, nullable=True) 
+    phone_number = Column(String, nullable=True) # NEW: Phone Number
     
     # 2. Personal & Family Details
     dob = Column(String, nullable=True) 
@@ -56,7 +55,7 @@ class User(Base):
     aadhar_enc = Column(String, nullable=True) 
     pan_enc = Column(String, nullable=True)
     
-    # 7. Document Paths (File System/Cloud Storage for DB optimization)
+    # 7. Document Paths 
     profile_photo_path = Column(String, nullable=True)
     aadhar_photo_path = Column(String, nullable=True)
     pan_photo_path = Column(String, nullable=True)
@@ -83,16 +82,14 @@ class OfficeLocation(Base):
     lon = Column(Float)
     radius = Column(Integer, default=200)
 
-
 def init_db():
-    # 1. Create tables if they don't exist
     Base.metadata.create_all(bind=engine)
     
-    # 2. Auto-Migration: Force add new columns to hosted database
     columns_to_add = [
         ("first_name", "VARCHAR"),
         ("last_name", "VARCHAR"),
         ("personal_email", "VARCHAR"),
+        ("phone_number", "VARCHAR"), # NEW: Added to migration
         ("dob", "VARCHAR"),
         ("father_name", "VARCHAR"),
         ("mother_name", "VARCHAR"),
@@ -109,21 +106,19 @@ def init_db():
         ("aadhar_photo_path", "VARCHAR"),
         ("pan_photo_path", "VARCHAR"),
         ("is_password_changed", "BOOLEAN DEFAULT FALSE"),
-        ("location_id", "INTEGER") # From previous schema updates
+        ("location_id", "INTEGER")
     ]
     
     with engine.connect() as conn:
         for col_name, col_type in columns_to_add:
             try:
-                # Primary attempt: PostgreSQL specific IF NOT EXISTS
                 conn.execute(text(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS {col_name} {col_type}"))
                 conn.commit()
             except Exception:
                 conn.rollback()
-                # Fallback: Standard SQL (will throw an error if it already exists, which we catch and ignore)
                 try:
                     conn.execute(text(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}"))
                     conn.commit()
                 except Exception:
                     conn.rollback()
-                    pass # Column already exists, safe to continue
+                    pass
