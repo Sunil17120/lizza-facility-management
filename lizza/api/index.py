@@ -2,6 +2,7 @@ import hashlib
 import os
 import redis
 import math
+import json
 import smtplib
 import base64
 from email.mime.text import MIMEText
@@ -105,11 +106,8 @@ def login(data: AuthRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == data.email.lower().strip()).first()
     if not user or get_secure_hash(data.password, user.salt) != user.password:
         raise HTTPException(status_code=401, detail="Invalid credentials")
-        
-    # Block Unverified Logins
     if not user.is_verified and user.user_type != 'admin':
         raise HTTPException(status_code=403, detail="Account pending Admin Verification. Check back later.")
-        
     return {"message": "Login successful", "user": user.full_name, "user_type": user.user_type, "user_id": user.id, "force_password_change": not user.is_password_changed}
 
 @app.post("/api/change-password")
@@ -137,7 +135,7 @@ async def add_employee(
     pan_number: str = Form(...), manager_id: int = Form(...), user_type: str = Form("employee"),
     location_id: Optional[int] = Form(None), shift_start: str = Form("09:00"), shift_end: str = Form("18:00"),
     profile_photo: UploadFile = File(None), aadhar_photo: UploadFile = File(None), pan_photo: UploadFile = File(None),
-    filled_form: UploadFile = File(None), # NEW: Filled PDF Form
+    filled_form: UploadFile = File(None),
     db: Session = Depends(get_db)
 ):
     manager = db.query(User).filter(User.id == manager_id).first()
@@ -155,7 +153,6 @@ async def add_employee(
     aadhar_encrypted = cipher.encrypt(aadhar_number.encode()).decode()
     pan_encrypted = cipher.encrypt(pan_number.encode()).decode()
 
-    # 2MB LIMIT FOR FILLED FORM
     filled_form_base64 = None
     if filled_form and filled_form.filename:
         if not filled_form.filename.lower().endswith('.pdf'): raise HTTPException(400, "Filled form must be a PDF")
@@ -171,9 +168,8 @@ async def add_employee(
         first_name=first_name, last_name=last_name, full_name=f"{first_name} {last_name}",
         email=base_email, personal_email=personal_email, phone_number=phone_number, password=hashed_pw,
         user_type=user_type, manager_id=manager.id, location_id=location_id if location_id else None,
-        blockchain_id=None, # KEPT NULL UNTIL VERIFIED
-        shift_start=shift_start, shift_end=shift_end, 
-        salt=salt, is_password_changed=False, is_verified=False, # PENDING VERIFICATION
+        blockchain_id=None, shift_start=shift_start, shift_end=shift_end, 
+        salt=salt, is_password_changed=False, is_verified=False,
         dob=dob, father_name=father_name, mother_name=mother_name, 
         blood_group=blood_group, emergency_contact=emergency_contact, designation=designation, department=department, 
         experience_years=experience_years, prev_company=prev_company, prev_role=prev_role, aadhar_enc=aadhar_encrypted, 
@@ -183,12 +179,10 @@ async def add_employee(
     try:
         db.add(new_user)
         db.commit()
-        # NO EMAIL SENT HERE. Wait for admin.
         return {"status": "success", "official_email": base_email, "message": "Employee added. Pending Admin Verification."}
     except IntegrityError: db.rollback(); raise HTTPException(status_code=400, detail="Integrity Error: Duplicate Data.")
     except Exception as e: db.rollback(); raise HTTPException(status_code=500, detail=str(e))
 
-# --- NEW: VERIFICATION & EMAIL DISPATCH ---
 @app.post("/api/admin/verify-employee")
 def verify_employee(target_email: str = Query(...), admin_email: str = Query(...), db: Session = Depends(get_db)):
     admin = db.query(User).filter(User.email == admin_email.lower().strip()).first()
@@ -198,24 +192,17 @@ def verify_employee(target_email: str = Query(...), admin_email: str = Query(...
     if not user: raise HTTPException(status_code=404, detail="User not found")
     if user.is_verified: raise HTTPException(status_code=400, detail="User already verified")
 
-    # 1. Generate Blockchain ID
     blockchain_hash = hashlib.sha256(f"{user.email}{datetime.utcnow()}".encode()).hexdigest()
     user.blockchain_id = f"LIZZA-{blockchain_hash[:10]}".upper()
-    
-    # 2. Mark Verified
     user.is_verified = True
     
-    # 3. Retrieve initial password for email
     try: initial_password = datetime.strptime(user.dob, "%Y-%m-%d").strftime("%d%m%Y")
     except: initial_password = "Password123!" 
 
     db.commit()
-    
-    # 4. Fire Email
     send_onboarding_email(user.personal_email, user.full_name, initial_password, user.email)
     return {"status": "success", "message": "Verified and Email Sent", "blockchain_id": user.blockchain_id}
 
-# --- NEW: ADMIN SECURE DOCUMENT VIEWER ---
 @app.get("/api/admin/employee-doc")
 def get_employee_doc(email: str, doc_type: str, admin_email: str, db: Session = Depends(get_db)):
     admin = db.query(User).filter(User.email == admin_email.lower().strip()).first()
@@ -230,11 +217,18 @@ def get_employee_doc(email: str, doc_type: str, admin_email: str, db: Session = 
     
     return {"data": doc_data}
 
+# --- EXTENDED API RESPONSE FOR ADMIN DASHBOARD ---
 @app.get("/api/admin/employees")
 def get_all_employees(admin_email: str, db: Session = Depends(get_db)):
     admin = db.query(User).filter(User.email == admin_email.lower().strip()).first()
     if not admin or admin.user_type.lower() != 'admin': raise HTTPException(status_code=403, detail="Admin access required")
-    return [{"id": u.id, "full_name": u.full_name, "email": u.email, "user_type": u.user_type, "shift_start": u.shift_start, "shift_end": u.shift_end, "blockchain_id": u.blockchain_id, "location_id": u.location_id, "is_present": u.is_present, "is_verified": u.is_verified} for u in db.query(User).all()]
+    return [{
+        "id": u.id, "full_name": u.full_name, "email": u.email, "personal_email": u.personal_email,
+        "phone_number": u.phone_number, "dob": u.dob, "designation": u.designation, "department": u.department,
+        "user_type": u.user_type, "shift_start": u.shift_start, "shift_end": u.shift_end, 
+        "blockchain_id": u.blockchain_id, "location_id": u.location_id, "is_present": u.is_present, 
+        "is_verified": u.is_verified, "created_at": u.created_at.isoformat() if u.created_at else None
+    } for u in db.query(User).all()]
 
 @app.get("/api/admin/locations")
 def get_locations(db: Session = Depends(get_db)): return db.query(OfficeLocation).all()
