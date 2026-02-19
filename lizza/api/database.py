@@ -1,5 +1,5 @@
 import os
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, ForeignKey, Float, Boolean, text
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, ForeignKey, Float, Boolean, text, Text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
@@ -24,7 +24,7 @@ class User(Base):
     last_name = Column(String, nullable=True)
     email = Column(String, unique=True, index=True) 
     personal_email = Column(String, nullable=True) 
-    phone_number = Column(String, nullable=True) 
+    phone_number = Column(String, nullable=True)
     
     # 2. Personal & Family Details
     dob = Column(String, nullable=True) 
@@ -37,13 +37,13 @@ class User(Base):
     password = Column(String) 
     salt = Column(String)
     is_password_changed = Column(Boolean, default=False) 
-    is_verified = Column(Boolean, default=False) # NEW: Verification Flag
+    is_verified = Column(Boolean, default=False) 
     
     # 4. Hierarchy & Role
     user_type = Column(String, default="employee") 
     manager_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     location_id = Column(Integer, ForeignKey("office_locations.id"), nullable=True)
-    blockchain_id = Column(String, unique=True, nullable=True) # Generated ONLY after verification
+    blockchain_id = Column(String, unique=True, nullable=True)
     
     # 5. Professional Details
     designation = Column(String, nullable=True)
@@ -56,13 +56,13 @@ class User(Base):
     aadhar_enc = Column(String, nullable=True) 
     pan_enc = Column(String, nullable=True)
     
-    # 7. Document Paths
-    profile_photo_path = Column(String, nullable=True)
-    aadhar_photo_path = Column(String, nullable=True)
-    pan_photo_path = Column(String, nullable=True)
-    filled_form_path = Column(String, nullable=True) # NEW: Filled PDF Form
+    # 7. Document Paths (Base64 Text)
+    profile_photo_path = Column(Text, nullable=True)
+    aadhar_photo_path = Column(Text, nullable=True)
+    pan_photo_path = Column(Text, nullable=True)
+    filled_form_path = Column(Text, nullable=True) 
     
-    # 8. Shift & Status
+    # 8. Status
     is_present = Column(Boolean, default=False)
     shift_start = Column(String, default="09:00")
     shift_end = Column(String, default="18:00")
@@ -86,18 +86,16 @@ class OfficeLocation(Base):
 
 def init_db():
     Base.metadata.create_all(bind=engine)
-    
     columns_to_add = [
         ("first_name", "VARCHAR"), ("last_name", "VARCHAR"), ("personal_email", "VARCHAR"),
         ("phone_number", "VARCHAR"), ("dob", "VARCHAR"), ("father_name", "VARCHAR"),
         ("mother_name", "VARCHAR"), ("blood_group", "VARCHAR"), ("emergency_contact", "VARCHAR"),
-        ("designation", "VARCHAR"), ("department", "VARCHAR"), ("experience_years", "FLOAT DEFAULT 0.0"),
+        ("designation", "VARCHAR"), ("department", "VARCHAR"), ("experience_years", "FLOAT"),
         ("prev_company", "VARCHAR"), ("prev_role", "VARCHAR"), ("aadhar_enc", "VARCHAR"), ("pan_enc", "VARCHAR"),
-        ("profile_photo_path", "VARCHAR"), ("aadhar_photo_path", "VARCHAR"), ("pan_photo_path", "VARCHAR"),
-        ("filled_form_path", "VARCHAR"), ("is_verified", "BOOLEAN DEFAULT FALSE"), # New Fields
+        ("profile_photo_path", "TEXT"), ("aadhar_photo_path", "TEXT"), ("pan_photo_path", "TEXT"),
+        ("filled_form_path", "TEXT"), ("is_verified", "BOOLEAN DEFAULT FALSE"),
         ("is_password_changed", "BOOLEAN DEFAULT FALSE"), ("location_id", "INTEGER")
     ]
-    
     with engine.connect() as conn:
         for col_name, col_type in columns_to_add:
             try:
@@ -110,4 +108,3 @@ def init_db():
                     conn.commit()
                 except Exception:
                     conn.rollback()
-                    pass
