@@ -1,0 +1,144 @@
+:root {
+  --lizza-red: #e31e24; /* Primary Red from your logo */
+  --lizza-black: #1a1a1a; /* Professional Black */
+  --lizza-gray: #f4f4f4; /* Light Background */
+  --white: #ffffff;
+}
+
+body { font-family: 'Poppins', sans-serif; overflow-x: hidden; color: var(--lizza-black); }
+
+/* Global Color Utility Classes */
+.bg-black { background-color: var(--lizza-black); }
+.bg-red { background-color: var(--lizza-red); }
+.text-red { color: var(--lizza-red); }
+.text-black { color: var(--lizza-black); }
+
+/* Buttons */
+.btn-red { 
+  background-color: var(--lizza-red); 
+  color: var(--white); 
+  border: none;
+  transition: 0.3s; 
+}
+.btn-red:hover { 
+  background-color: #b3171b; 
+  transform: scale(1.05); 
+  color: var(--white); 
+  box-shadow: 0 10px 20px rgba(227, 30, 36, 0.2);
+}
+
+/* Hero Section */
+.hero-section {
+  height: 85vh;
+  background: linear-gradient(rgba(0, 0, 0, 0.7), rgba(0, 0, 0, 0.4)), 
+              url('./assets/hero.jpg') center/cover no-repeat;
+}
+
+/* Cards */
+.service-card {
+  transition: 0.4s ease;
+  border-bottom: 4px solid transparent !important;
+}
+.service-card:hover {
+  transform: translateY(-12px);
+  border-bottom-color: var(--lizza-red) !important;
+  box-shadow: 0 15px 40px rgba(0,0,0,0.1) !important;
+}
+
+.icon-box-wrapper {
+  width: 65px;
+  height: 65px;
+  background: #fff1f1;
+  color: var(--lizza-red);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  margin: 0 auto;
+}
+
+.divider { width: 60px; height: 4px; margin-top: 10px; border-radius: 2px; }
+
+.check-circle {
+  width: 25px;
+  height: 25px;
+  background: var(--lizza-red);
+  color: var(--white);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+}
+/* --- Special Animations --- */
+
+/* 1. Pulse for the Red Text in Hero */
+@keyframes pulse-red {
+  0% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.05); opacity: 0.8; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.animate-pulse-slow {
+  display: inline-block;
+  animation: pulse-red 3s infinite ease-in-out;
+}
+
+/* 2. Floating Button Effect */
+.hover-float:hover {
+  transform: translateY(-8px);
+  box-shadow: 0 15px 30px rgba(227, 30, 36, 0.4);
+}
+
+/* 3. Glowing Border for Secondary Button */
+.hover-glow:hover {
+  border-color: var(--lizza-red) !important;
+  color: var(--lizza-red) !important;
+  box-shadow: 0 0 15px rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* 4. Infinite Pulse for Call to Action */
+@keyframes cta-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(227, 30, 36, 0.7); }
+  70% { box-shadow: 0 0 0 15px rgba(227, 30, 36, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(227, 30, 36, 0); }
+}
+.pulse-infinite {
+  animation: cta-pulse 2s infinite;
+}
+
+/* 5. Section Separator Gradient */
+.section-separator {
+  height: 5px;
+  background: linear-gradient(to right, transparent, var(--lizza-red), transparent);
+  margin: 0 auto;
+}
+
+/* Stats Item Hover */
+.stat-item {
+  transition: all 0.4s ease;
+  border-radius: 10px;
+}
+.stat-item:hover {
+  background: rgba(255, 255, 255, 0.1);
+  transform: scale(1.1);
+}
+
+/* Header Navbar Hover Animation */
+.custom-nav .nav-link {
+    position: relative;
+    transition: 0.3s;
+}
+.custom-nav .nav-link::after {
+    content: '';
+    position: absolute;
+    width: 0;
+    height: 2px;
+    bottom: 0;
+    left: 0;
+    background-color: var(--lizza-red);
+    transition: width 0.3s;
+}
+.custom-nav .nav-link:hover::after {
+    width: 100%;
+}
