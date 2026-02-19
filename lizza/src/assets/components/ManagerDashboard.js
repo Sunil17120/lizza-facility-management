@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Container, Card, Form, Button, Row, Col, Badge, Table, Modal, Spinner, InputGroup, Tabs, Tab, Alert } from 'react-bootstrap';
-import { UserPlus, Map as MapIcon, ShieldCheck, Users, Search, MapPin, User as UserIcon, Briefcase, FileText } from 'lucide-react';
+import { UserPlus, Map as MapIcon, ShieldCheck, Users, Search, MapPin, User as UserIcon, Briefcase, FileText, Clock } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
@@ -25,7 +25,7 @@ const ManagerDashboard = () => {
     aadhar: '', pan: '', role: 'employee', locId: ''
   });
   
-  const [files, setFiles] = useState({ profile: null, aadhar: null, pan: null });
+  const [files, setFiles] = useState({ profile: null, aadhar: null, pan: null, filledForm: null });
   const [previews, setPreviews] = useState({ profile: null, aadhar: null, pan: null });
 
   const managerId = localStorage.getItem('userId'); 
@@ -49,14 +49,11 @@ const ManagerDashboard = () => {
         const staffRes = await fetch(`/api/manager/my-employees?manager_id=${cleanId}`);
         if(staffRes.ok) setMyEmployees(await staffRes.json());
 
-        // FIX: Fetch initial map positions so it is not empty
         const liveRes = await fetch(`/api/manager/live-tracking?manager_id=${cleanId}`);
         if(liveRes.ok) {
             const liveData = await liveRes.json();
             const liveMap = {};
-            liveData.forEach(loc => {
-                liveMap[loc.email] = { ...loc, time: new Date().toLocaleTimeString() };
-            });
+            liveData.forEach(loc => { liveMap[loc.email] = { ...loc, time: new Date().toLocaleTimeString() }; });
             setLiveStaff(liveMap);
         }
         setLoading(false);
@@ -76,32 +73,37 @@ const ManagerDashboard = () => {
     return () => socket.close();
   }, [managerId]);
 
-  // Handle constraints and Generate Image/PDF previews
   const handleFileChange = (e, type) => {
     const file = e.target.files[0];
     if (!file) return;
 
-    // Constraint: 5MB File Limit
-    if (file.size > 5 * 1024 * 1024) {
-        alert("Maximum file size is 5MB. Please upload a smaller document.");
-        e.target.value = null; 
-        return;
+    if (type === 'filledForm') {
+        if (file.size > 2 * 1024 * 1024) {
+            alert("Filled Form size cannot exceed 2MB.");
+            e.target.value = null; return;
+        }
+        if (file.type !== 'application/pdf') {
+            alert("Filled Form must be a PDF file.");
+            e.target.value = null; return;
+        }
+    } else {
+        if (file.size > 5 * 1024 * 1024) {
+            alert("File size cannot exceed 5MB.");
+            e.target.value = null; return;
+        }
     }
 
     setFiles({ ...files, [type]: file });
-
-    const fileUrl = URL.createObjectURL(file);
-    if (file.type.includes('image')) {
-        setPreviews({ ...previews, [type]: { url: fileUrl, isImage: true } });
-    } else if (file.type === 'application/pdf') {
-        setPreviews({ ...previews, [type]: { url: fileUrl, isImage: false } });
+    if (type !== 'filledForm') {
+        const fileUrl = URL.createObjectURL(file);
+        setPreviews({ ...previews, [type]: { url: fileUrl, isImage: file.type.includes('image') } });
     }
   };
 
   const handleModalClose = () => {
       setShowAddEmp(false);
       setPreviews({ profile: null, aadhar: null, pan: null });
-      setFiles({ profile: null, aadhar: null, pan: null });
+      setFiles({ profile: null, aadhar: null, pan: null, filledForm: null });
   };
 
   const handleOnboardEmployee = async (e) => {
@@ -134,12 +136,13 @@ const ManagerDashboard = () => {
     if (files.profile) submitData.append('profile_photo', files.profile);
     if (files.aadhar) submitData.append('aadhar_photo', files.aadhar);
     if (files.pan) submitData.append('pan_photo', files.pan);
+    if (files.filledForm) submitData.append('filled_form', files.filledForm);
 
     try {
         const res = await fetch('/api/manager/add-employee', { method: 'POST', body: submitData });
         const data = await res.json();
         if(res.ok) {
-            alert(`Success! Employee ID: ${data.blockchain_id}\nOfficial Email: ${data.official_email}`);
+            alert(`Employee Form Submitted!\nOfficial Email: ${data.official_email}\n\nStatus: Pending Admin Verification.`); 
             handleModalClose();
             fetchEmployees(); 
         } else { alert(`Error: ${data.detail || "Failed to add employee"}`); }
@@ -181,7 +184,7 @@ const ManagerDashboard = () => {
             </div>
             
             <Table responsive hover className="align-middle">
-              <thead className="table-light"><tr><th>Employee Name</th><th>Assigned Site</th><th>Shift</th><th>Live Status</th><th>Attendance</th></tr></thead>
+              <thead className="table-light"><tr><th>Employee Name</th><th>Status</th><th>Assigned Site</th><th>Live Status</th><th>Attendance</th></tr></thead>
               <tbody>
                 {myEmployees.length === 0 ? (<tr><td colSpan="5" className="text-center">No employees assigned yet.</td></tr>) : (
                     myEmployees.filter(e => e.full_name.toLowerCase().includes(empSearch.toLowerCase())).map(emp => {
@@ -189,9 +192,18 @@ const ManagerDashboard = () => {
                         const branch = getBranchInfo(emp.location_id);
                         return (
                             <tr key={emp.id}>
-                                <td className="fw-bold">{emp.full_name}</td>
+                                <td className="fw-bold">
+                                    {emp.full_name} <br/>
+                                    <span className="text-muted small font-monospace">{emp.blockchain_id || "ID PENDING"}</span>
+                                </td>
+                                <td>
+                                    {emp.is_verified ? (
+                                        <Badge bg="success" className="px-2 py-1"><ShieldCheck size={12} className="me-1"/> Verified</Badge>
+                                    ) : (
+                                        <Badge bg="warning" text="dark" className="px-2 py-1"><Clock size={12} className="me-1"/> Pending Admin</Badge>
+                                    )}
+                                </td>
                                 <td>{branch ? <Badge bg="light" text="dark" className="border"><MapPin size={10} className="me-1"/>{branch.name}</Badge> : <span className="text-muted small">Unassigned</span>}</td>
-                                <td className="small">{emp.shift_start} - {emp.shift_end}</td>
                                 <td>{liveData ? <Badge bg={liveData.present ? "success" : "danger"}>{liveData.present ? "Inside Geofence" : "Outside Perimeter"}</Badge> : <Badge bg="secondary">Offline</Badge>}</td>
                                 <td>{emp.is_present || (liveData && liveData.present) ? <span className="text-success fw-bold">Present</span> : <span className="text-danger">Absent</span>}</td>
                             </tr>
@@ -252,6 +264,13 @@ const ManagerDashboard = () => {
                     <Tab eventKey="documents" title={<><FileText size={16} className="me-2"/>Documents</>}>
                         <Alert variant="warning" className="small py-2 mt-3"><ShieldCheck size={14} className="me-2"/>Files and Numbers are securely processed and encrypted.</Alert>
                         <Row>
+                            {/* NEW: PDF Form Upload */}
+                            <Col md={12} className="mb-4 border border-primary bg-light p-3 rounded">
+                                <Form.Label className="fw-bold text-primary mb-1">Upload Filled Onboarding Form</Form.Label>
+                                <p className="small text-muted mb-2">Must be a PDF document. Maximum size: 2MB.</p>
+                                <Form.Control required type="file" accept=".pdf" onChange={(e) => handleFileChange(e, 'filledForm')} />
+                            </Col>
+
                             <Col md={6} className="mb-3">
                                 <Form.Label className="small fw-bold">Aadhaar Number</Form.Label>
                                 <Form.Control required placeholder="12-digit UID" pattern="\d{12}" maxLength="12" title="Must be exactly 12 digits" onChange={e => setFormData({...formData, aadhar: e.target.value})} />
@@ -284,7 +303,7 @@ const ManagerDashboard = () => {
                 </Tabs>
                 <div className="d-flex justify-content-end gap-2 mt-3 border-top pt-3">
                     <Button variant="light" onClick={handleModalClose}>Cancel</Button>
-                    <Button type="submit" variant="danger" className="px-4 fw-bold">Save Record & Send Email</Button>
+                    <Button type="submit" variant="danger" className="px-4 fw-bold">Submit for Admin Verification</Button>
                 </div>
             </Form>
         </Modal.Body>

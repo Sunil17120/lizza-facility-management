@@ -2,7 +2,6 @@ import hashlib
 import os
 import redis
 import math
-import json
 import smtplib
 import base64
 from email.mime.text import MIMEText
@@ -27,23 +26,16 @@ else: r = None
 init_db()
 PEPPER = os.environ.get("SECRET_PEPPER", "change_me_in_vercel_settings")
 
-# --- SECURE FILE UPLOAD WITH CONSTRAINTS ---
+# --- SECURE FILE UPLOADS ---
 def process_upload_base64(upload_file: UploadFile) -> str:
-    if not upload_file or not upload_file.filename:
-        return None
+    if not upload_file or not upload_file.filename: return None
     file_content = upload_file.file.read()
-    
-    # STRICT 5MB LIMIT
     if len(file_content) > 5 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail=f"File {upload_file.filename} is too large. Max allowed is 5MB.")
-        
+        raise HTTPException(status_code=400, detail="Max file size is 5MB.")
     try:
         encoded = base64.b64encode(file_content).decode('utf-8')
-        mime_type = upload_file.content_type
-        return f"data:{mime_type};base64,{encoded}"
-    except Exception as e:
-        print(f"File processing error: {e}")
-        return None
+        return f"data:{upload_file.content_type};base64,{encoded}"
+    except Exception: return None
 
 # --- EMAIL CONFIGURATION ---
 SMTP_SERVER = os.environ.get("SMTP_SERVER", "smtp.gmail.com")
@@ -52,17 +44,18 @@ SMTP_USER = os.environ.get("SMTP_USER", "your-email@gmail.com")
 SMTP_PASS = os.environ.get("SMTP_PASS", "your-app-password")
 
 def send_onboarding_email(to_email, full_name, temp_password, login_email):
-    subject = "Welcome to LIZZA - Your Login Credentials"
+    subject = "LIZZA - Onboarding Verified & Credentials Issued"
     body = f"""Dear {full_name},
-Welcome to the team! Your account has been securely created.
     
-Login Details:
+Your onboarding profile has been successfully verified by the Admin.
+    
+Official Login Details:
 --------------------------------
 Portal URL: https://your-app-url.com
 Official Email: {login_email}
 Temporary Password: {temp_password}
 --------------------------------
-IMPORTANT: For security, you are required to change your password immediately upon first login.
+IMPORTANT: For security, you must change this password upon your first login.
 """
     try:
         msg = MIMEText(body)
@@ -73,9 +66,8 @@ IMPORTANT: For security, you are required to change your password immediately up
             server.login(SMTP_USER, SMTP_PASS)
             server.sendmail(SMTP_USER, to_email, msg.as_string())
         return True
-    except Exception as e: return False
+    except Exception: return False
 
-# --- SCHEMAS & UTILS ---
 class AuthRequest(BaseModel): email: str; password: str
 class LocationCreate(BaseModel): name: str; lat: float; lon: float; radius: int
 class PasswordChange(BaseModel): email: str; old_password: str; new_password: str
@@ -108,19 +100,22 @@ def get_db():
 def get_secure_hash(password: str, salt: str):
     return hashlib.sha256((password + salt + PEPPER).encode()).hexdigest()
 
-# --- GENERAL ROUTES ---
 @app.post("/api/login")
 def login(data: AuthRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == data.email.lower().strip()).first()
     if not user or get_secure_hash(data.password, user.salt) != user.password:
         raise HTTPException(status_code=401, detail="Invalid credentials")
+        
+    # Block Unverified Logins
+    if not user.is_verified and user.user_type != 'admin':
+        raise HTTPException(status_code=403, detail="Account pending Admin Verification. Check back later.")
+        
     return {"message": "Login successful", "user": user.full_name, "user_type": user.user_type, "user_id": user.id, "force_password_change": not user.is_password_changed}
 
 @app.post("/api/change-password")
 def change_password(data: PasswordChange, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == data.email.lower().strip()).first()
-    if not user or get_secure_hash(data.old_password, user.salt) != user.password:
-        raise HTTPException(status_code=400, detail="Incorrect current password")
+    if not user or get_secure_hash(data.old_password, user.salt) != user.password: raise HTTPException(status_code=400, detail="Incorrect current password")
     user.password = get_secure_hash(data.new_password, user.salt)
     user.is_password_changed = True 
     db.commit()
@@ -132,7 +127,6 @@ def get_user_profile(email: str, db: Session = Depends(get_db)):
     if not user: raise HTTPException(status_code=404, detail="User not found")
     return {"full_name": user.full_name, "email": user.email, "user_type": user.user_type, "shift_start": user.shift_start, "shift_end": user.shift_end, "blockchain_id": user.blockchain_id, "profile_photo": user.profile_photo_path}
 
-# --- ADMIN & MANAGER ROUTES ---
 @app.post("/api/manager/add-employee")
 async def add_employee(
     first_name: str = Form(...), last_name: str = Form(...), personal_email: str = Form(...),
@@ -143,6 +137,7 @@ async def add_employee(
     pan_number: str = Form(...), manager_id: int = Form(...), user_type: str = Form("employee"),
     location_id: Optional[int] = Form(None), shift_start: str = Form("09:00"), shift_end: str = Form("18:00"),
     profile_photo: UploadFile = File(None), aadhar_photo: UploadFile = File(None), pan_photo: UploadFile = File(None),
+    filled_form: UploadFile = File(None), # NEW: Filled PDF Form
     db: Session = Depends(get_db)
 ):
     manager = db.query(User).filter(User.id == manager_id).first()
@@ -160,41 +155,86 @@ async def add_employee(
     aadhar_encrypted = cipher.encrypt(aadhar_number.encode()).decode()
     pan_encrypted = cipher.encrypt(pan_number.encode()).decode()
 
+    # 2MB LIMIT FOR FILLED FORM
+    filled_form_base64 = None
+    if filled_form and filled_form.filename:
+        if not filled_form.filename.lower().endswith('.pdf'): raise HTTPException(400, "Filled form must be a PDF")
+        content = filled_form.file.read()
+        if len(content) > 2 * 1024 * 1024: raise HTTPException(400, "Filled form cannot exceed 2MB")
+        filled_form_base64 = f"data:application/pdf;base64,{base64.b64encode(content).decode('utf-8')}"
+
     prof_path = process_upload_base64(profile_photo)
     aadhar_path = process_upload_base64(aadhar_photo)
     pan_path = process_upload_base64(pan_photo)
 
-    blockchain_hash = hashlib.sha256(f"{base_email}{datetime.utcnow()}".encode()).hexdigest()
-    full_name_combined = f"{first_name} {last_name}"
-    
     new_user = User(
-        first_name=first_name, last_name=last_name, full_name=full_name_combined,
+        first_name=first_name, last_name=last_name, full_name=f"{first_name} {last_name}",
         email=base_email, personal_email=personal_email, phone_number=phone_number, password=hashed_pw,
         user_type=user_type, manager_id=manager.id, location_id=location_id if location_id else None,
-        blockchain_id=f"LIZZA-{blockchain_hash[:10]}".upper(), shift_start=shift_start, shift_end=shift_end, 
-        salt=salt, is_password_changed=False, dob=dob, father_name=father_name, mother_name=mother_name, 
+        blockchain_id=None, # KEPT NULL UNTIL VERIFIED
+        shift_start=shift_start, shift_end=shift_end, 
+        salt=salt, is_password_changed=False, is_verified=False, # PENDING VERIFICATION
+        dob=dob, father_name=father_name, mother_name=mother_name, 
         blood_group=blood_group, emergency_contact=emergency_contact, designation=designation, department=department, 
         experience_years=experience_years, prev_company=prev_company, prev_role=prev_role, aadhar_enc=aadhar_encrypted, 
-        pan_enc=pan_encrypted, profile_photo_path=prof_path, aadhar_photo_path=aadhar_path, pan_photo_path=pan_path
+        pan_enc=pan_encrypted, profile_photo_path=prof_path, aadhar_photo_path=aadhar_path, pan_photo_path=pan_path,
+        filled_form_path=filled_form_base64
     )
-    
     try:
         db.add(new_user)
         db.commit()
-        send_onboarding_email(personal_email, full_name_combined, initial_password, base_email)
-        return {"status": "success", "blockchain_id": new_user.blockchain_id, "official_email": base_email}
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(status_code=400, detail="Integrity Error: Duplicate Data.")
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        # NO EMAIL SENT HERE. Wait for admin.
+        return {"status": "success", "official_email": base_email, "message": "Employee added. Pending Admin Verification."}
+    except IntegrityError: db.rollback(); raise HTTPException(status_code=400, detail="Integrity Error: Duplicate Data.")
+    except Exception as e: db.rollback(); raise HTTPException(status_code=500, detail=str(e))
+
+# --- NEW: VERIFICATION & EMAIL DISPATCH ---
+@app.post("/api/admin/verify-employee")
+def verify_employee(target_email: str = Query(...), admin_email: str = Query(...), db: Session = Depends(get_db)):
+    admin = db.query(User).filter(User.email == admin_email.lower().strip()).first()
+    if not admin or admin.user_type.lower() != 'admin': raise HTTPException(status_code=403, detail="Admin access required")
+
+    user = db.query(User).filter(User.email == target_email.lower().strip()).first()
+    if not user: raise HTTPException(status_code=404, detail="User not found")
+    if user.is_verified: raise HTTPException(status_code=400, detail="User already verified")
+
+    # 1. Generate Blockchain ID
+    blockchain_hash = hashlib.sha256(f"{user.email}{datetime.utcnow()}".encode()).hexdigest()
+    user.blockchain_id = f"LIZZA-{blockchain_hash[:10]}".upper()
+    
+    # 2. Mark Verified
+    user.is_verified = True
+    
+    # 3. Retrieve initial password for email
+    try: initial_password = datetime.strptime(user.dob, "%Y-%m-%d").strftime("%d%m%Y")
+    except: initial_password = "Password123!" 
+
+    db.commit()
+    
+    # 4. Fire Email
+    send_onboarding_email(user.personal_email, user.full_name, initial_password, user.email)
+    return {"status": "success", "message": "Verified and Email Sent", "blockchain_id": user.blockchain_id}
+
+# --- NEW: ADMIN SECURE DOCUMENT VIEWER ---
+@app.get("/api/admin/employee-doc")
+def get_employee_doc(email: str, doc_type: str, admin_email: str, db: Session = Depends(get_db)):
+    admin = db.query(User).filter(User.email == admin_email.lower().strip()).first()
+    if not admin or admin.user_type.lower() != 'admin': raise HTTPException(status_code=403, detail="Admin access required")
+    user = db.query(User).filter(User.email == email.lower().strip()).first()
+    if not user: raise HTTPException(status_code=404, detail="User not found")
+    
+    doc_data = None
+    if doc_type == 'filled_form': doc_data = user.filled_form_path
+    elif doc_type == 'aadhar': doc_data = user.aadhar_photo_path
+    elif doc_type == 'pan': doc_data = user.pan_photo_path
+    
+    return {"data": doc_data}
 
 @app.get("/api/admin/employees")
 def get_all_employees(admin_email: str, db: Session = Depends(get_db)):
     admin = db.query(User).filter(User.email == admin_email.lower().strip()).first()
     if not admin or admin.user_type.lower() != 'admin': raise HTTPException(status_code=403, detail="Admin access required")
-    return [{"id": u.id, "full_name": u.full_name, "email": u.email, "user_type": u.user_type, "shift_start": u.shift_start, "shift_end": u.shift_end, "blockchain_id": u.blockchain_id, "location_id": u.location_id, "is_present": u.is_present} for u in db.query(User).all()]
+    return [{"id": u.id, "full_name": u.full_name, "email": u.email, "user_type": u.user_type, "shift_start": u.shift_start, "shift_end": u.shift_end, "blockchain_id": u.blockchain_id, "location_id": u.location_id, "is_present": u.is_present, "is_verified": u.is_verified} for u in db.query(User).all()]
 
 @app.get("/api/admin/locations")
 def get_locations(db: Session = Depends(get_db)): return db.query(OfficeLocation).all()
@@ -245,7 +285,6 @@ def get_live_tracking(admin_email: str, db: Session = Depends(get_db)):
             locations.append({"email": email, "lat": float(lat), "lon": float(lon), "name": user.full_name if user else email.split("@")[0]})
     return locations
 
-# --- NEW: Fix Manager Map Initialization ---
 @app.get("/api/manager/live-tracking")
 def get_manager_live_tracking(manager_id: int, db: Session = Depends(get_db)):
     if not r: return []
@@ -263,24 +302,16 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
     user = db.query(User).filter(User.email == email.lower().strip()).first()
     if not user or not user.location_id: raise HTTPException(status_code=404, detail="User or office not found")
     office = db.query(OfficeLocation).filter(OfficeLocation.id == user.location_id).first()
-    
     if r: r.set(f"loc:{email}", f"{lat},{lon}", ex=60)
-
     is_inside = get_distance(lat, lon, office.lat, office.lon) <= office.radius
+    if user.manager_id: await ws_manager.broadcast(str(user.manager_id), {"email": user.email, "name": user.full_name, "lat": lat, "lon": lon, "present": is_inside, "status": "inside" if is_inside else "outside"})
     
-    if user.manager_id:
-        await ws_manager.broadcast(str(user.manager_id), {"email": user.email, "name": user.full_name, "lat": lat, "lon": lon, "present": is_inside, "status": "inside" if is_inside else "outside"})
-    
-    now_utc = datetime.utcnow()
-    now_ist = now_utc + timedelta(hours=5, minutes=30) 
-    now_str = now_ist.strftime("%H:%M")
-    
+    now_utc = datetime.utcnow(); now_ist = now_utc + timedelta(hours=5, minutes=30); now_str = now_ist.strftime("%H:%M")
     status_response = {"is_inside": is_inside, "status": "normal", "message": "On Duty", "warning_seconds": 0}
 
     if is_inside:
         if r: r.delete(f"oob:{email}")
         grace_end = (datetime.strptime(user.shift_start, "%H:%M") + timedelta(minutes=15)).strftime("%H:%M")
-        
         if not user.is_present:
             if now_str >= user.shift_start and now_str <= grace_end: user.is_present = True; status_response["message"] = "Marked Present"
             elif now_str > grace_end: status_response["message"] = "Inside Zone (Late)"
@@ -290,8 +321,7 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
     else:
         if not user.is_present: return {"is_inside": False, "status": "outside", "message": "Outside Geofence", "warning_seconds": 0}
         if r:
-            oob_key = f"oob:{email}"
-            first_out_time = r.get(oob_key)
+            oob_key = f"oob:{email}"; first_out_time = r.get(oob_key)
             if not first_out_time: r.set(oob_key, now_utc.isoformat()); status_response.update({"status": "warning", "message": "Return to Zone!", "warning_seconds": 300})
             else:
                 try:
@@ -310,4 +340,4 @@ async def websocket_endpoint(websocket: WebSocket, manager_id: str):
 
 @app.get("/api/manager/my-employees")
 def get_manager_employees(manager_id: int, db: Session = Depends(get_db)):
-    return [{"id": u.id, "full_name": u.full_name, "email": u.email, "location_id": u.location_id, "shift_start": u.shift_start, "shift_end": u.shift_end, "is_present": u.is_present, "blockchain_id": u.blockchain_id} for u in db.query(User).filter(User.manager_id == manager_id).all()]
+    return [{"id": u.id, "full_name": u.full_name, "email": u.email, "location_id": u.location_id, "shift_start": u.shift_start, "shift_end": u.shift_end, "is_present": u.is_present, "blockchain_id": u.blockchain_id, "is_verified": u.is_verified} for u in db.query(User).filter(User.manager_id == manager_id).all()]
