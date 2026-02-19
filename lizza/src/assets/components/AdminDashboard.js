@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Table, Form, Container, Card, Spinner, Button, Row, Col, Modal, InputGroup, Badge, Tab, Tabs, Alert } from 'react-bootstrap';
-import { UserCog, Save, Building2, UserPlus, Search, Trash2, Users, UserCheck, UserX, MapPin, Crosshair, Target, FileText, Briefcase, User as UserIcon, ShieldCheck, HeartPulse } from 'lucide-react';
+import { UserCog, Save, Building2, UserPlus, Search, Trash2, Users, UserCheck, UserX, MapPin, Crosshair, Target, FileText, Briefcase, User as UserIcon, ShieldCheck } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, useMap, Circle } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
@@ -36,12 +36,13 @@ const AdminDashboard = () => {
   
   const [newLoc, setNewLoc] = useState({ name: '', lat: 22.5726, lon: 88.3639, radius: 200 });
   const [formData, setFormData] = useState({
-    firstName: '', lastName: '', personalEmail: '', dob: '', fatherName: '', motherName: '', bloodGroup: '', emergencyContact: '',
+    firstName: '', lastName: '', personalEmail: '', phone: '', dob: '', fatherName: '', motherName: '', bloodGroup: '', emergencyContact: '',
     designation: '', department: 'IT / Engineering', experience: 0, prevCompany: '', prevRole: '',
     aadhar: '', pan: '', role: 'employee', locId: ''
   });
 
   const [files, setFiles] = useState({ profile: null, aadhar: null, pan: null });
+  const [previews, setPreviews] = useState({ profile: null, aadhar: null, pan: null });
   
   const adminEmail = localStorage.getItem('userEmail');
   const adminId = localStorage.getItem('userId') || 1;
@@ -118,8 +119,30 @@ const AdminDashboard = () => {
     fetchData();
   };
 
+  // Previews and Size Limit
   const handleFileChange = (e, type) => {
-    setFiles({ ...files, [type]: e.target.files[0] });
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (file.size > 5 * 1024 * 1024) {
+        alert("Maximum file size is 5MB. Please upload a smaller document.");
+        e.target.value = null; 
+        return;
+    }
+
+    setFiles({ ...files, [type]: file });
+    const fileUrl = URL.createObjectURL(file);
+    if (file.type.includes('image')) {
+        setPreviews({ ...previews, [type]: { url: fileUrl, isImage: true } });
+    } else if (file.type === 'application/pdf') {
+        setPreviews({ ...previews, [type]: { url: fileUrl, isImage: false } });
+    }
+  };
+
+  const handleModalClose = () => {
+      setShowAddEmp(false);
+      setPreviews({ profile: null, aadhar: null, pan: null });
+      setFiles({ profile: null, aadhar: null, pan: null });
   };
 
   const handleOnboardEmployee = async (e) => {
@@ -128,11 +151,11 @@ const AdminDashboard = () => {
     let mgrId = currentAdminUser ? currentAdminUser.id : (parseInt(adminId) || 1);
     const locIdParsed = parseInt(formData.locId);
 
-    // Using FormData to handle files properly
     const submitData = new FormData();
     submitData.append('first_name', formData.firstName);
     submitData.append('last_name', formData.lastName);
     submitData.append('personal_email', formData.personalEmail);
+    submitData.append('phone_number', formData.phone);
     submitData.append('dob', formData.dob);
     submitData.append('father_name', formData.fatherName);
     submitData.append('mother_name', formData.motherName);
@@ -149,7 +172,6 @@ const AdminDashboard = () => {
     submitData.append('user_type', formData.role);
     if (!isNaN(locIdParsed)) submitData.append('location_id', locIdParsed);
     
-    // Append Files
     if (files.profile) submitData.append('profile_photo', files.profile);
     if (files.aadhar) submitData.append('aadhar_photo', files.aadhar);
     if (files.pan) submitData.append('pan_photo', files.pan);
@@ -159,7 +181,7 @@ const AdminDashboard = () => {
     
     if (res.ok) { 
         alert(`Employee Added!\nOfficial Email: ${result.official_email}\nLogin details sent to ${formData.personalEmail}`); 
-        setShowAddEmp(false); 
+        handleModalClose();
         fetchData(); 
     } else { alert("Failed to add employee: " + result.detail); }
   };
@@ -263,22 +285,32 @@ const AdminDashboard = () => {
       </Card>
       
       {/* --- ADD USER MODAL --- */}
-      <Modal show={showAddEmp} onHide={() => setShowAddEmp(false)} size="lg" centered>
+      <Modal show={showAddEmp} onHide={handleModalClose} size="lg" centered>
         <Modal.Header closeButton className="border-0 bg-light"><Modal.Title className="fw-bold h5">Onboard New Talent</Modal.Title></Modal.Header>
         <Modal.Body className="p-4">
             <Form onSubmit={handleOnboardEmployee}>
                 <Tabs defaultActiveKey="personal" className="mb-4">
                     <Tab eventKey="personal" title={<><UserIcon size={16} className="me-2"/>Personal</>}>
                         <Row className="mt-3">
-                            <Col md={4} className="mb-3"><Form.Label className="small fw-bold">Profile Photo</Form.Label><Form.Control type="file" accept="image/*" onChange={(e) => handleFileChange(e, 'profile')} /></Col>
+                            <Col md={12} className="mb-3 d-flex flex-column align-items-center bg-light py-3 rounded">
+                                {previews.profile ? (
+                                    <img src={previews.profile.url} alt="Profile Preview" className="rounded-circle mb-2 border shadow-sm" style={{ width: '90px', height: '90px', objectFit: 'cover' }} />
+                                ) : (
+                                    <div className="rounded-circle mb-2 border d-flex align-items-center justify-content-center bg-white" style={{ width: '90px', height: '90px' }}><UserIcon className="text-muted" /></div>
+                                )}
+                                <Form.Label className="small fw-bold">Upload Passport Photo</Form.Label>
+                                <Form.Control type="file" accept="image/*" size="sm" style={{maxWidth: '250px'}} onChange={(e) => handleFileChange(e, 'profile')} />
+                                <Form.Text className="text-muted" style={{fontSize: '11px'}}>Max file size: 5MB</Form.Text>
+                            </Col>
                             <Col md={4} className="mb-3"><Form.Label className="small fw-bold">First Name</Form.Label><Form.Control required onChange={e => setFormData({...formData, firstName: e.target.value})} /></Col>
                             <Col md={4} className="mb-3"><Form.Label className="small fw-bold">Last Name</Form.Label><Form.Control required onChange={e => setFormData({...formData, lastName: e.target.value})} /></Col>
+                            <Col md={4} className="mb-3"><Form.Label className="small fw-bold">Date of Birth</Form.Label><Form.Control type="date" required onChange={e => setFormData({...formData, dob: e.target.value})} /></Col>
                             <Col md={6} className="mb-3"><Form.Label className="small fw-bold">Personal Email</Form.Label><Form.Control type="email" required onChange={e => setFormData({...formData, personalEmail: e.target.value})} /></Col>
-                            <Col md={6} className="mb-3"><Form.Label className="small fw-bold">Date of Birth</Form.Label><Form.Control type="date" required onChange={e => setFormData({...formData, dob: e.target.value})} /></Col>
+                            <Col md={6} className="mb-3"><Form.Label className="small fw-bold">Mobile Number</Form.Label><Form.Control type="tel" pattern="[0-9]{10}" maxLength="10" required placeholder="10-digit number" onChange={e => setFormData({...formData, phone: e.target.value})} /></Col>
                             <Col md={6} className="mb-3"><Form.Label className="small fw-bold">Father's Name</Form.Label><Form.Control onChange={e => setFormData({...formData, fatherName: e.target.value})} /></Col>
                             <Col md={6} className="mb-3"><Form.Label className="small fw-bold">Mother's Name</Form.Label><Form.Control onChange={e => setFormData({...formData, motherName: e.target.value})} /></Col>
                             <Col md={6} className="mb-3"><Form.Label className="small fw-bold">Blood Group</Form.Label><Form.Select onChange={e => setFormData({...formData, bloodGroup: e.target.value})}><option value="">Select...</option><option>A+</option><option>A-</option><option>B+</option><option>B-</option><option>O+</option><option>O-</option><option>AB+</option><option>AB-</option></Form.Select></Col>
-                            <Col md={6} className="mb-3"><Form.Label className="small fw-bold">Emergency Contact</Form.Label><Form.Control placeholder="10-digit number" onChange={e => setFormData({...formData, emergencyContact: e.target.value})} /></Col>
+                            <Col md={6} className="mb-3"><Form.Label className="small fw-bold">Emergency Contact</Form.Label><Form.Control type="tel" pattern="[0-9]{10}" maxLength="10" placeholder="10-digit number" onChange={e => setFormData({...formData, emergencyContact: e.target.value})} /></Col>
                         </Row>
                     </Tab>
                     <Tab eventKey="professional" title={<><Briefcase size={16} className="me-2"/>Professional</>}>
@@ -300,15 +332,38 @@ const AdminDashboard = () => {
                     <Tab eventKey="documents" title={<><FileText size={16} className="me-2"/>Documents</>}>
                         <Alert variant="warning" className="small py-2 mt-3"><ShieldCheck size={14} className="me-2"/>Files and Numbers are securely processed and encrypted.</Alert>
                         <Row>
-                            <Col md={6} className="mb-3"><Form.Label className="small fw-bold">Aadhaar Number</Form.Label><Form.Control required placeholder="12-digit UID" maxLength="12" onChange={e => setFormData({...formData, aadhar: e.target.value})} /></Col>
-                            <Col md={6} className="mb-3"><Form.Label className="small fw-bold">PAN Number</Form.Label><Form.Control required placeholder="10-digit PAN" maxLength="10" style={{textTransform: 'uppercase'}} onChange={e => setFormData({...formData, pan: e.target.value})} /></Col>
-                            <Col md={6} className="mb-3"><Form.Label className="small fw-bold">Upload Aadhaar (Image/PDF)</Form.Label><Form.Control type="file" accept="image/*,.pdf" onChange={(e) => handleFileChange(e, 'aadhar')} /></Col>
-                            <Col md={6} className="mb-3"><Form.Label className="small fw-bold">Upload PAN (Image/PDF)</Form.Label><Form.Control type="file" accept="image/*,.pdf" onChange={(e) => handleFileChange(e, 'pan')} /></Col>
+                            <Col md={6} className="mb-3">
+                                <Form.Label className="small fw-bold">Aadhaar Number</Form.Label>
+                                <Form.Control required placeholder="12-digit UID" pattern="\d{12}" maxLength="12" title="Must be exactly 12 digits" onChange={e => setFormData({...formData, aadhar: e.target.value})} />
+                            </Col>
+                            <Col md={6} className="mb-3">
+                                <Form.Label className="small fw-bold">PAN Number</Form.Label>
+                                <Form.Control required placeholder="10-digit PAN (e.g. ABCDE1234F)" pattern="[A-Za-z]{5}[0-9]{4}[A-Za-z]{1}" maxLength="10" style={{textTransform: 'uppercase'}} title="Format: 5 Letters, 4 Numbers, 1 Letter" onChange={e => setFormData({...formData, pan: e.target.value})} />
+                            </Col>
+                            
+                            <Col md={6} className="mb-3 border-top pt-3">
+                                <Form.Label className="small fw-bold">Upload Aadhaar (Max 5MB)</Form.Label>
+                                <Form.Control type="file" accept="image/*,.pdf" onChange={(e) => handleFileChange(e, 'aadhar')} className="mb-2" />
+                                {previews.aadhar && (
+                                    <div className="border rounded p-1 text-center bg-light" style={{ height: '120px' }}>
+                                        {previews.aadhar.isImage ? <img src={previews.aadhar.url} alt="Aadhaar Preview" style={{maxHeight: '100%', maxWidth: '100%'}} /> : <Badge bg="danger" className="mt-4">PDF Selected</Badge>}
+                                    </div>
+                                )}
+                            </Col>
+                            <Col md={6} className="mb-3 border-top pt-3">
+                                <Form.Label className="small fw-bold">Upload PAN (Max 5MB)</Form.Label>
+                                <Form.Control type="file" accept="image/*,.pdf" onChange={(e) => handleFileChange(e, 'pan')} className="mb-2" />
+                                {previews.pan && (
+                                    <div className="border rounded p-1 text-center bg-light" style={{ height: '120px' }}>
+                                        {previews.pan.isImage ? <img src={previews.pan.url} alt="PAN Preview" style={{maxHeight: '100%', maxWidth: '100%'}} /> : <Badge bg="danger" className="mt-4">PDF Selected</Badge>}
+                                    </div>
+                                )}
+                            </Col>
                         </Row>
                     </Tab>
                 </Tabs>
                 <div className="d-flex justify-content-end gap-2 mt-3 border-top pt-3">
-                    <Button variant="light" onClick={() => setShowAddEmp(false)}>Cancel</Button>
+                    <Button variant="light" onClick={handleModalClose}>Cancel</Button>
                     <Button type="submit" variant="danger" className="px-4 fw-bold">Save Record & Send Email</Button>
                 </div>
             </Form>
