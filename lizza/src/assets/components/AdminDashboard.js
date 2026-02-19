@@ -41,7 +41,7 @@ const AdminDashboard = () => {
     aadhar: '', pan: '', role: 'employee', locId: ''
   });
 
-  const [files, setFiles] = useState({ profile: null, aadhar: null, pan: null });
+  const [files, setFiles] = useState({ profile: null, aadhar: null, pan: null, filledForm: null });
   const [previews, setPreviews] = useState({ profile: null, aadhar: null, pan: null });
   
   const adminEmail = localStorage.getItem('userEmail');
@@ -119,30 +119,63 @@ const AdminDashboard = () => {
     fetchData();
   };
 
-  // Previews and Size Limit
+  // --- NEW: Verify Employee & View Documents ---
+  const handleVerifyEmployee = async (targetEmail) => {
+      if(window.confirm(`Are you sure you want to verify ${targetEmail}?\n\nThis will generate their Blockchain ID and send them an email with login credentials.`)) {
+          try {
+              const res = await fetch(`/api/admin/verify-employee?target_email=${targetEmail}&admin_email=${adminEmail}`, { method: 'POST' });
+              const data = await res.json();
+              if(res.ok) {
+                  alert(`Success! Employee Verified.\nBlockchain ID: ${data.blockchain_id}\nEmail Sent.`);
+                  fetchData();
+              } else { alert("Verification Failed: " + data.detail); }
+          } catch(err) { alert("Network Error"); }
+      }
+  };
+
+  const handleViewDoc = async (email, docType) => {
+      try {
+          const res = await fetch(`/api/admin/employee-doc?email=${email}&doc_type=${docType}&admin_email=${adminEmail}`);
+          const data = await res.json();
+          if (data.data) {
+              const win = window.open();
+              win.document.write(`<iframe src="${data.data}" frameborder="0" style="border:0; top:0px; left:0px; bottom:0px; right:0px; width:100%; height:100%;" allowfullscreen></iframe>`);
+          } else { alert("No document uploaded for this user."); }
+      } catch(e) { alert("Network error fetching document."); }
+  };
+
+  // --- File Change Limits ---
   const handleFileChange = (e, type) => {
     const file = e.target.files[0];
     if (!file) return;
 
-    if (file.size > 5 * 1024 * 1024) {
-        alert("Maximum file size is 5MB. Please upload a smaller document.");
-        e.target.value = null; 
-        return;
+    if (type === 'filledForm') {
+        if (file.size > 2 * 1024 * 1024) {
+            alert("Filled Form size cannot exceed 2MB.");
+            e.target.value = null; return;
+        }
+        if (file.type !== 'application/pdf') {
+            alert("Filled Form must be a PDF file.");
+            e.target.value = null; return;
+        }
+    } else {
+        if (file.size > 5 * 1024 * 1024) {
+            alert("File size cannot exceed 5MB.");
+            e.target.value = null; return;
+        }
     }
 
     setFiles({ ...files, [type]: file });
-    const fileUrl = URL.createObjectURL(file);
-    if (file.type.includes('image')) {
-        setPreviews({ ...previews, [type]: { url: fileUrl, isImage: true } });
-    } else if (file.type === 'application/pdf') {
-        setPreviews({ ...previews, [type]: { url: fileUrl, isImage: false } });
+    if (type !== 'filledForm') {
+        const fileUrl = URL.createObjectURL(file);
+        setPreviews({ ...previews, [type]: { url: fileUrl, isImage: file.type.includes('image') } });
     }
   };
 
   const handleModalClose = () => {
       setShowAddEmp(false);
       setPreviews({ profile: null, aadhar: null, pan: null });
-      setFiles({ profile: null, aadhar: null, pan: null });
+      setFiles({ profile: null, aadhar: null, pan: null, filledForm: null });
   };
 
   const handleOnboardEmployee = async (e) => {
@@ -175,12 +208,13 @@ const AdminDashboard = () => {
     if (files.profile) submitData.append('profile_photo', files.profile);
     if (files.aadhar) submitData.append('aadhar_photo', files.aadhar);
     if (files.pan) submitData.append('pan_photo', files.pan);
+    if (files.filledForm) submitData.append('filled_form', files.filledForm);
 
     const res = await fetch(`/api/manager/add-employee`, { method: 'POST', body: submitData });
     const result = await res.json();
     
     if (res.ok) { 
-        alert(`Employee Added!\nOfficial Email: ${result.official_email}\nLogin details sent to ${formData.personalEmail}`); 
+        alert(`Employee Form Submitted!\nOfficial Email: ${result.official_email}\n\nStatus: Pending Your Verification.`); 
         handleModalClose();
         fetchData(); 
     } else { alert("Failed to add employee: " + result.detail); }
@@ -254,7 +288,7 @@ const AdminDashboard = () => {
       <Card className="border-0 shadow-sm p-4">
         <InputGroup style={{ maxWidth: '400px' }} className="mb-3"><InputGroup.Text className="bg-white border-end-0"><Search size={18} className="text-muted"/></InputGroup.Text><Form.Control className="border-start-0 ps-0" placeholder="Search staff..." onChange={(e) => setEmpSearch(e.target.value)} /></InputGroup>
         <Table responsive hover className="align-middle border">
-          <thead className="table-light"><tr className="small text-uppercase"><th>Full Name</th><th>Email</th><th>Branch</th><th>Shift & Role</th><th>Status</th><th>Actions</th></tr></thead>
+          <thead className="table-light"><tr className="small text-uppercase"><th>Full Name</th><th>Email</th><th>Branch</th><th>Shift & Role</th><th>Verification</th><th>Actions</th></tr></thead>
           <tbody>
             {employees.filter(emp => emp.full_name.toLowerCase().includes(empSearch.toLowerCase())).map(emp => (
               <tr key={emp.id} className={selectedBranchId && emp.location_id !== selectedBranchId ? "opacity-25" : ""}>
@@ -270,7 +304,21 @@ const AdminDashboard = () => {
                   <div className="d-flex gap-1 mb-1"><Form.Control size="sm" defaultValue={emp.shift_start} id={`start-${emp.id}`} className="text-center p-0" /><Form.Control size="sm" defaultValue={emp.shift_end} id={`end-${emp.id}`} className="text-center p-0" /></div>
                   <Form.Select size="sm" defaultValue={emp.user_type} id={`type-${emp.id}`} className="p-0 border-0 small text-muted"><option value="employee">Employee</option><option value="manager">Manager</option><option value="admin">Admin</option></Form.Select>
                 </td>
-                <td>{emp.is_present ? <Badge bg="success">Present</Badge> : <Badge bg="secondary">Absent</Badge>}</td>
+                
+                {/* NEW: Verification Actions Column */}
+                <td>
+                  <div className="d-flex flex-column gap-2 align-items-start">
+                      {emp.is_verified ? (
+                          <Badge bg="success" className="px-3 py-2"><ShieldCheck size={14} className="me-1"/> Verified</Badge>
+                      ) : (
+                          <Button variant="success" size="sm" className="fw-bold" onClick={() => handleVerifyEmployee(emp.email)}>✓ Verify & Send ID</Button>
+                      )}
+                      <Button variant="outline-primary" size="sm" style={{fontSize: '11px'}} onClick={() => handleViewDoc(emp.email, 'filled_form')}>
+                          <FileText size={12} className="me-1"/> View PDF Form
+                      </Button>
+                  </div>
+                </td>
+
                 <td>
                   <div className="d-flex gap-2">
                     <Button variant="info" size="sm" className="text-white" onClick={() => handleLocateEmployee(emp)}><Crosshair size={14}/></Button>
@@ -332,6 +380,13 @@ const AdminDashboard = () => {
                     <Tab eventKey="documents" title={<><FileText size={16} className="me-2"/>Documents</>}>
                         <Alert variant="warning" className="small py-2 mt-3"><ShieldCheck size={14} className="me-2"/>Files and Numbers are securely processed and encrypted.</Alert>
                         <Row>
+                            {/* NEW: PDF Form Upload */}
+                            <Col md={12} className="mb-4 border border-primary bg-light p-3 rounded">
+                                <Form.Label className="fw-bold text-primary mb-1">Upload Filled Onboarding Form</Form.Label>
+                                <p className="small text-muted mb-2">Must be a PDF document. Maximum size: 2MB.</p>
+                                <Form.Control required type="file" accept=".pdf" onChange={(e) => handleFileChange(e, 'filledForm')} />
+                            </Col>
+
                             <Col md={6} className="mb-3">
                                 <Form.Label className="small fw-bold">Aadhaar Number</Form.Label>
                                 <Form.Control required placeholder="12-digit UID" pattern="\d{12}" maxLength="12" title="Must be exactly 12 digits" onChange={e => setFormData({...formData, aadhar: e.target.value})} />
@@ -364,7 +419,7 @@ const AdminDashboard = () => {
                 </Tabs>
                 <div className="d-flex justify-content-end gap-2 mt-3 border-top pt-3">
                     <Button variant="light" onClick={handleModalClose}>Cancel</Button>
-                    <Button type="submit" variant="danger" className="px-4 fw-bold">Save Record & Send Email</Button>
+                    <Button type="submit" variant="danger" className="px-4 fw-bold">Submit for Admin Verification</Button>
                 </div>
             </Form>
         </Modal.Body>

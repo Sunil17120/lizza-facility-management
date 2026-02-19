@@ -24,7 +24,7 @@ class User(Base):
     last_name = Column(String, nullable=True)
     email = Column(String, unique=True, index=True) 
     personal_email = Column(String, nullable=True) 
-    phone_number = Column(String, nullable=True) # NEW: Phone Number
+    phone_number = Column(String, nullable=True) 
     
     # 2. Personal & Family Details
     dob = Column(String, nullable=True) 
@@ -33,32 +33,34 @@ class User(Base):
     blood_group = Column(String, nullable=True)
     emergency_contact = Column(String, nullable=True)
     
-    # 3. Security
+    # 3. Security & Verification
     password = Column(String) 
     salt = Column(String)
     is_password_changed = Column(Boolean, default=False) 
+    is_verified = Column(Boolean, default=False) # NEW: Verification Flag
     
     # 4. Hierarchy & Role
     user_type = Column(String, default="employee") 
     manager_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     location_id = Column(Integer, ForeignKey("office_locations.id"), nullable=True)
-    blockchain_id = Column(String, unique=True, nullable=True)
+    blockchain_id = Column(String, unique=True, nullable=True) # Generated ONLY after verification
     
-    # 5. Professional & Experience Details
+    # 5. Professional Details
     designation = Column(String, nullable=True)
     department = Column(String, nullable=True)
     experience_years = Column(Float, default=0.0)
     prev_company = Column(String, nullable=True)
     prev_role = Column(String, nullable=True)
     
-    # 6. Sensitive Data (Encrypted Storage)
+    # 6. Sensitive Data (Encrypted)
     aadhar_enc = Column(String, nullable=True) 
     pan_enc = Column(String, nullable=True)
     
-    # 7. Document Paths 
+    # 7. Document Paths
     profile_photo_path = Column(String, nullable=True)
     aadhar_photo_path = Column(String, nullable=True)
     pan_photo_path = Column(String, nullable=True)
+    filled_form_path = Column(String, nullable=True) # NEW: Filled PDF Form
     
     # 8. Shift & Status
     is_present = Column(Boolean, default=False)
@@ -86,27 +88,14 @@ def init_db():
     Base.metadata.create_all(bind=engine)
     
     columns_to_add = [
-        ("first_name", "VARCHAR"),
-        ("last_name", "VARCHAR"),
-        ("personal_email", "VARCHAR"),
-        ("phone_number", "VARCHAR"), # NEW: Added to migration
-        ("dob", "VARCHAR"),
-        ("father_name", "VARCHAR"),
-        ("mother_name", "VARCHAR"),
-        ("blood_group", "VARCHAR"),
-        ("emergency_contact", "VARCHAR"),
-        ("designation", "VARCHAR"),
-        ("department", "VARCHAR"),
-        ("experience_years", "FLOAT DEFAULT 0.0"),
-        ("prev_company", "VARCHAR"),
-        ("prev_role", "VARCHAR"),
-        ("aadhar_enc", "VARCHAR"),
-        ("pan_enc", "VARCHAR"),
-        ("profile_photo_path", "VARCHAR"),
-        ("aadhar_photo_path", "VARCHAR"),
-        ("pan_photo_path", "VARCHAR"),
-        ("is_password_changed", "BOOLEAN DEFAULT FALSE"),
-        ("location_id", "INTEGER")
+        ("first_name", "VARCHAR"), ("last_name", "VARCHAR"), ("personal_email", "VARCHAR"),
+        ("phone_number", "VARCHAR"), ("dob", "VARCHAR"), ("father_name", "VARCHAR"),
+        ("mother_name", "VARCHAR"), ("blood_group", "VARCHAR"), ("emergency_contact", "VARCHAR"),
+        ("designation", "VARCHAR"), ("department", "VARCHAR"), ("experience_years", "FLOAT DEFAULT 0.0"),
+        ("prev_company", "VARCHAR"), ("prev_role", "VARCHAR"), ("aadhar_enc", "VARCHAR"), ("pan_enc", "VARCHAR"),
+        ("profile_photo_path", "VARCHAR"), ("aadhar_photo_path", "VARCHAR"), ("pan_photo_path", "VARCHAR"),
+        ("filled_form_path", "VARCHAR"), ("is_verified", "BOOLEAN DEFAULT FALSE"), # New Fields
+        ("is_password_changed", "BOOLEAN DEFAULT FALSE"), ("location_id", "INTEGER")
     ]
     
     with engine.connect() as conn:
