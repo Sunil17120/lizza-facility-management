@@ -4,3 +4,4 @@ sqlalchemy
 uvicorn
 redis
 python-multipart
+cryptography
