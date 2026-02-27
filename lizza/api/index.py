@@ -102,35 +102,58 @@ def change_password(data: PasswordChange, db: Session = Depends(get_db)):
 # --- MANAGER DASHBOARD ROUTES ---
 @app.post("/api/manager/add-employee")
 async def add_employee(
-    first_name: str = Form(...), last_name: str = Form(...), personal_email: str = Form(...),
-    phone_number: str = Form(...), dob: str = Form(...), father_name: str = Form(None),
-    mother_name: str = Form(None), blood_group: str = Form(None), emergency_contact: str = Form(None),
-    designation: str = Form(...), department: str = Form(...), experience_years: float = Form(0.0),
-    prev_company: str = Form(None), prev_role: str = Form(None), aadhar_number: str = Form(...),
-    pan_number: str = Form(...), manager_id: int = Form(...), user_type: str = Form("employee"),
-    location_id: Optional[int] = Form(None), profile_photo: UploadFile = File(None), 
-    aadhar_photo: UploadFile = File(None), pan_photo: UploadFile = File(None), 
-    filled_form: UploadFile = File(None), db: Session = Depends(get_db)
+    first_name: str = Form(...), 
+    last_name: str = Form(...), 
+    personal_email: str = Form(...),
+    phone_number: str = Form(...), 
+    dob: str = Form(...), 
+    designation: str = Form(...), 
+    department: str = Form(...), 
+    aadhar_number: str = Form(...),
+    pan_number: str = Form(...), 
+    manager_id: int = Form(...), 
+    location_id: Optional[int] = Form(None),
+    # Use 0.0 as default to prevent validation errors on empty experience fields
+    experience_years: Optional[float] = Form(0.0), 
+    profile_photo: UploadFile = File(None), 
+    filled_form: UploadFile = File(None), 
+    db: Session = Depends(get_db)
 ):
+    # Normalize email and generate temp password
     base_email = f"{first_name.lower()}.{last_name.lower()}@lizza.com"
-    initial_pw = datetime.strptime(dob, "%d-%m-%Y").strftime("%d%m%Y")
+    
+    try:
+        initial_pw = datetime.strptime(dob, "%Y-%m-%d").strftime("%d%m%Y")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid Date of Birth format. Use YYYY-MM-DD.")
+
     salt = hashlib.sha256(base_email.encode()).hexdigest()[:16]
+    
     new_user = User(
-        first_name=first_name, last_name=last_name, full_name=f"{first_name} {last_name}",
-        email=base_email, personal_email=personal_email, phone_number=phone_number,
-        password=get_secure_hash(initial_pw, salt), salt=salt, user_type=user_type, 
-        manager_id=manager_id, location_id=location_id, is_verified=False, dob=dob,
-        father_name=father_name, mother_name=mother_name, blood_group=blood_group,
-        emergency_contact=emergency_contact, designation=designation, department=department,
-        experience_years=experience_years, prev_company=prev_company, prev_role=prev_role,
+        first_name=first_name, 
+        last_name=last_name, 
+        full_name=f"{first_name} {last_name}",
+        email=base_email, 
+        personal_email=personal_email, 
+        phone_number=phone_number,
+        password=get_secure_hash(initial_pw, salt), 
+        salt=salt, 
+        user_type="employee", 
+        manager_id=manager_id, 
+        location_id=location_id, 
+        is_verified=False, 
+        dob=dob,
+        designation=designation, 
+        department=department,
+        experience_years=experience_years,
         aadhar_enc=cipher.encrypt(aadhar_number.encode()).decode(),
         pan_enc=cipher.encrypt(pan_number.encode()).decode(),
         profile_photo_path=process_upload_base64(profile_photo),
-        aadhar_photo_path=process_upload_base64(aadhar_photo),
-        pan_photo_path=process_upload_base64(pan_photo),
         filled_form_path=process_upload_base64(filled_form, 2)
     )
-    db.add(new_user); db.commit()
+    
+    db.add(new_user)
+    db.commit()
     return {"status": "success", "official_email": base_email}
 
 @app.get("/api/manager/my-employees")
