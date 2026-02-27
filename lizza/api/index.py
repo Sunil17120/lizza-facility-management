@@ -167,3 +167,51 @@ def get_user_profile(email: str, db: Session = Depends(get_db)):
         "is_verified": user.is_verified,
         "location_id": user.location_id
     }
+@app.get("/api/admin/live-tracking")
+def get_live_tracking(admin_email: str, db: Session = Depends(get_db)):
+    """Fetch real-time GPS locations for the map"""
+    users = db.query(User).filter(User.is_verified == True).all()
+    results = []
+    for u in users:
+        coords = r.get(f"loc:{u.email}") if r else None
+        lat, lon = (None, None)
+        if coords:
+            parts = coords.split(',')
+            lat, lon = float(parts[0]), float(parts[1])
+        results.append({
+            "email": u.email,
+            "name": u.full_name,
+            "lat": lat,
+            "lon": lon,
+            "present": u.is_present
+        })
+    return results
+
+@app.post("/api/admin/update-employee-inline")
+def update_employee_inline(data: dict, db: Session = Depends(get_db)):
+    """Updates branch, shift, and role directly from the table"""
+    user = db.query(User).filter(User.email == data.get("email")).first()
+    if not user: raise HTTPException(404, "User not found")
+    
+    user.location_id = data.get("location_id")
+    user.shift_start = data.get("shift_start")
+    user.shift_end = data.get("shift_end")
+    user.user_type = data.get("user_type")
+    db.commit()
+    return {"status": "updated"}
+
+@app.delete("/api/admin/delete-location/{loc_id}")
+def delete_location(loc_id: int, db: Session = Depends(get_db)):
+    loc = db.query(OfficeLocation).filter(OfficeLocation.id == loc_id).first()
+    if loc:
+        db.delete(loc)
+        db.commit()
+    return {"status": "deleted"}
+
+@app.delete("/api/admin/delete-employee/{user_id}")
+def delete_employee(user_id: int, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.id == user_id).first()
+    if user:
+        db.delete(user)
+        db.commit()
+    return {"status": "deleted"}
