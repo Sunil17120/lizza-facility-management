@@ -150,3 +150,20 @@ def add_location(data: LocationCreate, db: Session = Depends(get_db)):
     db.add(OfficeLocation(**data.dict()))
     db.commit()
     return {"message": "Location Added"}
+@app.get("/api/user/profile")
+def get_user_profile(email: str, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == email.lower().strip()).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    return {
+        "id": user.id,
+        "full_name": user.full_name,
+        "email": user.email,
+        "user_type": user.user_type,
+        "blockchain_id": user.blockchain_id,
+        "shift_start": user.shift_start,
+        "shift_end": user.shift_end,
+        "is_verified": user.is_verified,
+        "location_id": user.location_id
+    }
