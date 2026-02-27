@@ -242,3 +242,65 @@ def delete_employee(user_id: int, db: Session = Depends(get_db)):
         db.delete(user)
         db.commit()
     return {"status": "deleted"}
+@app.post("/api/change-password")
+def change_password(data: PasswordChange, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == data.email.lower().strip()).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Verify old password
+    if get_secure_hash(data.old_password, user.salt) != user.password:
+        raise HTTPException(status_code=401, detail="Current password incorrect")
+    
+    # Update to new password
+    user.password = get_secure_hash(data.new_password, user.salt)
+    user.is_password_changed = True
+    db.commit()
+    return {"status": "success", "message": "Password updated"}
+@app.get("/api/manager/my-employees")
+def get_my_employees(manager_id: int, db: Session = Depends(get_db)):
+    # Returns only employees assigned to this specific manager
+    return db.query(User).filter(User.manager_id == manager_id).all()
+
+@app.get("/api/manager/live-tracking")
+def get_manager_live_tracking(manager_id: int, db: Session = Depends(get_db)):
+    # Fetch team members
+    team = db.query(User).filter(User.manager_id == manager_id, User.is_verified == True).all()
+    results = []
+    for member in team:
+        coords = r.get(f"loc:{member.email}") if r else None
+        lat, lon = (None, None)
+        if coords:
+            parts = coords.split(',')
+            lat, lon = float(parts[0]), float(parts[1])
+        results.append({
+            "email": member.email,
+            "name": member.full_name,
+            "lat": lat,
+            "lon": lon,
+            "present": member.is_present
+        })
+    return results
+# Updated helper to use your specific Vercel Variable names
+def send_onboarding_email(to_email, full_name, temp_password, login_email):
+    # Use the exact names from your Vercel screenshot
+    user = os.environ.get("SMTP_USER") 
+    pw = os.environ.get("SMTP_PASS")
+    host = os.environ.get("SMTP_SERVER", "smtp.gmail.com")
+
+    if not user or not pw:
+        return False
+
+    try:
+        body = f"Hello {full_name},\n\nYour account is verified.\nEmail: {login_email}\nPassword: {temp_password}"
+        msg = MIMEText(body)
+        msg['Subject'], msg['From'], msg['To'] = "LIZZA - Verification Successful", user, to_email
+        
+        with smtplib.SMTP(host, 587) as server:
+            server.starttls()
+            server.login(user, pw)
+            server.sendmail(user, to_email, msg.as_string())
+        return True
+    except Exception as e:
+        print(f"Email Error: {e}")
+        return False
