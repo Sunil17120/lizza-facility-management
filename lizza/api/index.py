@@ -113,7 +113,7 @@ async def add_employee(
     filled_form: UploadFile = File(None), db: Session = Depends(get_db)
 ):
     base_email = f"{first_name.lower()}.{last_name.lower()}@lizza.com"
-    initial_pw = datetime.strptime(dob, "%Y-%m-%d").strftime("%d%m%Y")
+    initial_pw = datetime.strptime(dob, "%d-%m-%Y").strftime("%d%m%Y")
     salt = hashlib.sha256(base_email.encode()).hexdigest()[:16]
     new_user = User(
         first_name=first_name, last_name=last_name, full_name=f"{first_name} {last_name}",
