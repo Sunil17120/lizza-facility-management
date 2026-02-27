@@ -99,7 +99,8 @@ def change_password(data: PasswordChange, db: Session = Depends(get_db)):
     db.commit()
     return {"status": "success"}
 
-# --- MANAGER DASHBOARD ROUTES ---
+# --- Updated add_employee in index.py ---
+
 @app.post("/api/manager/add-employee")
 async def add_employee(
     first_name: str = Form(...), 
@@ -107,55 +108,62 @@ async def add_employee(
     personal_email: str = Form(...),
     phone_number: str = Form(...), 
     dob: str = Form(...), 
+    father_name: str = Form(None),
+    mother_name: str = Form(None), 
+    blood_group: str = Form(None), 
+    emergency_contact: str = Form(None),
     designation: str = Form(...), 
     department: str = Form(...), 
+    experience_years: float = Form(0.0),
+    prev_company: str = Form(None), 
+    prev_role: str = Form(None), 
     aadhar_number: str = Form(...),
     pan_number: str = Form(...), 
     manager_id: int = Form(...), 
-    location_id: Optional[int] = Form(None),
-    # Use 0.0 as default to prevent validation errors on empty experience fields
-    experience_years: Optional[float] = Form(0.0), 
+    user_type: str = Form("employee"),
+    location_id: Optional[int] = Form(None), 
+    shift_start: str = Form("09:00"), 
+    shift_end: str = Form("18:00"),
     profile_photo: UploadFile = File(None), 
+    aadhar_photo: UploadFile = File(None), 
+    pan_photo: UploadFile = File(None), 
     filled_form: UploadFile = File(None), 
     db: Session = Depends(get_db)
 ):
-    # Normalize email and generate temp password
     base_email = f"{first_name.lower()}.{last_name.lower()}@lizza.com"
     
+    # FIX: Parse YYYY-MM-DD which is sent by <input type="date" />
     try:
-        initial_pw = datetime.strptime(dob, "%Y-%m-%d").strftime("%d%m%Y")
+        dt_obj = datetime.strptime(dob, "%Y-%m-%d")
+        initial_pw = dt_obj.strftime("%d%m%Y") # Password becomes DDMMYYYY
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid Date of Birth format. Use YYYY-MM-DD.")
+        # Fallback for DD-MM-YYYY or empty strings
+        try:
+            dt_obj = datetime.strptime(dob, "%d-%m-%Y")
+            initial_pw = dt_obj.strftime("%d%m%Y")
+        except:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
 
     salt = hashlib.sha256(base_email.encode()).hexdigest()[:16]
     
     new_user = User(
-        first_name=first_name, 
-        last_name=last_name, 
-        full_name=f"{first_name} {last_name}",
-        email=base_email, 
-        personal_email=personal_email, 
-        phone_number=phone_number,
-        password=get_secure_hash(initial_pw, salt), 
-        salt=salt, 
-        user_type="employee", 
-        manager_id=manager_id, 
-        location_id=location_id, 
-        is_verified=False, 
-        dob=dob,
-        designation=designation, 
-        department=department,
-        experience_years=experience_years,
+        first_name=first_name, last_name=last_name, full_name=f"{first_name} {last_name}",
+        email=base_email, personal_email=personal_email, phone_number=phone_number,
+        password=get_secure_hash(initial_pw, salt), salt=salt, user_type=user_type, 
+        manager_id=manager_id, location_id=location_id, is_verified=False, dob=dob,
+        father_name=father_name, mother_name=mother_name, blood_group=blood_group,
+        emergency_contact=emergency_contact, designation=designation, department=department,
+        experience_years=experience_years, prev_company=prev_company, prev_role=prev_role,
         aadhar_enc=cipher.encrypt(aadhar_number.encode()).decode(),
         pan_enc=cipher.encrypt(pan_number.encode()).decode(),
         profile_photo_path=process_upload_base64(profile_photo),
-        filled_form_path=process_upload_base64(filled_form, 2)
+        aadhar_photo_path=process_upload_base64(aadhar_photo),
+        pan_photo_path=process_upload_base64(pan_photo),
+        filled_form_path=process_upload_base64(filled_form, 2),
+        shift_start=shift_start, shift_end=shift_end
     )
-    
-    db.add(new_user)
-    db.commit()
+    db.add(new_user); db.commit()
     return {"status": "success", "official_email": base_email}
-
 @app.get("/api/manager/my-employees")
 def get_my_employees(manager_id: int, db: Session = Depends(get_db)):
     return db.query(User).filter(User.manager_id == manager_id).all()
