@@ -30,15 +30,26 @@ SMTP_USER = os.environ.get("SMTP_USER", "your-email@gmail.com")
 SMTP_PASS = os.environ.get("SMTP_PASS", "your-app-password")
 
 def send_onboarding_email(to_email, full_name, temp_password, login_email):
-    body = f"Hello {full_name},\n\nYour account is verified.\nEmail: {login_email}\nPassword: {temp_password}"
+    # Retrieve variables from Vercel Env
+    user = os.environ.get("SMTP_USER")
+    pw = os.environ.get("SMTP_PASS")
+    server_addr = os.environ.get("SMTP_SERVER", "smtp.gmail.com")
+
+    if not user or not pw:
+        return False
+
+    body = f"Hello {full_name},\n\nYour account is verified.\nOfficial Email: {login_email}\nTemp Password: {temp_password}\n\nPlease login and change your password."
     msg = MIMEText(body)
-    msg['Subject'], msg['From'], msg['To'] = "LIZZA - Verification Successful", SMTP_USER, to_email
-    try:
-        with smtplib.SMTP("smtp.gmail.com", 587) as server:
-            server.starttls(); server.login(SMTP_USER, SMTP_PASS)
-            server.sendmail(SMTP_USER, to_email, msg.as_string())
-        return True
-    except: return False
+    msg['Subject'] = "LIZZA - Verification Successful"
+    msg['From'] = user
+    msg['To'] = to_email
+
+    # Use 587 with starttls for better compatibility with Vercel
+    with smtplib.SMTP(server_addr, 587) as server:
+        server.starttls() 
+        server.login(user, pw)
+        server.sendmail(user, to_email, msg.as_string())
+    return True
 
 def get_db():
     db = SessionLocal()
@@ -95,15 +106,31 @@ async def add_employee(
     )
     db.add(new_user); db.commit()
     return {"status": "success"}
-
 @app.post("/api/admin/verify-employee")
 def verify_employee(target_email: str, admin_email: str, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == target_email).first()
+    if not user: 
+        raise HTTPException(404, "User not found")
+    
+    # 1. Update Database first so data is saved regardless of email success
     bc_hash = hashlib.sha256(f"{user.email}{datetime.utcnow()}".encode()).hexdigest()
     user.blockchain_id = f"LZ-{bc_hash[:10]}".upper()
     user.is_verified = True
     db.commit()
-    send_onboarding_email(user.personal_email, user.full_name, user.dob.replace("-",""), user.email)
+    
+    # 2. Attempt Email but handle failure so it doesn't return a 500 error
+    try:
+        # Pass user.personal_email since they can't login to official email yet
+        send_onboarding_email(
+            user.personal_email, 
+            user.full_name, 
+            user.dob.replace("-",""), # Temp password from DOB
+            user.email
+        )
+    except Exception as e:
+        print(f"Non-critical Error: Email failed but user verified. {str(e)}")
+        # We still return success because the DB part worked
+        
     return {"status": "success", "id": user.blockchain_id}
 
 @app.get("/api/admin/employees")
