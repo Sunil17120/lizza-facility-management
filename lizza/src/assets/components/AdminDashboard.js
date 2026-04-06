@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Table, Form, Container, Card, Spinner, Button, Row, Col, Modal, Badge, Tabs, Tab } from 'react-bootstrap';
-import { UserCog, Building2, MapPin, Trash2, Users, UserCheck, UserX, Save, Search, Plus, Bell, Edit2, Calendar, Download, Image as ImageIcon, FileText, Briefcase, Filter, Clock } from 'lucide-react';
+import { UserCog, Building2, MapPin, Trash2, Users, UserCheck, UserX, Save, Search, Plus, Bell, Edit2, Calendar, Download, Image as ImageIcon, FileText, Briefcase, Filter, Clock, Navigation } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 import EmployeeOnboardForm from './EmployeeOnboardForm'; 
 import ExcelJS from 'exceljs';
@@ -36,6 +36,7 @@ const AdminDashboard = () => {
   const [geofenceLogs, setGeofenceLogs] = useState([]);
   const [reportsLoading, setReportsLoading] = useState(false);
   const [photoPreview, setPhotoPreview] = useState(null);
+  const [trackUser, setTrackUser] = useState(null);
   
   const adminEmail = localStorage.getItem('userEmail');
 
@@ -62,12 +63,10 @@ const AdminDashboard = () => {
     setReportsLoading(true);
     try {
       const filterStr = `month=${reportMonth}&year=${reportYear}${filterOfficer ? `&officer_id=${filterOfficer}` : ''}${filterSite ? `&location_id=${filterSite}` : ''}`;
-      
       const [visitRes, geoRes] = await Promise.all([
         fetch(`/api/admin/reports/monthly-field-visits?${filterStr}`),
         fetch(`/api/admin/reports/geofence-logs?${filterStr}`)
       ]);
-      
       if (visitRes.ok) setFieldReports(await visitRes.json());
       if (geoRes.ok) setGeofenceLogs(await geoRes.json());
     } catch (err) { console.error(err); }
@@ -115,24 +114,37 @@ const AdminDashboard = () => {
     if(window.confirm("Delete Branch?")) { await fetch(`/api/admin/delete-location/${id}`, { method: 'DELETE' }); fetchBaseData(); }
   };
 
-  const downloadExcelReport = async () => {
+  const handleViewLiveLocation = (email, name) => {
+    const userLocation = liveLocations.find(l => l.email === email);
+    if (userLocation && userLocation.lat && userLocation.lon) setTrackUser(userLocation);
+    else alert(`${name} is currently offline or their GPS signal is unavailable.`);
+  };
+
+  const downloadCombinedExcel = async () => {
     try {
       const workbook = new ExcelJS.Workbook();
-      const worksheet = workbook.addWorksheet('Field Visits');
-      worksheet.columns = [
-        { header: 'Date', key: 'date', width: 15 },
-        { header: 'Time', key: 'time', width: 15 },
-        { header: 'Officer ID', key: 'officer_id', width: 20 },
-        { header: 'Officer Name', key: 'officer_name', width: 25 },
-        { header: 'Site Name', key: 'site_name', width: 25 },
-        { header: 'Purpose', key: 'purpose', width: 20 },
+      
+      const ws1 = workbook.addWorksheet('Manual Visits');
+      ws1.columns = [
+        { header: 'Date', key: 'date', width: 15 }, { header: 'Time', key: 'time', width: 15 },
+        { header: 'Officer ID', key: 'officer_id', width: 20 }, { header: 'Officer Name', key: 'officer_name', width: 25 },
+        { header: 'Site Name', key: 'site_name', width: 25 }, { header: 'Purpose', key: 'purpose', width: 20 },
         { header: 'Remarks', key: 'remarks', width: 50 }
       ];
-      worksheet.getRow(1).font = { bold: true };
-      worksheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF2F2F2' } };
-      fieldReports.forEach(r => worksheet.addRow({ ...r, remarks: r.remarks || '' }));
+      ws1.getRow(1).font = { bold: true }; ws1.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF2F2F2' } };
+      fieldReports.forEach(r => ws1.addRow({ ...r, remarks: r.remarks || '' }));
+
+      const ws2 = workbook.addWorksheet('Automated Geofence Logs');
+      ws2.columns = [
+        { header: 'Date', key: 'date', width: 15 }, { header: 'Officer Name', key: 'officer_name', width: 25 },
+        { header: 'Site Name', key: 'site_name', width: 25 }, { header: 'Entry Time', key: 'entry_time', width: 20 },
+        { header: 'Exit Time', key: 'exit_time', width: 20 }, { header: 'Total Duration (Mins)', key: 'duration_mins', width: 25 }
+      ];
+      ws2.getRow(1).font = { bold: true }; ws2.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF2F2F2' } };
+      geofenceLogs.forEach(log => ws2.addRow(log));
+
       const buffer = await workbook.xlsx.writeBuffer();
-      saveAs(new Blob([buffer]), `Field_Visits_Report_${reportMonth}_${reportYear}.xlsx`);
+      saveAs(new Blob([buffer]), `Combined_Field_Operations_${reportMonth}_${reportYear}.xlsx`);
     } catch (error) { alert("Failed to generate Excel file."); }
   };
 
@@ -142,8 +154,7 @@ const AdminDashboard = () => {
   
   const groupedReports = fieldReports.reduce((acc, visit) => {
     if (!acc[visit.date]) acc[visit.date] = [];
-    acc[visit.date].push(visit);
-    return acc;
+    acc[visit.date].push(visit); return acc;
   }, {});
 
   const managerStats = verified.filter(e => e.user_type === 'manager').map(mgr => {
@@ -157,10 +168,7 @@ const AdminDashboard = () => {
       <div className="d-flex justify-content-between align-items-center mb-4 border-bottom pb-3">
         <h2 className="fw-bold m-0 d-flex align-items-center"><UserCog className="text-danger me-3" size={32} />System Administration</h2>
         <div className="d-flex gap-2">
-            <Button variant="light" className="position-relative border shadow-sm" onClick={() => setShowNotif(true)}>
-                <Bell size={24} />
-                {pending.length > 0 && <Badge bg="danger" pill className="position-absolute top-0 start-100 translate-middle">{pending.length}</Badge>}
-            </Button>
+            <Button variant="light" className="position-relative border shadow-sm" onClick={() => setShowNotif(true)}><Bell size={24} />{pending.length > 0 && <Badge bg="danger" pill className="position-absolute top-0 start-100 translate-middle">{pending.length}</Badge>}</Button>
             <Button variant="danger" onClick={() => setShowAddEmp(true)}><Plus className="me-2"/>Onboard Staff</Button>
         </div>
       </div>
@@ -203,12 +211,8 @@ const AdminDashboard = () => {
               <Card className="border-0 shadow-sm overflow-hidden mb-4" style={{ height: '380px' }}>
                 <MapContainer center={[22.5726, 88.3639]} zoom={5} style={{ height: '100%' }}>
                   <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-                  {liveLocations.map(loc => (loc.lat && loc.lon) && (
-                    <Marker key={loc.email} position={[loc.lat, loc.lon]}><Popup>{loc.name} - {loc.present ? "Present" : "Outside"}</Popup></Marker>
-                  ))}
-                  {locations.map(office => (
-                    <Circle key={office.id} center={[office.lat, office.lon]} radius={office.radius} pathOptions={{ color: 'red', fillColor: 'red', fillOpacity: 0.2 }}><Popup>{office.name} Geofence ({office.radius}m)</Popup></Circle>
-                  ))}
+                  {liveLocations.map(loc => (loc.lat && loc.lon) && (<Marker key={loc.email} position={[loc.lat, loc.lon]}><Popup>{loc.name} - {loc.present ? "Present" : "Outside"}</Popup></Marker>))}
+                  {locations.map(office => (<Circle key={office.id} center={[office.lat, office.lon]} radius={office.radius} pathOptions={{ color: 'red', fillColor: 'red', fillOpacity: 0.2 }}><Popup>{office.name} Geofence ({office.radius}m)</Popup></Circle>))}
                 </MapContainer>
               </Card>
             </Col>
@@ -293,6 +297,11 @@ const AdminDashboard = () => {
                   <option value="">All Sites</option>{locations.map(loc => <option key={loc.id} value={loc.id}>{loc.name}</option>)}
                 </Form.Select>
               </div>
+              <div className="ms-auto">
+                 <Button variant="success" size="sm" className="fw-bold d-flex align-items-center shadow-sm" onClick={downloadCombinedExcel} disabled={fieldReports.length === 0 && geofenceLogs.length === 0}>
+                    <Download size={16} className="me-2 text-white"/> Download Full Report (Excel)
+                 </Button>
+              </div>
             </div>
 
             <div className="p-4">
@@ -306,8 +315,7 @@ const AdminDashboard = () => {
                           {managerStats.length === 0 ? <tr><td colSpan="4" className="text-center py-3 text-muted">No managers found.</td></tr> :
                            managerStats.map(mgr => (
                              <tr key={mgr.id}>
-                               <td className="fw-bold">{mgr.full_name}</td>
-                               <td><Badge bg="secondary">{mgr.department || 'General'}</Badge></td>
+                               <td className="fw-bold">{mgr.full_name}</td><td><Badge bg="secondary">{mgr.department || 'General'}</Badge></td>
                                <td><h5 className="m-0 fw-bold">{mgr.teamSize} <Users size={16} className="ms-1 text-muted"/></h5></td>
                                <td><Badge bg={mgr.is_present ? "success" : "danger"}>{mgr.is_present ? "On Duty" : "Offline"}</Badge></td>
                              </tr>
@@ -325,14 +333,14 @@ const AdminDashboard = () => {
                   <Card.Body className="p-0">
                     {reportsLoading ? <div className="text-center py-5"><Spinner variant="primary" animation="border" /></div> : geofenceLogs.length === 0 ? <div className="text-center py-5 text-muted">No tracking data.</div> : (
                       <Table hover responsive className="mb-0 align-middle small">
-                        <thead className="table-secondary"><tr><th>Date</th><th>Officer</th><th>Site</th><th>Entry Time</th><th>Exit Time</th><th>Total Duration</th></tr></thead>
+                        <thead className="table-secondary"><tr><th>Date</th><th>Officer</th><th>Site</th><th>Entry Time</th><th>Exit Time</th><th>Total Duration</th><th>Actions</th></tr></thead>
                         <tbody>
                           {geofenceLogs.map((log, idx) => (
                             <tr key={idx}>
-                              <td className="fw-bold">{log.date}</td><td>{log.officer_name}</td>
-                              <td><MapPin size={12} className="me-1 text-danger"/>{log.site_name}</td>
+                              <td className="fw-bold">{log.date}</td><td>{log.officer_name}</td><td><MapPin size={12} className="me-1 text-danger"/>{log.site_name}</td>
                               <td className="text-success fw-bold">{log.entry_time}</td><td className="text-danger fw-bold">{log.exit_time}</td>
                               <td><Badge bg={log.duration_mins > 10 ? "primary" : "secondary"}>{log.duration_mins} mins</Badge></td>
+                              <td><Button variant="outline-primary" size="sm" className="d-flex align-items-center" onClick={() => handleViewLiveLocation(log.officer_email, log.officer_name)}><Navigation size={12} className="me-1"/> Live Map</Button></td>
                             </tr>
                           ))}
                         </tbody>
@@ -344,9 +352,6 @@ const AdminDashboard = () => {
                 <Card className="border-0 shadow-sm mb-4">
                   <Card.Header className="bg-dark text-white p-3 d-flex justify-content-between align-items-center">
                     <h6 className="mb-0 fw-bold d-flex align-items-center"><MapPin className="me-2 text-danger" size={18}/> Manual Site Visits</h6>
-                    <Button variant="light" size="sm" className="fw-bold text-dark d-flex align-items-center" onClick={downloadExcelReport} disabled={fieldReports.length === 0}>
-                      <Download size={14} className="me-2 text-success"/> Download Excel Report
-                    </Button>
                   </Card.Header>
                   <Card.Body className="p-0">
                     {reportsLoading ? <div className="text-center py-5"><Spinner variant="primary" animation="border" /></div> : fieldReports.length === 0 ? <div className="text-center py-5 text-muted">No manual visits recorded.</div> : (
@@ -363,7 +368,7 @@ const AdminDashboard = () => {
                             <div id={`collapse${index}`} className="accordion-collapse collapse show">
                               <div className="accordion-body p-0">
                                 <Table hover responsive className="mb-0 align-middle small">
-                                  <thead className="table-secondary"><tr><th>Time</th><th>Officer</th><th>Site</th><th>Purpose</th><th>Remarks</th><th>Evidence</th></tr></thead>
+                                  <thead className="table-secondary"><tr><th>Time</th><th>Officer</th><th>Site</th><th>Purpose</th><th>Remarks</th><th>Evidence</th><th>Actions</th></tr></thead>
                                   <tbody>
                                     {groupedReports[dateStr].map(visit => (
                                       <tr key={visit.visit_id}>
@@ -372,9 +377,8 @@ const AdminDashboard = () => {
                                         <td><MapPin size={12} className="me-1 text-danger"/>{visit.site_name}</td>
                                         <td><Badge bg="dark">{visit.purpose}</Badge></td>
                                         <td style={{ maxWidth: '250px' }} className="text-truncate">{visit.remarks || '-'}</td>
-                                        <td>
-                                          <Button variant="outline-secondary" size="sm" onClick={() => setPhotoPreview(visit.photo)}><ImageIcon size={14} className="me-1"/> View Photo</Button>
-                                        </td>
+                                        <td><Button variant="outline-secondary" size="sm" onClick={() => setPhotoPreview(visit.photo)}><ImageIcon size={14} className="me-1"/> View Photo</Button></td>
+                                        <td><Button variant="outline-primary" size="sm" className="d-flex align-items-center" onClick={() => handleViewLiveLocation(visit.officer_email, visit.officer_name)}><Navigation size={12} className="me-1"/> Live Map</Button></td>
                                       </tr>
                                     ))}
                                   </tbody>
@@ -391,59 +395,31 @@ const AdminDashboard = () => {
         </Tab>
       </Tabs>
 
-      {/* Modals */}
-      <Modal show={showNotif} onHide={() => setShowNotif(false)} size="lg" centered>
-        <Modal.Header closeButton className="bg-light"><Modal.Title className="h5 fw-bold">Pending Approval</Modal.Title></Modal.Header>
-        <Modal.Body className="p-0">
-          {pending.length === 0 ? <div className="p-4 text-center text-muted">No pending approvals.</div> : pending.map(p => (
-            <div key={p.id} className="p-3 border-bottom d-flex justify-content-between align-items-center bg-white">
-              <div><h6 className="mb-0 fw-bold">{p.full_name}</h6><small className="text-muted">{p.personal_email}</small></div>
-              <Button variant="danger" size="sm" onClick={() => setSelectedStaff(p)}>REVIEW</Button>
-            </div>
-          ))}
+      {/* --- MODALS --- */}
+      <Modal show={!!trackUser} onHide={() => setTrackUser(null)} centered size="lg">
+        <Modal.Header closeButton className="bg-dark text-white border-0"><Modal.Title className="h6 fw-bold d-flex align-items-center"><Navigation size={18} className="me-2 text-danger"/> Tracking Live GPS: {trackUser?.name}</Modal.Title></Modal.Header>
+        <Modal.Body className="p-0 bg-light position-relative" style={{ height: '450px' }}>
+            {trackUser && (
+              <>
+                <div className="position-absolute top-0 start-50 translate-middle-x mt-3 z-3"><Badge bg={trackUser.present ? 'success' : 'danger'} className="px-3 py-2 shadow-sm fs-6">{trackUser.present ? 'Inside Safe Zone' : 'Outside Safe Zone'}</Badge></div>
+                <MapContainer center={[trackUser.lat, trackUser.lon]} zoom={16} style={{ height: '100%', zIndex: 1 }}>
+                  <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+                  <Marker position={[trackUser.lat, trackUser.lon]}><Popup className="fw-bold text-center">{trackUser.name}<br/><span className="text-muted fw-normal">{trackUser.lat.toFixed(4)}, {trackUser.lon.toFixed(4)}</span></Popup></Marker>
+                </MapContainer>
+              </>
+            )}
         </Modal.Body>
       </Modal>
 
-      <Modal show={!!selectedStaff} onHide={() => setSelectedStaff(null)} size="xl" centered>
-        <Modal.Header closeButton className="bg-dark text-white"><Modal.Title className="h6">Reviewing: {selectedStaff?.full_name}</Modal.Title></Modal.Header>
-        <Modal.Body className="bg-light p-4">
-          <Row>
-            <Col md={4}>
-              <Card className="p-3 shadow-sm border-0 mb-3"><p><strong>Phone:</strong> {selectedStaff?.phone_number}</p><p><strong>DOB:</strong> {selectedStaff?.dob}</p><p><strong>Designation:</strong> {selectedStaff?.designation}</p><Button variant="success" className="w-100 fw-bold mt-3" onClick={() => handleVerify(selectedStaff.email)}>APPROVE & ACTIVATE</Button></Card>
-            </Col>
-            <Col md={8}><Card className="border-0 shadow-sm overflow-hidden" style={{ height: '70vh' }}><iframe src={selectedStaff?.filled_form_path} width="100%" height="100%" title="Verification PDF" /></Card></Col>
-          </Row>
-        </Modal.Body>
-      </Modal>
+      <Modal show={showNotif} onHide={() => setShowNotif(false)} size="lg" centered><Modal.Header closeButton className="bg-light"><Modal.Title className="h5 fw-bold">Pending Approval</Modal.Title></Modal.Header><Modal.Body className="p-0">{pending.length === 0 ? <div className="p-4 text-center text-muted">No pending approvals.</div> : pending.map(p => (<div key={p.id} className="p-3 border-bottom d-flex justify-content-between align-items-center bg-white"><div><h6 className="mb-0 fw-bold">{p.full_name}</h6><small className="text-muted">{p.personal_email}</small></div><Button variant="danger" size="sm" onClick={() => setSelectedStaff(p)}>REVIEW</Button></div>))}</Modal.Body></Modal>
 
-      <Modal show={showAddEmp} onHide={() => setShowAddEmp(false)} size="lg" centered>
-          <Modal.Header closeButton className="bg-light"><Modal.Title className="h5 fw-bold">Onboard New Employee</Modal.Title></Modal.Header>
-          <Modal.Body className="p-4"><EmployeeOnboardForm locations={locations} onCancel={() => setShowAddEmp(false)} onSuccess={() => { setShowAddEmp(false); fetchBaseData(); }} /></Modal.Body>
-      </Modal>
+      <Modal show={!!selectedStaff} onHide={() => setSelectedStaff(null)} size="xl" centered><Modal.Header closeButton className="bg-dark text-white"><Modal.Title className="h6">Reviewing: {selectedStaff?.full_name}</Modal.Title></Modal.Header><Modal.Body className="bg-light p-4"><Row><Col md={4}><Card className="p-3 shadow-sm border-0 mb-3"><p><strong>Phone:</strong> {selectedStaff?.phone_number}</p><p><strong>DOB:</strong> {selectedStaff?.dob}</p><p><strong>Designation:</strong> {selectedStaff?.designation}</p><Button variant="success" className="w-100 fw-bold mt-3" onClick={() => handleVerify(selectedStaff.email)}>APPROVE & ACTIVATE</Button></Card></Col><Col md={8}><Card className="border-0 shadow-sm overflow-hidden" style={{ height: '70vh' }}><iframe src={selectedStaff?.filled_form_path} width="100%" height="100%" title="Verification PDF" /></Card></Col></Row></Modal.Body></Modal>
 
-      <Modal show={editLocModal} onHide={() => setEditLocModal(false)} centered>
-          <Modal.Header closeButton><Modal.Title className="h6 fw-bold">Edit Branch Location</Modal.Title></Modal.Header>
-          <Modal.Body>
-              {editingLoc && (
-                  <Form onSubmit={handleUpdateBranch}>
-                      <Form.Group className="mb-2"><Form.Label className="small fw-bold">Branch Name</Form.Label><Form.Control size="sm" value={editingLoc.name} onChange={e => setEditingLoc({...editingLoc, name: e.target.value})} required /></Form.Group>
-                      <Row>
-                          <Col><Form.Group className="mb-2"><Form.Label className="small fw-bold">Latitude</Form.Label><Form.Control size="sm" value={editingLoc.lat} onChange={e => setEditingLoc({...editingLoc, lat: e.target.value})} required /></Form.Group></Col>
-                          <Col><Form.Group className="mb-2"><Form.Label className="small fw-bold">Longitude</Form.Label><Form.Control size="sm" value={editingLoc.lon} onChange={e => setEditingLoc({...editingLoc, lon: e.target.value})} required /></Form.Group></Col>
-                      </Row>
-                      <Form.Group className="mb-4"><Form.Label className="small fw-bold">Radius (meters)</Form.Label><Form.Control size="sm" type="number" value={editingLoc.radius} onChange={e => setEditingLoc({...editingLoc, radius: e.target.value})} required /></Form.Group>
-                      <Button type="submit" variant="primary" size="sm" className="w-100 fw-bold">UPDATE BRANCH</Button>
-                  </Form>
-              )}
-          </Modal.Body>
-      </Modal>
+      <Modal show={showAddEmp} onHide={() => setShowAddEmp(false)} size="lg" centered><Modal.Header closeButton className="bg-light"><Modal.Title className="h5 fw-bold">Onboard New Employee</Modal.Title></Modal.Header><Modal.Body className="p-4"><EmployeeOnboardForm locations={locations} onCancel={() => setShowAddEmp(false)} onSuccess={() => { setShowAddEmp(false); fetchBaseData(); }} /></Modal.Body></Modal>
 
-      <Modal show={!!photoPreview} onHide={() => setPhotoPreview(null)} centered size="lg">
-        <Modal.Header closeButton className="bg-dark text-white border-0"><Modal.Title className="h6 fw-bold">Geotagged Evidence</Modal.Title></Modal.Header>
-        <Modal.Body className="p-0 text-center bg-dark">
-            <img src={photoPreview} alt="Geotagged Visit" style={{ width: '100%', maxHeight: '75vh', objectFit: 'contain' }} />
-        </Modal.Body>
-      </Modal>
+      <Modal show={editLocModal} onHide={() => setEditLocModal(false)} centered><Modal.Header closeButton><Modal.Title className="h6 fw-bold">Edit Branch Location</Modal.Title></Modal.Header><Modal.Body>{editingLoc && (<Form onSubmit={handleUpdateBranch}><Form.Group className="mb-2"><Form.Label className="small fw-bold">Branch Name</Form.Label><Form.Control size="sm" value={editingLoc.name} onChange={e => setEditingLoc({...editingLoc, name: e.target.value})} required /></Form.Group><Row><Col><Form.Group className="mb-2"><Form.Label className="small fw-bold">Latitude</Form.Label><Form.Control size="sm" value={editingLoc.lat} onChange={e => setEditingLoc({...editingLoc, lat: e.target.value})} required /></Form.Group></Col><Col><Form.Group className="mb-2"><Form.Label className="small fw-bold">Longitude</Form.Label><Form.Control size="sm" value={editingLoc.lon} onChange={e => setEditingLoc({...editingLoc, lon: e.target.value})} required /></Form.Group></Col></Row><Form.Group className="mb-4"><Form.Label className="small fw-bold">Radius (meters)</Form.Label><Form.Control size="sm" type="number" value={editingLoc.radius} onChange={e => setEditingLoc({...editingLoc, radius: e.target.value})} required /></Form.Group><Button type="submit" variant="primary" size="sm" className="w-100 fw-bold">UPDATE BRANCH</Button></Form>)}</Modal.Body></Modal>
+
+      <Modal show={!!photoPreview} onHide={() => setPhotoPreview(null)} centered size="lg"><Modal.Header closeButton className="bg-dark text-white border-0"><Modal.Title className="h6 fw-bold">Geotagged Evidence</Modal.Title></Modal.Header><Modal.Body className="p-0 text-center bg-dark"><img src={photoPreview} alt="Geotagged Visit" style={{ width: '100%', maxHeight: '75vh', objectFit: 'contain' }} /></Modal.Body></Modal>
     </Container>
   );
 };
