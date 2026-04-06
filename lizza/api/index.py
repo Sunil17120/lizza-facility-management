@@ -3,14 +3,15 @@ from email.mime.text import MIMEText
 from typing import Optional 
 from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, Query, File, UploadFile, Form
 from sqlalchemy.orm import Session
+from sqlalchemy import extract # NEW: Imported for date extraction
 from pydantic import BaseModel
 from datetime import datetime, timedelta
 from sqlalchemy.exc import IntegrityError
 
 try:
-    from .database import SessionLocal, User, EmployeeLocation, OfficeLocation, init_db, cipher
+    from .database import SessionLocal, User, EmployeeLocation, OfficeLocation, SiteVisit, init_db, cipher
 except ImportError:
-    from database import SessionLocal, User, EmployeeLocation, OfficeLocation, init_db, cipher
+    from database import SessionLocal, User, EmployeeLocation, OfficeLocation, SiteVisit, init_db, cipher
 
 app = FastAPI()
 redis_url = os.environ.get("REDIS_URL") or os.environ.get("KV_URL")
@@ -62,12 +63,18 @@ def send_onboarding_email(to_email, full_name, temp_password, login_email):
         with smtplib.SMTP(host, 587) as server:
             server.starttls()
             server.login(user, pw)
-            # MOVE THIS INSIDE THE BLOCK
             server.sendmail(user, to_email, msg.as_string()) 
         return True
     except Exception as e:
         print(f"Email Error: {e}")
         return False
+
+def get_distance(lat1, lon1, lat2, lon2):
+    R = 6371000 
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi, dlambda = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
+    a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
 
 # --- AUTH & PROFILE ---
 @app.post("/api/login")
@@ -100,8 +107,7 @@ def change_password(data: PasswordChange, db: Session = Depends(get_db)):
     db.commit()
     return {"status": "success"}
 
-# --- Updated add_employee in index.py ---
-
+# --- MANAGER & ONBOARDING ---
 @app.post("/api/manager/add-employee")
 async def add_employee(
     first_name: str = Form(...), 
@@ -123,8 +129,8 @@ async def add_employee(
     manager_id: int = Form(...), 
     user_type: str = Form("employee"),
     location_id: Optional[int] = Form(None), 
-    shift_start: str = Form("09:00"), 
-    shift_end: str = Form("18:00"),
+    shift_start: Optional[str] = Form(None), # Made optional
+    shift_end: Optional[str] = Form(None),   # Made optional
     profile_photo: UploadFile = File(None), 
     aadhar_photo: UploadFile = File(None), 
     pan_photo: UploadFile = File(None), 
@@ -133,12 +139,10 @@ async def add_employee(
 ):
     base_email = f"{first_name.lower()}.{last_name.lower()}@lizza.com"
     
-    # FIX: Parse YYYY-MM-DD which is sent by <input type="date" />
     try:
         dt_obj = datetime.strptime(dob, "%Y-%m-%d")
-        initial_pw = dt_obj.strftime("%d%m%Y") # Password becomes DDMMYYYY
+        initial_pw = dt_obj.strftime("%d%m%Y") 
     except ValueError:
-        # Fallback for DD-MM-YYYY or empty strings
         try:
             dt_obj = datetime.strptime(dob, "%d-%m-%Y")
             initial_pw = dt_obj.strftime("%d%m%Y")
@@ -147,6 +151,16 @@ async def add_employee(
 
     salt = hashlib.sha256(base_email.encode()).hexdigest()[:16]
     
+    # NEW: Overrides for Field Officer
+    if user_type == 'field_officer':
+        shift_start = None
+        shift_end = None
+        location_id = None
+        
+    # Standardize empty shifts to None to avoid DB errors
+    if not shift_start: shift_start = None
+    if not shift_end: shift_end = None
+
     new_user = User(
         first_name=first_name, last_name=last_name, full_name=f"{first_name} {last_name}",
         email=base_email, personal_email=personal_email, phone_number=phone_number,
@@ -165,6 +179,7 @@ async def add_employee(
     )
     db.add(new_user); db.commit()
     return {"status": "success", "official_email": base_email}
+
 @app.get("/api/manager/my-employees")
 def get_my_employees(manager_id: int, db: Session = Depends(get_db)):
     return db.query(User).filter(User.manager_id == manager_id).all()
@@ -183,13 +198,6 @@ def get_manager_live_tracking(manager_id: int, db: Session = Depends(get_db)):
             except: pass
         results.append({"email": m.email, "name": m.full_name, "lat": lat, "lon": lon, "present": m.is_present})
     return results
-
-@app.websocket("/ws/tracking/{manager_id}")
-async def websocket_tracking(websocket: WebSocket, manager_id: int):
-    await websocket.accept()
-    try:
-        while True: await websocket.receive_text()
-    except WebSocketDisconnect: pass
 
 # --- ADMIN ROUTES ---
 @app.post("/api/admin/verify-employee")
@@ -265,21 +273,87 @@ def delete_location(loc_id: int, db: Session = Depends(get_db)):
     if loc: db.delete(loc); db.commit()
     return {"status": "deleted"}
 
-# --- USER & LOCATION TRACKING ---
-def get_distance(lat1, lon1, lat2, lon2):
-    R = 6371000 
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    dphi, dlambda = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
-    a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2
-    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+# --- FIELD OFFICER & REPORTING ROUTES ---
+@app.post("/api/field-officer/log-visit")
+async def log_site_visit(
+    email: str = Form(...),
+    location_id: int = Form(...),
+    purpose: str = Form(...),
+    remarks: str = Form(""),
+    lat: float = Form(...),
+    lon: float = Form(...),
+    photo: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    user = db.query(User).filter(User.email == email.lower().strip()).first()
+    if not user or user.user_type != 'field_officer':
+        raise HTTPException(403, "Unauthorized")
 
+    site = db.query(OfficeLocation).filter(OfficeLocation.id == location_id).first()
+    if not site:
+        raise HTTPException(404, "Site not found")
+
+    distance = get_distance(lat, lon, site.lat, site.lon)
+    if distance > site.radius:
+        raise HTTPException(400, f"Geotag validation failed. You are {int(distance)}m away from the site. Must be within {site.radius}m.")
+
+    photo_b64 = process_upload_base64(photo)
+    visit = SiteVisit(officer_id=user.id, location_id=site.id, purpose=purpose, remarks=remarks, photo_path=photo_b64)
+    db.add(visit)
+    db.commit()
+    return {"status": "success", "message": "Visit logged and geotag verified."}
+
+@app.get("/api/field-officer/my-visits")
+def get_my_visits(email: str, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == email.lower().strip()).first()
+    if not user: raise HTTPException(404, "User not found")
+    visits = db.query(SiteVisit, OfficeLocation).join(OfficeLocation).filter(SiteVisit.officer_id == user.id).order_by(SiteVisit.visit_time.desc()).all()
+    return [{
+        "site_name": loc.name, "purpose": v.purpose, "remarks": v.remarks, 
+        "visit_time": v.visit_time.strftime("%Y-%m-%d %H:%M"), "photo": v.photo_path
+    } for v, loc in visits]
+
+@app.get("/api/admin/reports/monthly-field-visits")
+def get_monthly_field_visits(month: int, year: int, db: Session = Depends(get_db)):
+    query = db.query(SiteVisit, User, OfficeLocation)\
+              .join(User, SiteVisit.officer_id == User.id)\
+              .join(OfficeLocation, SiteVisit.location_id == OfficeLocation.id)
+    
+    query = query.filter(extract('month', SiteVisit.visit_time) == month)
+    query = query.filter(extract('year', SiteVisit.visit_time) == year)
+    
+    results = query.order_by(SiteVisit.visit_time.asc()).all()
+    
+    report_data = []
+    for v, u, loc in results:
+        report_data.append({
+            "visit_id": v.id,
+            "date": v.visit_time.strftime("%Y-%m-%d"),
+            "time": v.visit_time.strftime("%I:%M %p"),
+            "officer_id": u.blockchain_id or f"EMP-{u.id}",
+            "officer_name": u.full_name,
+            "site_id": loc.id,
+            "site_name": loc.name,
+            "purpose": v.purpose,
+            "remarks": v.remarks,
+            "photo": v.photo_path
+        })
+    return report_data
+
+# --- USER & LOCATION TRACKING ---
 @app.post("/api/user/update-location")
 async def update_location(email: str, lat: float, lon: float, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == email.lower().strip()).first()
-    if not user or not user.location_id: return {"status": "error"}
-    office = db.query(OfficeLocation).filter(OfficeLocation.id == user.location_id).first()
+    if not user: return {"status": "error"}
+    
+    # Store live location in Redis for all verified users (including field officers)
     if r: r.set(f"loc:{email}", f"{lat},{lon}", ex=60)
     
+    # If the user is a field officer, they don't have a strict shift to enforce attendance
+    if user.user_type == 'field_officer' or not user.location_id or not user.shift_start:
+        return {"is_inside": True, "status": "normal", "message": "Location Updated"}
+
+    office = db.query(OfficeLocation).filter(OfficeLocation.id == user.location_id).first()
     is_inside = get_distance(lat, lon, office.lat, office.lon) <= office.radius
     now_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
     now_str = now_ist.strftime("%H:%M")
