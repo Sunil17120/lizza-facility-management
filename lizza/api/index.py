@@ -254,13 +254,18 @@ def get_live_tracking(admin_email: str, db: Session = Depends(get_db)):
 def update_employee_inline(data: dict, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == data.get("email")).first()
     if not user: raise HTTPException(404, "User not found")
+    
     user.location_id = data.get("location_id")
     user.shift_start = data.get("shift_start")
     user.shift_end = data.get("shift_end")
     user.user_type = data.get("user_type")
+    
+    # NEW: Allow Admin to change the assigned manager
+    if "manager_id" in data:
+        user.manager_id = data.get("manager_id")
+        
     db.commit()
     return {"status": "updated"}
-
 @app.delete("/api/admin/delete-employee/{user_id}")
 def delete_employee(user_id: int, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.id == user_id).first()

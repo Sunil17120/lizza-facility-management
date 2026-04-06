@@ -232,13 +232,15 @@ const AdminDashboard = () => {
           <Card className="border-0 shadow-sm">
             <Table responsive hover className="align-middle mb-0 small">
               <thead className="table-light text-uppercase">
-                <tr><th>Full Name</th><th>Email</th><th>Branch</th><th>Shift & Role</th><th>Status</th><th>Actions</th></tr>
+                <tr><th>Full Name</th><th>Email</th><th>Branch</th><th>Manager</th><th>Shift & Role</th><th>Status</th><th>Actions</th></tr>
               </thead>
               <tbody>
                 {verified.map(emp => (
                   <tr key={emp.id}>
                     <td><div className="fw-bold">{emp.full_name}</div><Badge bg="light" text="dark">{emp.blockchain_id || 'Pending'}</Badge></td>
                     <td className="text-muted">{emp.email}</td>
+                    
+                    {/* Location Select */}
                     <td>
                       <Form.Select size="sm" value={emp.location_id || ''} onChange={e => {
                           const updated = [...employees];
@@ -249,6 +251,22 @@ const AdminDashboard = () => {
                         {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
                       </Form.Select>
                     </td>
+
+                    {/* NEW: Manager Select */}
+                    <td>
+                      <Form.Select size="sm" value={emp.manager_id || ''} onChange={e => {
+                          const updated = [...employees];
+                          const target = updated.find(u => u.id === emp.id);
+                          if (target) { target.manager_id = e.target.value ? parseInt(e.target.value) : null; setEmployees(updated); }
+                      }}>
+                        <option value="">No Manager</option>
+                        {employees.filter(m => m.user_type === 'manager').map(mgr => (
+                          <option key={mgr.id} value={mgr.id}>{mgr.full_name}</option>
+                        ))}
+                      </Form.Select>
+                    </td>
+
+                    {/* Shift & Role Select */}
                     <td>
                         <div className="d-flex gap-1 mb-1">
                             <Form.Control size="sm" type="time" value={emp.shift_start || ''} onChange={e => {
@@ -270,6 +288,7 @@ const AdminDashboard = () => {
                             <option value="admin">Admin</option>
                         </Form.Select>
                     </td>
+
                     <td><Badge bg={emp.is_present ? "success" : "secondary"}>{emp.is_present ? "Present" : "Absent"}</Badge></td>
                     <td>
                         <div className="d-flex gap-1">
