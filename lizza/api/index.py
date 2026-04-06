@@ -178,6 +178,22 @@ def delete_location(loc_id: int, db: Session = Depends(get_db)):
     if loc: db.delete(loc); db.commit()
     return {"status": "deleted"}
 
+# --- IMAGE PROXY FOR EXCEL DOWNLOAD ---
+@app.get("/api/admin/proxy-image")
+def proxy_image(url: str):
+    """Fetches an image from ImgBB bypassing browser CORS, returning Base64 for ExcelJS."""
+    try:
+        response = requests.get(url)
+        if response.status_code == 200:
+            content_type = response.headers.get('Content-Type', 'image/jpeg')
+            encoded = base64.b64encode(response.content).decode('utf-8')
+            return {"base64": f"data:{content_type};base64,{encoded}"}
+        return {"base64": None}
+    except Exception as e:
+        print("Proxy Image Error:", e)
+        return {"base64": None}
+
+# --- FIELD OFFICER & REPORTING ROUTES ---
 @app.post("/api/field-officer/log-visit")
 async def log_site_visit(email: str=Form(...), location_id: int=Form(...), purpose: str=Form(...), remarks: str=Form(""), lat: float=Form(...), lon: float=Form(...), photo: UploadFile=File(...), db: Session=Depends(get_db)):
     user = db.query(User).filter(User.email == email.lower().strip()).first()
@@ -199,7 +215,7 @@ def get_monthly_field_visits(month: int, year: int, officer_id: Optional[int] = 
     query = query.filter(extract('month', SiteVisit.visit_time) == month, extract('year', SiteVisit.visit_time) == year)
     if officer_id: query = query.filter(SiteVisit.officer_id == officer_id)
     if location_id: query = query.filter(SiteVisit.location_id == location_id)
-    return [{"visit_id": v.id, "date": v.visit_time.strftime("%Y-%m-%d"), "time": v.visit_time.strftime("%I:%M %p"), "officer_id": u.blockchain_id, "officer_name": u.full_name, "officer_email": u.email, "site_id": loc.id, "site_name": loc.name, "purpose": v.purpose, "remarks": v.remarks, "photo": v.photo_path} for v, u, loc in query.order_by(SiteVisit.visit_time.asc()).all()]
+    return [{"visit_id": v.id, "date": v.visit_time.strftime("%Y-%m-%d"), "time": v.visit_time.strftime("%I:%M %p"), "officer_id": u.blockchain_id or f"EMP-{u.id}", "officer_name": u.full_name, "officer_email": u.email, "site_id": loc.id, "site_name": loc.name, "purpose": v.purpose, "remarks": v.remarks, "photo": v.photo_path} for v, u, loc in query.order_by(SiteVisit.visit_time.asc()).all()]
 
 @app.get("/api/admin/reports/geofence-logs")
 def get_geofence_logs(month: int, year: int, officer_id: Optional[int] = None, location_id: Optional[int] = None, db: Session = Depends(get_db)):
@@ -207,7 +223,7 @@ def get_geofence_logs(month: int, year: int, officer_id: Optional[int] = None, l
     query = query.filter(extract('month', FieldVisitLog.entry_time) == month, extract('year', FieldVisitLog.entry_time) == year)
     if officer_id: query = query.filter(FieldVisitLog.officer_id == officer_id)
     if location_id: query = query.filter(FieldVisitLog.site_id == location_id)
-    return [{"date": log.entry_time.strftime("%Y-%m-%d"), "entry_time": log.entry_time.strftime("%I:%M:%S %p"), "exit_time": log.exit_time.strftime("%I:%M:%S %p"), "duration_mins": round((log.exit_time - log.entry_time).total_seconds() / 60, 1), "officer_name": u.full_name, "officer_email": u.email, "site_name": loc.name} for log, u, loc in query.order_by(FieldVisitLog.entry_time.desc()).all()]
+    return [{"date": log.entry_time.strftime("%Y-%m-%d"), "entry_time": log.entry_time.strftime("%I:%M:%S %p"), "exit_time": log.exit_time.strftime("%I:%M:%S %p"), "duration_mins": round((log.exit_time - log.entry_time).total_seconds() / 60, 1), "officer_id": u.blockchain_id or f"EMP-{u.id}", "officer_name": u.full_name, "officer_email": u.email, "site_name": loc.name} for log, u, loc in query.order_by(FieldVisitLog.entry_time.desc()).all()]
 
 @app.post("/api/user/update-location")
 async def update_location(email: str, lat: float, lon: float, current_site_id: Optional[int] = None, db: Session = Depends(get_db)):
