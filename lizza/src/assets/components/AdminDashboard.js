@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Table, Form, Container, Card, Spinner, Button, Row, Col, Modal, Badge, Tabs, Tab } from 'react-bootstrap';
-import { UserCog, Building2, MapPin, Trash2, Users, UserCheck, UserX, Save, Search, Plus, Bell, Edit2, Calendar, Download, Image as ImageIcon, FileText, Briefcase } from 'lucide-react';
+import { UserCog, Building2, MapPin, Trash2, Users, UserCheck, UserX, Save, Search, Plus, Bell, Edit2, Calendar, Download, Image as ImageIcon, FileText, Briefcase, Filter } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 import EmployeeOnboardForm from './EmployeeOnboardForm'; 
 import 'leaflet/dist/leaflet.css';
@@ -33,6 +33,9 @@ const AdminDashboard = () => {
   // --- REPORTS STATES ---
   const [reportMonth, setReportMonth] = useState(new Date().getMonth() + 1);
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
+  const [filterOfficer, setFilterOfficer] = useState('');
+  const [filterSite, setFilterSite] = useState('');
+  
   const [fieldReports, setFieldReports] = useState([]);
   const [reportsLoading, setReportsLoading] = useState(false);
   const [photoPreview, setPhotoPreview] = useState(null);
@@ -63,11 +66,15 @@ const AdminDashboard = () => {
     if (mainTab !== 'reports') return;
     setReportsLoading(true);
     try {
-      const res = await fetch(`/api/admin/reports/monthly-field-visits?month=${reportMonth}&year=${reportYear}`);
+      let url = `/api/admin/reports/monthly-field-visits?month=${reportMonth}&year=${reportYear}`;
+      if (filterOfficer) url += `&officer_id=${filterOfficer}`;
+      if (filterSite) url += `&location_id=${filterSite}`;
+      
+      const res = await fetch(url);
       if (res.ok) setFieldReports(await res.json());
     } catch (err) { console.error("Report fetch error", err); }
     setReportsLoading(false);
-  }, [reportMonth, reportYear, mainTab]);
+  }, [reportMonth, reportYear, filterOfficer, filterSite, mainTab]);
 
   useEffect(() => { fetchReportsData(); }, [fetchReportsData]);
 
@@ -117,18 +124,46 @@ const AdminDashboard = () => {
     }
   };
 
-  // --- ACTIONS: CSV EXPORT ---
-  const downloadCSV = () => {
-    const headers = ["Date", "Time", "Officer ID", "Officer Name", "Site Name", "Purpose", "Remarks"];
-    const rows = fieldReports.map(r => [
-      r.date, r.time, r.officer_id, `"${r.officer_name}"`, `"${r.site_name}"`, `"${r.purpose}"`, `"${r.remarks || ''}"`
-    ]);
-    
-    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
-    const encodedUri = encodeURI(csvContent);
+  // --- EXCEL WITH PHOTOS DOWNLOADER ---
+  const downloadExcelWithPhotos = () => {
+    // We construct an HTML table. Excel can open this natively and will render the base64 images inside the cells.
+    let tableHtml = `
+      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+      <head><meta charset="utf-8"></head><body>
+      <table border="1">
+        <thead>
+          <tr style="background-color: #f2f2f2; font-weight: bold;">
+            <th>Date</th><th>Time</th><th>Officer ID</th><th>Officer Name</th><th>Site Name</th><th>Purpose</th><th>Remarks</th><th>Geotagged Photo</th>
+          </tr>
+        </thead>
+        <tbody>
+    `;
+
+    fieldReports.forEach(r => {
+      // Create image tag if photo exists
+      const imgTag = r.photo ? `<img src="${r.photo}" width="120" height="120" style="object-fit: contain;" />` : 'No Photo';
+      tableHtml += `
+        <tr>
+          <td>${r.date}</td>
+          <td>${r.time}</td>
+          <td>${r.officer_id}</td>
+          <td>${r.officer_name}</td>
+          <td>${r.site_name}</td>
+          <td>${r.purpose}</td>
+          <td>${r.remarks || ''}</td>
+          <td style="height: 130px; text-align: center; vertical-align: middle;">${imgTag}</td>
+        </tr>
+      `;
+    });
+
+    tableHtml += `</tbody></table></body></html>`;
+
+    // Create Blob and Download
+    const blob = new Blob([tableHtml], { type: 'application/vnd.ms-excel' });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `Field_Visits_${reportMonth}_${reportYear}.csv`);
+    link.href = url;
+    link.download = `Field_Visits_${reportMonth}_${reportYear}.xls`; // Needs .xls for Excel to interpret HTML tables
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -137,6 +172,7 @@ const AdminDashboard = () => {
   // --- DATA PROCESSING ---
   const pending = employees.filter(e => !e.is_verified && e.user_type !== 'admin');
   const verified = employees.filter(e => e.is_verified);
+  const fieldOfficers = verified.filter(e => e.user_type === 'field_officer');
   
   // Group Field Reports by Date for UI
   const groupedReports = fieldReports.reduce((acc, visit) => {
@@ -252,7 +288,7 @@ const AdminDashboard = () => {
                       </Form.Select>
                     </td>
 
-                    {/* NEW: Manager Select */}
+                    {/* Manager Select */}
                     <td>
                       <Form.Select size="sm" value={emp.manager_id || ''} onChange={e => {
                           const updated = [...employees];
@@ -307,19 +343,33 @@ const AdminDashboard = () => {
         {/* TAB 2: REPORTS & FIELD OPERATIONS          */}
         {/* ========================================== */}
         <Tab eventKey="reports" title={<span className="fw-bold px-3">Reports & Field Operations</span>}>
-            <div className="p-3 bg-light border-bottom d-flex justify-content-between align-items-center">
-              <h5 className="mb-0 fw-bold d-flex align-items-center"><FileText className="me-2 text-primary" /> Operations & Attendance Reports</h5>
+            
+            {/* Top Filter Bar */}
+            <div className="p-3 bg-light border-bottom d-flex flex-wrap gap-4 align-items-center">
+              <h5 className="mb-0 fw-bold d-flex align-items-center text-primary"><Filter className="me-2" /> Report Filters</h5>
               
-              <div className="d-flex gap-2 align-items-center">
-                <span className="small fw-bold text-muted text-uppercase">Filter Period:</span>
-                <Form.Select size="sm" value={reportMonth} onChange={e => setReportMonth(e.target.value)} style={{width: '140px'}}>
+              <div className="d-flex gap-2 align-items-center border-start ps-4">
+                <span className="small fw-bold text-muted text-uppercase">Month/Year:</span>
+                <Form.Select size="sm" value={reportMonth} onChange={e => setReportMonth(e.target.value)} style={{width: '130px'}}>
                   {[...Array(12)].map((_, i) => (
                     <option key={i+1} value={i+1}>{new Date(0, i).toLocaleString('en', { month: 'long' })}</option>
                   ))}
                 </Form.Select>
-                <Form.Select size="sm" value={reportYear} onChange={e => setReportYear(e.target.value)} style={{width: '100px'}}>
+                <Form.Select size="sm" value={reportYear} onChange={e => setReportYear(e.target.value)} style={{width: '90px'}}>
                   <option value="2026">2026</option>
                   <option value="2027">2027</option>
+                </Form.Select>
+              </div>
+
+              <div className="d-flex gap-2 align-items-center border-start ps-4">
+                <span className="small fw-bold text-muted text-uppercase">Specific Data:</span>
+                <Form.Select size="sm" value={filterOfficer} onChange={e => setFilterOfficer(e.target.value)} style={{width: '150px'}}>
+                  <option value="">All Officers</option>
+                  {fieldOfficers.map(o => <option key={o.id} value={o.id}>{o.full_name}</option>)}
+                </Form.Select>
+                <Form.Select size="sm" value={filterSite} onChange={e => setFilterSite(e.target.value)} style={{width: '150px'}}>
+                  <option value="">All Sites</option>
+                  {locations.map(loc => <option key={loc.id} value={loc.id}>{loc.name}</option>)}
                 </Form.Select>
               </div>
             </div>
@@ -352,15 +402,15 @@ const AdminDashboard = () => {
                 <Card className="border-0 shadow-sm mb-4">
                   <Card.Header className="bg-dark text-white p-3 d-flex justify-content-between align-items-center">
                     <h6 className="mb-0 fw-bold d-flex align-items-center"><MapPin className="me-2 text-danger" size={18}/> Field Officer Site Visits</h6>
-                    <Button variant="light" size="sm" className="fw-bold text-dark d-flex align-items-center" onClick={downloadCSV} disabled={fieldReports.length === 0}>
-                      <Download size={14} className="me-2"/> Download CSV
+                    <Button variant="light" size="sm" className="fw-bold text-dark d-flex align-items-center" onClick={downloadExcelWithPhotos} disabled={fieldReports.length === 0}>
+                      <Download size={14} className="me-2 text-success"/> Download Excel (With Photos)
                     </Button>
                   </Card.Header>
                   <Card.Body className="p-0">
                     {reportsLoading ? (
                       <div className="text-center py-5"><Spinner variant="primary" animation="border" /></div>
                     ) : fieldReports.length === 0 ? (
-                      <div className="text-center py-5 text-muted">No field visits recorded for this month.</div>
+                      <div className="text-center py-5 text-muted">No field visits recorded matching these filters.</div>
                     ) : (
                       <div className="accordion accordion-flush" id="reportAccordion">
                         {Object.keys(groupedReports).map((dateStr, index) => (

@@ -3,7 +3,7 @@ from email.mime.text import MIMEText
 from typing import Optional 
 from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, Query, File, UploadFile, Form
 from sqlalchemy.orm import Session
-from sqlalchemy import extract # NEW: Imported for date extraction
+from sqlalchemy import extract 
 from pydantic import BaseModel
 from datetime import datetime, timedelta
 from sqlalchemy.exc import IntegrityError
@@ -129,8 +129,8 @@ async def add_employee(
     manager_id: int = Form(...), 
     user_type: str = Form("employee"),
     location_id: Optional[int] = Form(None), 
-    shift_start: Optional[str] = Form(None), # Made optional
-    shift_end: Optional[str] = Form(None),   # Made optional
+    shift_start: Optional[str] = Form(None),
+    shift_end: Optional[str] = Form(None),
     profile_photo: UploadFile = File(None), 
     aadhar_photo: UploadFile = File(None), 
     pan_photo: UploadFile = File(None), 
@@ -151,13 +151,11 @@ async def add_employee(
 
     salt = hashlib.sha256(base_email.encode()).hexdigest()[:16]
     
-    # NEW: Overrides for Field Officer
     if user_type == 'field_officer':
         shift_start = None
         shift_end = None
         location_id = None
         
-    # Standardize empty shifts to None to avoid DB errors
     if not shift_start: shift_start = None
     if not shift_end: shift_end = None
 
@@ -260,12 +258,12 @@ def update_employee_inline(data: dict, db: Session = Depends(get_db)):
     user.shift_end = data.get("shift_end")
     user.user_type = data.get("user_type")
     
-    # NEW: Allow Admin to change the assigned manager
     if "manager_id" in data:
         user.manager_id = data.get("manager_id")
         
     db.commit()
     return {"status": "updated"}
+
 @app.delete("/api/admin/delete-employee/{user_id}")
 def delete_employee(user_id: int, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.id == user_id).first()
@@ -319,13 +317,25 @@ def get_my_visits(email: str, db: Session = Depends(get_db)):
     } for v, loc in visits]
 
 @app.get("/api/admin/reports/monthly-field-visits")
-def get_monthly_field_visits(month: int, year: int, db: Session = Depends(get_db)):
+def get_monthly_field_visits(
+    month: int, 
+    year: int, 
+    officer_id: Optional[int] = None, 
+    location_id: Optional[int] = None, 
+    db: Session = Depends(get_db)
+):
     query = db.query(SiteVisit, User, OfficeLocation)\
               .join(User, SiteVisit.officer_id == User.id)\
               .join(OfficeLocation, SiteVisit.location_id == OfficeLocation.id)
     
     query = query.filter(extract('month', SiteVisit.visit_time) == month)
     query = query.filter(extract('year', SiteVisit.visit_time) == year)
+    
+    # NEW: Apply Filters if provided
+    if officer_id:
+        query = query.filter(SiteVisit.officer_id == officer_id)
+    if location_id:
+        query = query.filter(SiteVisit.location_id == location_id)
     
     results = query.order_by(SiteVisit.visit_time.asc()).all()
     
@@ -351,10 +361,8 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
     user = db.query(User).filter(User.email == email.lower().strip()).first()
     if not user: return {"status": "error"}
     
-    # Store live location in Redis for all verified users (including field officers)
     if r: r.set(f"loc:{email}", f"{lat},{lon}", ex=60)
     
-    # If the user is a field officer, they don't have a strict shift to enforce attendance
     if user.user_type == 'field_officer' or not user.location_id or not user.shift_start:
         return {"is_inside": True, "status": "normal", "message": "Location Updated"}
 
