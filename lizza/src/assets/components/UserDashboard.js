@@ -17,7 +17,7 @@ const UserDashboard = () => {
   const [violationTime, setViolationTime] = useState(null); 
   const [checkInTimeLeft, setCheckInTimeLeft] = useState(null); 
   
-  // --- NEW: Password Change State ---
+  // Password Change State
   const [showPassModal, setShowPassModal] = useState(false);
   const [isForceChange, setIsForceChange] = useState(false);
   const [passForm, setPassForm] = useState({ oldPass: '', newPass: '', confirmPass: '' });
@@ -27,7 +27,6 @@ const UserDashboard = () => {
 
   // --- 1. Load User Profile & Check Force Password Change ---
   useEffect(() => {
-    // Check if login flagged a forced password change
     if (localStorage.getItem('forcePasswordChange') === 'true') {
       setIsForceChange(true);
       setShowPassModal(true);
@@ -75,6 +74,7 @@ const UserDashboard = () => {
          return;
     }
 
+    // FIX: Added timeout and maximumAge to prevent the browser from hanging indefinitely
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         const { latitude, longitude } = pos.coords;
@@ -103,20 +103,27 @@ const UserDashboard = () => {
       },
       (err) => {
           console.error("Loc Error", err);
-          setStatus({ type: 'danger', msg: 'Location blocked. Enable GPS.', code: 'gps_error' });
+          setStatus({ type: 'danger', msg: 'Location blocked or timed out. Enable GPS.', code: 'gps_error' });
       },
-      { enableHighAccuracy: true }
+      { 
+        enableHighAccuracy: true, 
+        timeout: 15000, // FIX: Fail and retry if location takes longer than 15 seconds to resolve
+        maximumAge: 0   // FIX: Force the browser to get a fresh GPS reading, not a cached one
+      }
     );
   }, [userEmail]);
 
   useEffect(() => {
     if (!dbUser) return;
     syncLocation();
-    const interval = setInterval(syncLocation, 10000);
+    
+    // FIX: Changed to 30 seconds. This is friendlier on the browser and battery, 
+    // but still updates before the backend Redis 60-second expiration triggers.
+    const interval = setInterval(syncLocation, 30000);
     return () => clearInterval(interval);
   }, [dbUser, syncLocation]);
 
-  // --- 4. NEW: Handle Password Submit ---
+  // --- 4. Handle Password Submit ---
   const handlePasswordSubmit = async (e) => {
     e.preventDefault();
     setPassError('');
@@ -166,7 +173,6 @@ const UserDashboard = () => {
             {/* --- HEADER --- */}
             <div className={`p-4 text-white text-center position-relative ${status.code === 'warning' ? 'bg-danger' : 'bg-dark'}`}>
               
-              {/* Change Password Button in Top Right */}
               <Button 
                 variant="outline-light" 
                 size="sm" 
