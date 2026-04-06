@@ -1,4 +1,4 @@
-import hashlib, os, redis, math, smtplib, base64, json
+import hashlib, os, redis, math, smtplib, base64, json, requests
 from email.mime.text import MIMEText
 from typing import Optional 
 from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, Query, File, UploadFile, Form
@@ -45,11 +45,40 @@ def get_secure_hash(password: str, salt: str):
     return hashlib.sha256((password + salt + PEPPER).encode()).hexdigest()
 
 def process_upload_base64(upload_file: UploadFile, max_size_mb: int = 5) -> str:
+    """Used for PDFs/Documents that ImgBB cannot host (like the filled form)"""
     if not upload_file or not upload_file.filename: return None
     content = upload_file.file.read()
     if len(content) > max_size_mb * 1024 * 1024:
         raise HTTPException(400, detail="File too large")
     return f"data:{upload_file.content_type};base64,{base64.b64encode(content).decode('utf-8')}"
+
+def upload_to_cloud(upload_file: UploadFile) -> str:
+    """Uploads Image directly to ImgBB and returns the public short URL."""
+    if not upload_file or not upload_file.filename: 
+        return None
+        
+    try:
+        image_bytes = upload_file.file.read()
+        encoded_image = base64.b64encode(image_bytes).decode('utf-8')
+        
+        url = "https://api.imgbb.com/1/upload"
+        payload = {
+            "key": os.environ.get("IMGBB_API_KEY"),
+            "image": encoded_image
+        }
+        
+        response = requests.post(url, data=payload)
+        res_data = response.json()
+        
+        if res_data.get("success"):
+            return res_data["data"]["url"]
+            
+        print("ImgBB Upload Failed:", res_data)
+        return None
+        
+    except Exception as e:
+        print(f"Cloud upload error: {e}")
+        return None
 
 def send_onboarding_email(to_email, full_name, temp_password, login_email):
     user = os.environ.get("SMTP_USER") 
@@ -169,10 +198,15 @@ async def add_employee(
         experience_years=experience_years, prev_company=prev_company, prev_role=prev_role,
         aadhar_enc=cipher.encrypt(aadhar_number.encode()).decode(),
         pan_enc=cipher.encrypt(pan_number.encode()).decode(),
-        profile_photo_path=process_upload_base64(profile_photo),
-        aadhar_photo_path=process_upload_base64(aadhar_photo),
-        pan_photo_path=process_upload_base64(pan_photo),
+        
+        # Store images cleanly in ImgBB cloud
+        profile_photo_path=upload_to_cloud(profile_photo),
+        aadhar_photo_path=upload_to_cloud(aadhar_photo),
+        pan_photo_path=upload_to_cloud(pan_photo),
+        
+        # Forms might be PDFs, so keep them as Base64 text in the DB
         filled_form_path=process_upload_base64(filled_form, 2),
+        
         shift_start=shift_start, shift_end=shift_end
     )
     db.add(new_user); db.commit()
@@ -300,8 +334,10 @@ async def log_site_visit(
     if distance > site.radius:
         raise HTTPException(400, f"Geotag validation failed. You are {int(distance)}m away from the site. Must be within {site.radius}m.")
 
-    photo_b64 = process_upload_base64(photo)
-    visit = SiteVisit(officer_id=user.id, location_id=site.id, purpose=purpose, remarks=remarks, photo_path=photo_b64)
+    # Upload the live photo to ImgBB
+    photo_url = upload_to_cloud(photo)
+    
+    visit = SiteVisit(officer_id=user.id, location_id=site.id, purpose=purpose, remarks=remarks, photo_path=photo_url)
     db.add(visit)
     db.commit()
     return {"status": "success", "message": "Visit logged and geotag verified."}
@@ -331,7 +367,6 @@ def get_monthly_field_visits(
     query = query.filter(extract('month', SiteVisit.visit_time) == month)
     query = query.filter(extract('year', SiteVisit.visit_time) == year)
     
-    # NEW: Apply Filters if provided
     if officer_id:
         query = query.filter(SiteVisit.officer_id == officer_id)
     if location_id:
