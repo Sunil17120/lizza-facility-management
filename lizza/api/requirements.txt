@@ -6,4 +6,3 @@ redis
 python-multipart
 cryptography
 requests
-exceljs
