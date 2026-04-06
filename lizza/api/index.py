@@ -62,7 +62,8 @@ def send_onboarding_email(to_email, full_name, temp_password, login_email):
         with smtplib.SMTP(host, 587) as server:
             server.starttls()
             server.login(user, pw)
-            server.sendmail(user, to_email, msg.as_string())
+            # MOVE THIS INSIDE THE BLOCK
+            server.sendmail(user, to_email, msg.as_string()) 
         return True
     except Exception as e:
         print(f"Email Error: {e}")
@@ -214,6 +215,17 @@ def add_location(data: LocationCreate, db: Session = Depends(get_db)):
     db.add(OfficeLocation(**data.dict()))
     db.commit()
     return {"message": "Location Added"}
+
+@app.put("/api/admin/update-location/{loc_id}")
+def update_location_endpoint(loc_id: int, data: LocationCreate, db: Session = Depends(get_db)):
+    loc = db.query(OfficeLocation).filter(OfficeLocation.id == loc_id).first()
+    if not loc: raise HTTPException(404, "Location not found")
+    loc.name = data.name
+    loc.lat = data.lat
+    loc.lon = data.lon
+    loc.radius = data.radius
+    db.commit()
+    return {"status": "updated"}
 
 @app.get("/api/admin/live-tracking")
 def get_live_tracking(admin_email: str, db: Session = Depends(get_db)):

@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Table, Form, Container, Card, Spinner, Button, Row, Col, Modal, Badge, InputGroup, Tabs, Tab } from 'react-bootstrap';
-import { UserCog, Building2, MapPin, Trash2, Users, UserCheck, UserX, Save, Search, Plus, Bell } from 'lucide-react';
-import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
+import { UserCog, Building2, MapPin, Trash2, Users, UserCheck, UserX, Save, Search, Plus, Bell, Edit2 } from 'lucide-react';
+import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 import EmployeeOnboardForm from './EmployeeOnboardForm'; 
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
@@ -25,6 +25,11 @@ const AdminDashboard = () => {
   // --- UI STATES ---
   const [showAddEmp, setShowAddEmp] = useState(false);
   const [newLoc, setNewLoc] = useState({ name: '', lat: '', lon: '', radius: 200 });
+  
+  // Edit Location States
+  const [editLocModal, setEditLocModal] = useState(false);
+  const [editingLoc, setEditingLoc] = useState(null);
+  
   const adminEmail = localStorage.getItem('userEmail');
 
   const fetchData = useCallback(async () => {
@@ -79,6 +84,23 @@ const AdminDashboard = () => {
     fetchData();
   };
 
+  const handleUpdateBranch = async (e) => {
+    e.preventDefault();
+    await fetch(`/api/admin/update-location/${editingLoc.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            name: editingLoc.name,
+            lat: parseFloat(editingLoc.lat),
+            lon: parseFloat(editingLoc.lon),
+            radius: parseInt(editingLoc.radius)
+        })
+    });
+    setEditLocModal(false);
+    setEditingLoc(null);
+    fetchData();
+  };
+
   const deleteLoc = async (id) => {
     if(window.confirm("Delete Branch?")) {
         await fetch(`/api/admin/delete-location/${id}`, { method: 'DELETE' });
@@ -129,7 +151,10 @@ const AdminDashboard = () => {
                 {locations.map(loc => (
                     <div key={loc.id} className="d-flex justify-content-between align-items-center p-2 border-bottom small">
                         <span>{loc.name}</span>
-                        <Trash2 size={14} className="text-danger" onClick={() => deleteLoc(loc.id)} style={{cursor: 'pointer'}}/>
+                        <div>
+                            <Edit2 size={14} className="text-primary me-2" onClick={() => { setEditingLoc(loc); setEditLocModal(true); }} style={{cursor: 'pointer'}}/>
+                            <Trash2 size={14} className="text-danger" onClick={() => deleteLoc(loc.id)} style={{cursor: 'pointer'}}/>
+                        </div>
                     </div>
                 ))}
             </div>
@@ -141,10 +166,24 @@ const AdminDashboard = () => {
           <Card className="border-0 shadow-sm overflow-hidden mb-4" style={{ height: '380px' }}>
             <MapContainer center={[22.5726, 88.3639]} zoom={5} style={{ height: '100%' }}>
               <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+              
+              {/* Employee Live Locations */}
               {liveLocations.map(loc => (loc.lat && loc.lon) && (
                 <Marker key={loc.email} position={[loc.lat, loc.lon]}>
                   <Popup>{loc.name} - {loc.present ? "Present" : "Outside"}</Popup>
                 </Marker>
+              ))}
+              
+              {/* Office Geofences */}
+              {locations.map(office => (
+                <Circle 
+                  key={office.id}
+                  center={[office.lat, office.lon]} 
+                  radius={office.radius} 
+                  pathOptions={{ color: 'red', fillColor: 'red', fillOpacity: 0.2 }}
+                >
+                  <Popup>{office.name} Geofence ({office.radius}m)</Popup>
+                </Circle>
               ))}
             </MapContainer>
           </Card>
@@ -266,6 +305,40 @@ const AdminDashboard = () => {
                 onCancel={() => setShowAddEmp(false)} 
                 onSuccess={() => { setShowAddEmp(false); fetchData(); }} 
               />
+          </Modal.Body>
+      </Modal>
+
+      {/* --- MODAL: EDIT BRANCH --- */}
+      <Modal show={editLocModal} onHide={() => setEditLocModal(false)} centered>
+          <Modal.Header closeButton><Modal.Title className="h6 fw-bold">Edit Branch Location</Modal.Title></Modal.Header>
+          <Modal.Body>
+              {editingLoc && (
+                  <Form onSubmit={handleUpdateBranch}>
+                      <Form.Group className="mb-2">
+                          <Form.Label className="small fw-bold">Branch Name</Form.Label>
+                          <Form.Control size="sm" value={editingLoc.name} onChange={e => setEditingLoc({...editingLoc, name: e.target.value})} required />
+                      </Form.Group>
+                      <Row>
+                          <Col>
+                              <Form.Group className="mb-2">
+                                  <Form.Label className="small fw-bold">Latitude</Form.Label>
+                                  <Form.Control size="sm" value={editingLoc.lat} onChange={e => setEditingLoc({...editingLoc, lat: e.target.value})} required />
+                              </Form.Group>
+                          </Col>
+                          <Col>
+                              <Form.Group className="mb-2">
+                                  <Form.Label className="small fw-bold">Longitude</Form.Label>
+                                  <Form.Control size="sm" value={editingLoc.lon} onChange={e => setEditingLoc({...editingLoc, lon: e.target.value})} required />
+                              </Form.Group>
+                          </Col>
+                      </Row>
+                      <Form.Group className="mb-4">
+                          <Form.Label className="small fw-bold">Radius (meters)</Form.Label>
+                          <Form.Control size="sm" type="number" value={editingLoc.radius} onChange={e => setEditingLoc({...editingLoc, radius: e.target.value})} required />
+                      </Form.Group>
+                      <Button type="submit" variant="primary" size="sm" className="w-100 fw-bold">UPDATE BRANCH</Button>
+                  </Form>
+              )}
           </Modal.Body>
       </Modal>
 
