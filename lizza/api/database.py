@@ -64,8 +64,8 @@ class User(Base):
     
     # 8. Status
     is_present = Column(Boolean, default=False)
-    shift_start = Column(String, default="09:00")
-    shift_end = Column(String, default="18:00")
+    shift_start = Column(String, nullable=True) # CHANGED: Now nullable for Field Officers
+    shift_end = Column(String, nullable=True)   # CHANGED: Now nullable for Field Officers
     created_at = Column(DateTime, default=datetime.utcnow)
 
 class EmployeeLocation(Base):
@@ -83,6 +83,17 @@ class OfficeLocation(Base):
     lat = Column(Float)
     lon = Column(Float)
     radius = Column(Integer, default=200)
+
+# NEW: Site Visit model for Field Officers
+class SiteVisit(Base):
+    __tablename__ = "site_visits"
+    id = Column(Integer, primary_key=True, index=True)
+    officer_id = Column(Integer, ForeignKey("users.id"))
+    location_id = Column(Integer, ForeignKey("office_locations.id"))
+    purpose = Column(String)
+    remarks = Column(Text, nullable=True)
+    photo_path = Column(Text) # Will store the Base64 image
+    visit_time = Column(DateTime, default=datetime.utcnow)
 
 def init_db():
     Base.metadata.create_all(bind=engine)

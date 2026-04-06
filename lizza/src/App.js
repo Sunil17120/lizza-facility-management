@@ -13,7 +13,8 @@ import Services from './assets/components/Services';
 import Auth from './assets/components/Auth'; 
 import AdminDashboard from './assets/components/AdminDashboard'; 
 import UserDashboard from './assets/components/UserDashboard'; 
-import ManagerDashboard from './assets/components/ManagerDashboard'; // Added ManagerDashboard import
+import ManagerDashboard from './assets/components/ManagerDashboard'; 
+import FieldOfficerDashboard from './assets/components/FieldOfficerDashboard'; // NEW: Added Field Officer import
 import Footer from './assets/components/Footer'; 
 
 // Protected Route for Admin - ALWAYS FETCHES FROM DB
@@ -49,7 +50,7 @@ const AdminRoute = ({ children }) => {
   return isAdmin ? children : <Navigate to="/dashboard" replace />;
 };
 
-// NEW: Protected Route for Manager
+// Protected Route for Manager
 const ManagerRoute = ({ children }) => {
   const [isManager, setIsManager] = useState(null);
   const userEmail = localStorage.getItem('userEmail');
@@ -63,7 +64,6 @@ const ManagerRoute = ({ children }) => {
     fetch(`/api/user/profile?email=${userEmail}`)
       .then(res => res.json())
       .then(data => {
-        // Verify user_type status from DB result 
         if (data && data.user_type && data.user_type.toLowerCase() === 'manager') {
           setIsManager(true);
         } else {
@@ -81,6 +81,39 @@ const ManagerRoute = ({ children }) => {
   );
 
   return isManager ? children : <Navigate to="/dashboard" replace />;
+};
+
+// NEW: Protected Route for Field Officer
+const FieldOfficerRoute = ({ children }) => {
+  const [isOfficer, setIsOfficer] = useState(null);
+  const userEmail = localStorage.getItem('userEmail');
+
+  useEffect(() => {
+    if (!userEmail) {
+      setIsOfficer(false);
+      return;
+    }
+
+    fetch(`/api/user/profile?email=${userEmail}`)
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.user_type && data.user_type.toLowerCase() === 'field_officer') {
+          setIsOfficer(true);
+        } else {
+          setIsOfficer(false);
+        }
+      })
+      .catch(() => setIsOfficer(false));
+  }, [userEmail]);
+
+  if (isOfficer === null) return (
+    <div className="text-center py-5">
+      <div className="spinner-border text-primary" role="status"></div>
+      <p className="mt-2">Verifying Field Officer Permissions...</p>
+    </div>
+  );
+
+  return isOfficer ? children : <Navigate to="/dashboard" replace />;
 };
 
 // Protected Route for Users
@@ -108,6 +141,8 @@ function App() {
               </>
             } />
             <Route path="/auth" element={<Auth />} />
+            
+            {/* User Route */}
             <Route 
               path="/dashboard" 
               element={
@@ -116,7 +151,8 @@ function App() {
                 </PrivateRoute>
               } 
             />
-            {/* NEW: Added /manager route protected by ManagerRoute */}
+            
+            {/* Manager Route */}
             <Route 
               path="/manager" 
               element={
@@ -125,6 +161,18 @@ function App() {
                 </ManagerRoute>
               } 
             />
+
+            {/* NEW: Field Officer Route */}
+            <Route 
+              path="/field-operations" 
+              element={
+                <FieldOfficerRoute>
+                  <FieldOfficerDashboard />
+                </FieldOfficerRoute>
+              } 
+            />
+            
+            {/* Admin Route */}
             <Route 
               path="/admin" 
               element={

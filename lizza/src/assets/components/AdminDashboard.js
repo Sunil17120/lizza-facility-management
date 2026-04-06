@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Table, Form, Container, Card, Spinner, Button, Row, Col, Modal, Badge, InputGroup, Tabs, Tab } from 'react-bootstrap';
-import { UserCog, Building2, MapPin, Trash2, Users, UserCheck, UserX, Save, Search, Plus, Bell, Edit2 } from 'lucide-react';
+import { Table, Form, Container, Card, Spinner, Button, Row, Col, Modal, Badge, Tabs, Tab } from 'react-bootstrap';
+import { UserCog, Building2, MapPin, Trash2, Users, UserCheck, UserX, Save, Search, Plus, Bell, Edit2, Calendar, Download, Image as ImageIcon, FileText, Briefcase } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 import EmployeeOnboardForm from './EmployeeOnboardForm'; 
 import 'leaflet/dist/leaflet.css';
@@ -13,6 +13,8 @@ let DefaultIcon = L.icon({ iconUrl: markerIcon, shadowUrl: markerShadow, iconSiz
 L.Marker.prototype.options.icon = DefaultIcon;
 
 const AdminDashboard = () => {
+  // --- CORE STATES ---
+  const [mainTab, setMainTab] = useState('overview');
   const [employees, setEmployees] = useState([]);
   const [locations, setLocations] = useState([]);
   const [liveLocations, setLiveLocations] = useState([]);
@@ -25,14 +27,20 @@ const AdminDashboard = () => {
   // --- UI STATES ---
   const [showAddEmp, setShowAddEmp] = useState(false);
   const [newLoc, setNewLoc] = useState({ name: '', lat: '', lon: '', radius: 200 });
-  
-  // Edit Location States
   const [editLocModal, setEditLocModal] = useState(false);
   const [editingLoc, setEditingLoc] = useState(null);
   
+  // --- REPORTS STATES ---
+  const [reportMonth, setReportMonth] = useState(new Date().getMonth() + 1);
+  const [reportYear, setReportYear] = useState(new Date().getFullYear());
+  const [fieldReports, setFieldReports] = useState([]);
+  const [reportsLoading, setReportsLoading] = useState(false);
+  const [photoPreview, setPhotoPreview] = useState(null);
+  
   const adminEmail = localStorage.getItem('userEmail');
 
-  const fetchData = useCallback(async () => {
+  // --- 1. CORE DATA FETCHING ---
+  const fetchBaseData = useCallback(async () => {
     try {
       const [empRes, locRes, liveRes] = await Promise.all([
         fetch(`/api/admin/employees?admin_email=${adminEmail}`),
@@ -48,12 +56,25 @@ const AdminDashboard = () => {
     } catch (err) { setLoading(false); }
   }, [adminEmail]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => { fetchBaseData(); }, [fetchBaseData]);
+
+  // --- 2. REPORTS DATA FETCHING ---
+  const fetchReportsData = useCallback(async () => {
+    if (mainTab !== 'reports') return;
+    setReportsLoading(true);
+    try {
+      const res = await fetch(`/api/admin/reports/monthly-field-visits?month=${reportMonth}&year=${reportYear}`);
+      if (res.ok) setFieldReports(await res.json());
+    } catch (err) { console.error("Report fetch error", err); }
+    setReportsLoading(false);
+  }, [reportMonth, reportYear, mainTab]);
+
+  useEffect(() => { fetchReportsData(); }, [fetchReportsData]);
 
   // --- ACTIONS: EMPLOYEES ---
   const handleVerify = async (email) => {
       const res = await fetch(`/api/admin/verify-employee?target_email=${email}&admin_email=${adminEmail}`, { method: 'POST' });
-      if (res.ok) { alert("Verified!"); setSelectedStaff(null); fetchData(); }
+      if (res.ok) { alert("Verified!"); setSelectedStaff(null); fetchBaseData(); }
   };
 
   const handleInlineSave = async (emp) => {
@@ -68,55 +89,75 @@ const AdminDashboard = () => {
   const handleDeleteEmp = async (id) => {
     if(window.confirm("Permanently delete this employee?")) {
         await fetch(`/api/admin/delete-employee/${id}`, { method: 'DELETE' });
-        fetchData();
+        fetchBaseData();
     }
   };
 
   // --- ACTIONS: BRANCHES ---
   const handleAddBranch = async (e) => {
     e.preventDefault();
-    await fetch('/api/admin/add-location', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newLoc)
-    });
+    await fetch('/api/admin/add-location', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newLoc) });
     setNewLoc({ name: '', lat: '', lon: '', radius: 200 });
-    fetchData();
+    fetchBaseData();
   };
 
   const handleUpdateBranch = async (e) => {
     e.preventDefault();
     await fetch(`/api/admin/update-location/${editingLoc.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            name: editingLoc.name,
-            lat: parseFloat(editingLoc.lat),
-            lon: parseFloat(editingLoc.lon),
-            radius: parseInt(editingLoc.radius)
-        })
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: editingLoc.name, lat: parseFloat(editingLoc.lat), lon: parseFloat(editingLoc.lon), radius: parseInt(editingLoc.radius) })
     });
-    setEditLocModal(false);
-    setEditingLoc(null);
-    fetchData();
+    setEditLocModal(false); setEditingLoc(null); fetchBaseData();
   };
 
   const deleteLoc = async (id) => {
     if(window.confirm("Delete Branch?")) {
         await fetch(`/api/admin/delete-location/${id}`, { method: 'DELETE' });
-        fetchData();
+        fetchBaseData();
     }
   };
 
+  // --- ACTIONS: CSV EXPORT ---
+  const downloadCSV = () => {
+    const headers = ["Date", "Time", "Officer ID", "Officer Name", "Site Name", "Purpose", "Remarks"];
+    const rows = fieldReports.map(r => [
+      r.date, r.time, r.officer_id, `"${r.officer_name}"`, `"${r.site_name}"`, `"${r.purpose}"`, `"${r.remarks || ''}"`
+    ]);
+    
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `Field_Visits_${reportMonth}_${reportYear}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // --- DATA PROCESSING ---
   const pending = employees.filter(e => !e.is_verified && e.user_type !== 'admin');
   const verified = employees.filter(e => e.is_verified);
+  
+  // Group Field Reports by Date for UI
+  const groupedReports = fieldReports.reduce((acc, visit) => {
+    if (!acc[visit.date]) acc[visit.date] = [];
+    acc[visit.date].push(visit);
+    return acc;
+  }, {});
+
+  // Calculate Manager Headcounts
+  const managerStats = verified.filter(e => e.user_type === 'manager').map(mgr => {
+    const teamSize = verified.filter(emp => emp.manager_id === mgr.id).length;
+    return { ...mgr, teamSize };
+  });
 
   if (loading) return <div className="text-center py-5"><Spinner animation="border" variant="danger" /></div>;
 
   return (
     <Container className="py-4">
-      <div className="d-flex justify-content-between align-items-center mb-4">
-        <h2 className="fw-bold m-0"><UserCog className="text-danger me-2" />System Admin</h2>
+      {/* --- HEADER --- */}
+      <div className="d-flex justify-content-between align-items-center mb-4 border-bottom pb-3">
+        <h2 className="fw-bold m-0 d-flex align-items-center"><UserCog className="text-danger me-3" size={32} />System Administration</h2>
         <div className="d-flex gap-2">
             <Button variant="light" className="position-relative border shadow-sm" onClick={() => setShowNotif(true)}>
                 <Bell size={24} />
@@ -126,141 +167,230 @@ const AdminDashboard = () => {
         </div>
       </div>
 
-      {/* --- STATS CARDS --- */}
-      <Row className="mb-4 text-center">
-        <Col md={3}><Card className="p-3 shadow-sm border-0"><div className="text-muted small">TOTAL STAFF</div><h4 className="fw-bold"><Users size={20} className="me-2"/>{employees.length}</h4></Card></Col>
-        <Col md={3}><Card className="p-3 shadow-sm border-0"><div className="text-muted small text-primary">ASSIGNED</div><h4 className="fw-bold text-primary"><MapPin size={20} className="me-2"/>{locations.length}</h4></Card></Col>
-        <Col md={3}><Card className="p-3 shadow-sm border-0"><div className="text-muted small text-success">PRESENT</div><h4 className="fw-bold text-success"><UserCheck size={20} className="me-2"/>{employees.filter(e => e.is_present).length}</h4></Card></Col>
-        <Col md={3}><Card className="p-3 shadow-sm border-0"><div className="text-muted small text-danger">ABSENT</div><h4 className="fw-bold text-danger"><UserX size={20} className="me-2"/>{employees.filter(e => !e.is_present).length}</h4></Card></Col>
-      </Row>
+      <Tabs activeKey={mainTab} onSelect={(k) => setMainTab(k)} className="mb-4 shadow-sm bg-white rounded">
+        {/* ========================================== */}
+        {/* TAB 1: SYSTEM OVERVIEW                     */}
+        {/* ========================================== */}
+        <Tab eventKey="overview" title={<span className="fw-bold px-3">System Overview</span>}>
+          
+          {/* STATS CARDS */}
+          <Row className="mb-4 text-center">
+            <Col md={3}><Card className="p-3 shadow-sm border-0"><div className="text-muted small">TOTAL STAFF</div><h4 className="fw-bold"><Users size={20} className="me-2"/>{employees.length}</h4></Card></Col>
+            <Col md={3}><Card className="p-3 shadow-sm border-0"><div className="text-muted small text-primary">ASSIGNED SITES</div><h4 className="fw-bold text-primary"><MapPin size={20} className="me-2"/>{locations.length}</h4></Card></Col>
+            <Col md={3}><Card className="p-3 shadow-sm border-0"><div className="text-muted small text-success">PRESENT</div><h4 className="fw-bold text-success"><UserCheck size={20} className="me-2"/>{employees.filter(e => e.is_present).length}</h4></Card></Col>
+            <Col md={3}><Card className="p-3 shadow-sm border-0"><div className="text-muted small text-danger">ABSENT</div><h4 className="fw-bold text-danger"><UserX size={20} className="me-2"/>{employees.filter(e => !e.is_present).length}</h4></Card></Col>
+          </Row>
 
-      <Row>
-        {/* --- BRANCH MANAGEMENT SIDEBAR --- */}
-        <Col md={4}>
-          <Card className="border-0 shadow-sm p-3 mb-4">
-            <h6 className="fw-bold mb-3"><Building2 size={18} className="me-2 text-danger"/>Office Branches</h6>
-            <Form onSubmit={handleAddBranch} className="mb-3">
-              <Form.Control size="sm" className="mb-2" placeholder="Branch Name" value={newLoc.name} onChange={e => setNewLoc({...newLoc, name: e.target.value})} required />
-              <div className="d-flex gap-2">
-                <Form.Control size="sm" placeholder="Lat" value={newLoc.lat} onChange={e => setNewLoc({...newLoc, lat: e.target.value})} required />
-                <Form.Control size="sm" placeholder="Lon" value={newLoc.lon} onChange={e => setNewLoc({...newLoc, lon: e.target.value})} required />
-              </div>
-              <Button type="submit" variant="outline-danger" size="sm" className="w-100 mt-2 fw-bold">ADD BRANCH</Button>
-            </Form>
-            <div style={{maxHeight: '180px', overflowY: 'auto'}}>
-                {locations.map(loc => (
-                    <div key={loc.id} className="d-flex justify-content-between align-items-center p-2 border-bottom small">
-                        <span>{loc.name}</span>
-                        <div>
-                            <Edit2 size={14} className="text-primary me-2" onClick={() => { setEditingLoc(loc); setEditLocModal(true); }} style={{cursor: 'pointer'}}/>
-                            <Trash2 size={14} className="text-danger" onClick={() => deleteLoc(loc.id)} style={{cursor: 'pointer'}}/>
+          <Row>
+            {/* BRANCH MANAGEMENT SIDEBAR */}
+            <Col md={4}>
+              <Card className="border-0 shadow-sm p-3 mb-4">
+                <h6 className="fw-bold mb-3"><Building2 size={18} className="me-2 text-danger"/>Office Branches</h6>
+                <Form onSubmit={handleAddBranch} className="mb-3">
+                  <Form.Control size="sm" className="mb-2" placeholder="Branch Name" value={newLoc.name} onChange={e => setNewLoc({...newLoc, name: e.target.value})} required />
+                  <div className="d-flex gap-2">
+                    <Form.Control size="sm" placeholder="Lat" value={newLoc.lat} onChange={e => setNewLoc({...newLoc, lat: e.target.value})} required />
+                    <Form.Control size="sm" placeholder="Lon" value={newLoc.lon} onChange={e => setNewLoc({...newLoc, lon: e.target.value})} required />
+                  </div>
+                  <Button type="submit" variant="outline-danger" size="sm" className="w-100 mt-2 fw-bold">ADD BRANCH</Button>
+                </Form>
+                <div style={{maxHeight: '180px', overflowY: 'auto'}}>
+                    {locations.map(loc => (
+                        <div key={loc.id} className="d-flex justify-content-between align-items-center p-2 border-bottom small">
+                            <span>{loc.name}</span>
+                            <div>
+                                <Edit2 size={14} className="text-primary me-2" onClick={() => { setEditingLoc(loc); setEditLocModal(true); }} style={{cursor: 'pointer'}}/>
+                                <Trash2 size={14} className="text-danger" onClick={() => deleteLoc(loc.id)} style={{cursor: 'pointer'}}/>
+                            </div>
                         </div>
-                    </div>
+                    ))}
+                </div>
+              </Card>
+            </Col>
+
+            {/* LIVE MAP */}
+            <Col md={8}>
+              <Card className="border-0 shadow-sm overflow-hidden mb-4" style={{ height: '380px' }}>
+                <MapContainer center={[22.5726, 88.3639]} zoom={5} style={{ height: '100%' }}>
+                  <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+                  {liveLocations.map(loc => (loc.lat && loc.lon) && (
+                    <Marker key={loc.email} position={[loc.lat, loc.lon]}>
+                      <Popup>{loc.name} - {loc.present ? "Present" : "Outside"}</Popup>
+                    </Marker>
+                  ))}
+                  {locations.map(office => (
+                    <Circle key={office.id} center={[office.lat, office.lon]} radius={office.radius} pathOptions={{ color: 'red', fillColor: 'red', fillOpacity: 0.2 }}>
+                      <Popup>{office.name} Geofence ({office.radius}m)</Popup>
+                    </Circle>
+                  ))}
+                </MapContainer>
+              </Card>
+            </Col>
+          </Row>
+
+          {/* INLINE EMPLOYEE EDITOR TABLE */}
+          <Card className="border-0 shadow-sm">
+            <Table responsive hover className="align-middle mb-0 small">
+              <thead className="table-light text-uppercase">
+                <tr><th>Full Name</th><th>Email</th><th>Branch</th><th>Shift & Role</th><th>Status</th><th>Actions</th></tr>
+              </thead>
+              <tbody>
+                {verified.map(emp => (
+                  <tr key={emp.id}>
+                    <td><div className="fw-bold">{emp.full_name}</div><Badge bg="light" text="dark">{emp.blockchain_id || 'Pending'}</Badge></td>
+                    <td className="text-muted">{emp.email}</td>
+                    <td>
+                      <Form.Select size="sm" value={emp.location_id || ''} onChange={e => {
+                          const updated = [...employees];
+                          const target = updated.find(u => u.id === emp.id);
+                          if (target) { target.location_id = parseInt(e.target.value); setEmployees(updated); }
+                      }}>
+                        <option value="">Select Site...</option>
+                        {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                      </Form.Select>
+                    </td>
+                    <td>
+                        <div className="d-flex gap-1 mb-1">
+                            <Form.Control size="sm" type="time" value={emp.shift_start || ''} onChange={e => {
+                                const updated = [...employees]; const target = updated.find(u => u.id === emp.id);
+                                if (target) { target.shift_start = e.target.value; setEmployees(updated); }
+                            }} disabled={emp.user_type === 'field_officer'} />
+                            <Form.Control size="sm" type="time" value={emp.shift_end || ''} onChange={e => {
+                                const updated = [...employees]; const target = updated.find(u => u.id === emp.id);
+                                if (target) { target.shift_end = e.target.value; setEmployees(updated); }
+                            }} disabled={emp.user_type === 'field_officer'} />
+                        </div>
+                        <Form.Select size="sm" value={emp.user_type} onChange={e => {
+                            const updated = [...employees]; const target = updated.find(u => u.id === emp.id);
+                            if (target) { target.user_type = e.target.value; setEmployees(updated); }
+                        }}>
+                            <option value="employee">Employee</option>
+                            <option value="field_officer">Field Officer</option>
+                            <option value="manager">Manager</option>
+                            <option value="admin">Admin</option>
+                        </Form.Select>
+                    </td>
+                    <td><Badge bg={emp.is_present ? "success" : "secondary"}>{emp.is_present ? "Present" : "Absent"}</Badge></td>
+                    <td>
+                        <div className="d-flex gap-1">
+                            <Button variant="danger" size="sm" onClick={() => handleInlineSave(emp)} title="Save Updates"><Save size={14}/></Button>
+                            <Button variant="outline-dark" size="sm" onClick={() => handleDeleteEmp(emp.id)}><Trash2 size={14}/></Button>
+                        </div>
+                    </td>
+                  </tr>
                 ))}
+              </tbody>
+            </Table>
+          </Card>
+        </Tab>
+
+        {/* ========================================== */}
+        {/* TAB 2: REPORTS & FIELD OPERATIONS          */}
+        {/* ========================================== */}
+        <Tab eventKey="reports" title={<span className="fw-bold px-3">Reports & Field Operations</span>}>
+            <div className="p-3 bg-light border-bottom d-flex justify-content-between align-items-center">
+              <h5 className="mb-0 fw-bold d-flex align-items-center"><FileText className="me-2 text-primary" /> Operations & Attendance Reports</h5>
+              
+              <div className="d-flex gap-2 align-items-center">
+                <span className="small fw-bold text-muted text-uppercase">Filter Period:</span>
+                <Form.Select size="sm" value={reportMonth} onChange={e => setReportMonth(e.target.value)} style={{width: '140px'}}>
+                  {[...Array(12)].map((_, i) => (
+                    <option key={i+1} value={i+1}>{new Date(0, i).toLocaleString('en', { month: 'long' })}</option>
+                  ))}
+                </Form.Select>
+                <Form.Select size="sm" value={reportYear} onChange={e => setReportYear(e.target.value)} style={{width: '100px'}}>
+                  <option value="2026">2026</option>
+                  <option value="2027">2027</option>
+                </Form.Select>
+              </div>
             </div>
-          </Card>
-        </Col>
 
-        {/* --- LIVE MAP --- */}
-        <Col md={8}>
-          <Card className="border-0 shadow-sm overflow-hidden mb-4" style={{ height: '380px' }}>
-            <MapContainer center={[22.5726, 88.3639]} zoom={5} style={{ height: '100%' }}>
-              <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-              
-              {/* Employee Live Locations */}
-              {liveLocations.map(loc => (loc.lat && loc.lon) && (
-                <Marker key={loc.email} position={[loc.lat, loc.lon]}>
-                  <Popup>{loc.name} - {loc.present ? "Present" : "Outside"}</Popup>
-                </Marker>
-              ))}
-              
-              {/* Office Geofences */}
-              {locations.map(office => (
-                <Circle 
-                  key={office.id}
-                  center={[office.lat, office.lon]} 
-                  radius={office.radius} 
-                  pathOptions={{ color: 'red', fillColor: 'red', fillOpacity: 0.2 }}
-                >
-                  <Popup>{office.name} Geofence ({office.radius}m)</Popup>
-                </Circle>
-              ))}
-            </MapContainer>
-          </Card>
-        </Col>
-      </Row>
+            <div className="p-4">
+                <Row className="mb-4">
+                  {/* MANAGER HEADCOUNT SUMMARY */}
+                  <Col md={12}>
+                    <Card className="border-0 shadow-sm">
+                      <Card.Header className="bg-white py-3"><h6 className="m-0 fw-bold d-flex align-items-center"><Briefcase size={18} className="me-2 text-warning"/> Manager Team Summaries</h6></Card.Header>
+                      <Table responsive hover className="align-middle mb-0 small">
+                        <thead className="table-light"><tr><th>Manager Name</th><th>Department</th><th>Total Employees Managed</th><th>Live Presence</th></tr></thead>
+                        <tbody>
+                          {managerStats.length === 0 ? <tr><td colSpan="4" className="text-center py-3 text-muted">No managers found.</td></tr> :
+                           managerStats.map(mgr => (
+                             <tr key={mgr.id}>
+                               <td className="fw-bold">{mgr.full_name}</td>
+                               <td><Badge bg="secondary">{mgr.department || 'General'}</Badge></td>
+                               <td><h5 className="m-0 fw-bold">{mgr.teamSize} <Users size={16} className="ms-1 text-muted"/></h5></td>
+                               <td><Badge bg={mgr.is_present ? "success" : "danger"}>{mgr.is_present ? "On Duty" : "Offline"}</Badge></td>
+                             </tr>
+                           ))}
+                        </tbody>
+                      </Table>
+                    </Card>
+                  </Col>
+                </Row>
 
-      {/* --- INLINE EMPLOYEE EDITOR TABLE --- */}
-      <Card className="border-0 shadow-sm">
-        <Table responsive hover className="align-middle mb-0 small">
-          <thead className="table-light text-uppercase">
-            <tr><th>Full Name</th><th>Email</th><th>Branch</th><th>Shift & Role</th><th>Status</th><th>Actions</th></tr>
-          </thead>
-          <tbody>
-            {verified.map(emp => (
-              <tr key={emp.id}>
-                <td><div className="fw-bold">{emp.full_name}</div></td>
-                <td className="text-muted">{emp.email}</td>
-                <td>
-                  <Form.Select size="sm" value={emp.location_id || ''} onChange={e => {
-                      const updated = [...employees];
-                      const target = updated.find(u => u.id === emp.id);
-                      if (target) {
-                        target.location_id = parseInt(e.target.value);
-                        setEmployees(updated);
-                      }
-                  }}>
-                    <option value="">Select...</option>
-                    {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
-                  </Form.Select>
-                </td>
-                <td>
-                    <div className="d-flex gap-1 mb-1">
-                        <Form.Control size="sm" type="time" value={emp.shift_start} onChange={e => {
-                            const updated = [...employees];
-                            const target = updated.find(u => u.id === emp.id);
-                            if (target) {
-                              target.shift_start = e.target.value;
-                              setEmployees(updated);
-                            }
-                        }} />
-                        <Form.Control size="sm" type="time" value={emp.shift_end} onChange={e => {
-                            const updated = [...employees];
-                            const target = updated.find(u => u.id === emp.id);
-                            if (target) {
-                              target.shift_end = e.target.value;
-                              setEmployees(updated);
-                            }
-                        }} />
-                    </div>
-                    <Form.Select size="sm" value={emp.user_type} onChange={e => {
-                        const updated = [...employees];
-                        const target = updated.find(u => u.id === emp.id);
-                        if (target) {
-                          target.user_type = e.target.value;
-                          setEmployees(updated);
-                        }
-                    }}>
-                        <option value="employee">Employee</option>
-                        <option value="manager">Manager</option>
-                        <option value="admin">Admin</option>
-                    </Form.Select>
-                </td>
-                <td><Badge bg={emp.is_present ? "success" : "secondary"}>{emp.is_present ? "Present" : "Absent"}</Badge></td>
-                <td>
-                    <div className="d-flex gap-1">
-                        <Button variant="info" size="sm" className="text-white" title="Quick View"><Search size={14}/></Button>
-                        <Button variant="danger" size="sm" onClick={() => handleInlineSave(emp)} title="Save Updates"><Save size={14}/></Button>
-                        <Button variant="outline-dark" size="sm" onClick={() => handleDeleteEmp(emp.id)}><Trash2 size={14}/></Button>
-                    </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </Table>
-      </Card>
+                {/* FIELD OFFICER VISITS */}
+                <Card className="border-0 shadow-sm mb-4">
+                  <Card.Header className="bg-dark text-white p-3 d-flex justify-content-between align-items-center">
+                    <h6 className="mb-0 fw-bold d-flex align-items-center"><MapPin className="me-2 text-danger" size={18}/> Field Officer Site Visits</h6>
+                    <Button variant="light" size="sm" className="fw-bold text-dark d-flex align-items-center" onClick={downloadCSV} disabled={fieldReports.length === 0}>
+                      <Download size={14} className="me-2"/> Download CSV
+                    </Button>
+                  </Card.Header>
+                  <Card.Body className="p-0">
+                    {reportsLoading ? (
+                      <div className="text-center py-5"><Spinner variant="primary" animation="border" /></div>
+                    ) : fieldReports.length === 0 ? (
+                      <div className="text-center py-5 text-muted">No field visits recorded for this month.</div>
+                    ) : (
+                      <div className="accordion accordion-flush" id="reportAccordion">
+                        {Object.keys(groupedReports).map((dateStr, index) => (
+                          <div className="accordion-item border-bottom" key={dateStr}>
+                            <h2 className="accordion-header">
+                              <button className="accordion-button bg-light fw-bold" type="button" data-bs-toggle="collapse" data-bs-target={`#collapse${index}`}>
+                                <Calendar size={16} className="me-2 text-primary"/>
+                                {new Date(dateStr).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+                                <Badge bg="primary" className="ms-3">{groupedReports[dateStr].length} Visits</Badge>
+                              </button>
+                            </h2>
+                            <div id={`collapse${index}`} className="accordion-collapse collapse show">
+                              <div className="accordion-body p-0">
+                                <Table hover responsive className="mb-0 align-middle small">
+                                  <thead className="table-secondary">
+                                    <tr><th>Time</th><th>Officer</th><th>Site</th><th>Purpose</th><th>Remarks</th><th>Evidence</th></tr>
+                                  </thead>
+                                  <tbody>
+                                    {groupedReports[dateStr].map(visit => (
+                                      <tr key={visit.visit_id}>
+                                        <td className="fw-bold text-nowrap">{visit.time}</td>
+                                        <td><span className="text-muted d-block" style={{fontSize:'0.7rem'}}>{visit.officer_id}</span>{visit.officer_name}</td>
+                                        <td><MapPin size={12} className="me-1 text-danger"/>{visit.site_name}</td>
+                                        <td><Badge bg="dark">{visit.purpose}</Badge></td>
+                                        <td style={{ maxWidth: '250px' }} className="text-truncate" title={visit.remarks}>{visit.remarks || '-'}</td>
+                                        <td>
+                                          <Button variant="outline-secondary" size="sm" onClick={() => setPhotoPreview(visit.photo)}>
+                                            <ImageIcon size={14} className="me-1"/> View Photo
+                                          </Button>
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </Table>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </Card.Body>
+                </Card>
+            </div>
+        </Tab>
+      </Tabs>
 
-      {/* --- MODAL: PENDING APPROVAL LIST --- */}
+      {/* --- MODALS (Shared across tabs) --- */}
+
+      {/* Pending Verifications */}
       <Modal show={showNotif} onHide={() => setShowNotif(false)} size="lg" centered>
         <Modal.Header closeButton className="bg-light"><Modal.Title className="h5 fw-bold">Pending Approval</Modal.Title></Modal.Header>
         <Modal.Body className="p-0">
@@ -274,7 +404,7 @@ const AdminDashboard = () => {
         </Modal.Body>
       </Modal>
 
-      {/* --- MODAL: VERIFICATION REVIEW WINDOW --- */}
+      {/* Verification Review */}
       <Modal show={!!selectedStaff} onHide={() => setSelectedStaff(null)} size="xl" centered>
         <Modal.Header closeButton className="bg-dark text-white"><Modal.Title className="h6">Reviewing: {selectedStaff?.full_name}</Modal.Title></Modal.Header>
         <Modal.Body className="bg-light p-4">
@@ -296,50 +426,38 @@ const AdminDashboard = () => {
         </Modal.Body>
       </Modal>
 
-      {/* --- MODAL: SHARED ONBOARDING FORM --- */}
+      {/* Onboarding */}
       <Modal show={showAddEmp} onHide={() => setShowAddEmp(false)} size="lg" centered>
           <Modal.Header closeButton className="bg-light"><Modal.Title className="h5 fw-bold">Onboard New Employee</Modal.Title></Modal.Header>
           <Modal.Body className="p-4">
-              <EmployeeOnboardForm 
-                locations={locations} 
-                onCancel={() => setShowAddEmp(false)} 
-                onSuccess={() => { setShowAddEmp(false); fetchData(); }} 
-              />
+              <EmployeeOnboardForm locations={locations} onCancel={() => setShowAddEmp(false)} onSuccess={() => { setShowAddEmp(false); fetchBaseData(); }} />
           </Modal.Body>
       </Modal>
 
-      {/* --- MODAL: EDIT BRANCH --- */}
+      {/* Edit Branch */}
       <Modal show={editLocModal} onHide={() => setEditLocModal(false)} centered>
           <Modal.Header closeButton><Modal.Title className="h6 fw-bold">Edit Branch Location</Modal.Title></Modal.Header>
           <Modal.Body>
               {editingLoc && (
                   <Form onSubmit={handleUpdateBranch}>
-                      <Form.Group className="mb-2">
-                          <Form.Label className="small fw-bold">Branch Name</Form.Label>
-                          <Form.Control size="sm" value={editingLoc.name} onChange={e => setEditingLoc({...editingLoc, name: e.target.value})} required />
-                      </Form.Group>
+                      <Form.Group className="mb-2"><Form.Label className="small fw-bold">Branch Name</Form.Label><Form.Control size="sm" value={editingLoc.name} onChange={e => setEditingLoc({...editingLoc, name: e.target.value})} required /></Form.Group>
                       <Row>
-                          <Col>
-                              <Form.Group className="mb-2">
-                                  <Form.Label className="small fw-bold">Latitude</Form.Label>
-                                  <Form.Control size="sm" value={editingLoc.lat} onChange={e => setEditingLoc({...editingLoc, lat: e.target.value})} required />
-                              </Form.Group>
-                          </Col>
-                          <Col>
-                              <Form.Group className="mb-2">
-                                  <Form.Label className="small fw-bold">Longitude</Form.Label>
-                                  <Form.Control size="sm" value={editingLoc.lon} onChange={e => setEditingLoc({...editingLoc, lon: e.target.value})} required />
-                              </Form.Group>
-                          </Col>
+                          <Col><Form.Group className="mb-2"><Form.Label className="small fw-bold">Latitude</Form.Label><Form.Control size="sm" value={editingLoc.lat} onChange={e => setEditingLoc({...editingLoc, lat: e.target.value})} required /></Form.Group></Col>
+                          <Col><Form.Group className="mb-2"><Form.Label className="small fw-bold">Longitude</Form.Label><Form.Control size="sm" value={editingLoc.lon} onChange={e => setEditingLoc({...editingLoc, lon: e.target.value})} required /></Form.Group></Col>
                       </Row>
-                      <Form.Group className="mb-4">
-                          <Form.Label className="small fw-bold">Radius (meters)</Form.Label>
-                          <Form.Control size="sm" type="number" value={editingLoc.radius} onChange={e => setEditingLoc({...editingLoc, radius: e.target.value})} required />
-                      </Form.Group>
+                      <Form.Group className="mb-4"><Form.Label className="small fw-bold">Radius (meters)</Form.Label><Form.Control size="sm" type="number" value={editingLoc.radius} onChange={e => setEditingLoc({...editingLoc, radius: e.target.value})} required /></Form.Group>
                       <Button type="submit" variant="primary" size="sm" className="w-100 fw-bold">UPDATE BRANCH</Button>
                   </Form>
               )}
           </Modal.Body>
+      </Modal>
+
+      {/* Geotag Photo Viewer */}
+      <Modal show={!!photoPreview} onHide={() => setPhotoPreview(null)} centered size="lg">
+        <Modal.Header closeButton className="bg-dark text-white border-0"><Modal.Title className="h6 fw-bold">Geotagged Evidence</Modal.Title></Modal.Header>
+        <Modal.Body className="p-0 text-center bg-dark">
+            <img src={photoPreview} alt="Geotagged Visit" style={{ width: '100%', maxHeight: '75vh', objectFit: 'contain' }} />
+        </Modal.Body>
       </Modal>
 
     </Container>
