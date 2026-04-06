@@ -49,7 +49,6 @@ const FieldOfficerDashboard = () => {
         }
         setActiveSite(insideSite);
         
-        // Pings the backend to log entry/exit times automatically
         const siteParam = insideSite ? `&current_site_id=${insideSite.id}` : '';
         fetch(`/api/user/update-location?email=${userEmail}&lat=${latitude}&lon=${longitude}${siteParam}`, { method: 'POST' });
       },
@@ -60,7 +59,9 @@ const FieldOfficerDashboard = () => {
 
   useEffect(() => {
     updateLocation();
-    const interval = setInterval(updateLocation, 10000); 
+    
+    // CHANGED TO EVERY 5 SECONDS
+    const interval = setInterval(updateLocation, 5000); 
     return () => clearInterval(interval);
   }, [updateLocation]);
 

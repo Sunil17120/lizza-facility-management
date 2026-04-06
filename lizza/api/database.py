@@ -84,7 +84,7 @@ class FieldVisitLog(Base):
     officer_id = Column(Integer, ForeignKey("users.id"))
     site_id = Column(Integer, ForeignKey("office_locations.id"))
     entry_time = Column(DateTime)
-    exit_time = Column(DateTime)
+    exit_time = Column(DateTime, nullable=True) # NEW: Allow null for active visits
 
 def init_db():
     Base.metadata.create_all(bind=engine)

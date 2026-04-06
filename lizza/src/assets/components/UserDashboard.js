@@ -69,7 +69,9 @@ const UserDashboard = () => {
   useEffect(() => {
     if (!dbUser) return;
     syncLocation();
-    const interval = setInterval(syncLocation, 30000);
+    
+    // CHANGED TO EVERY 5 SECONDS
+    const interval = setInterval(syncLocation, 5000);
     return () => clearInterval(interval);
   }, [dbUser, syncLocation]);
 
@@ -102,11 +104,7 @@ const UserDashboard = () => {
             
             <Card.Body className="p-4 text-center">
               {violationTime !== null && (
-                <div className="mb-4">
-                    <h1 className="display-4 fw-bold text-danger">{violationTime}s</h1>
-                    <ProgressBar animated variant="danger" now={(violationTime / 300) * 100} className="mb-2" style={{height: '10px'}} />
-                    <small className="text-danger fw-bold">If this reaches 0, you will be marked ABSENT.</small>
-                </div>
+                <div className="mb-4"><h1 className="display-4 fw-bold text-danger">{violationTime}s</h1><ProgressBar animated variant="danger" now={(violationTime / 300) * 100} className="mb-2" style={{height: '10px'}} /><small className="text-danger fw-bold">If this reaches 0, you will be marked ABSENT.</small></div>
               )}
               <Alert variant={status.type} className="mb-4 small fw-bold py-3 text-start d-flex align-items-center justify-content-center">{status.code === 'warning' ? <AlertTriangle size={18} className="me-2" /> : <MapIcon size={18} className="me-2" />} {status.msg}</Alert>
               <div className="d-flex justify-content-center gap-5 mb-4">

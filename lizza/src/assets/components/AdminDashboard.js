@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Table, Form, Container, Card, Spinner, Button, Row, Col, Modal, Badge, Tabs, Tab } from 'react-bootstrap';
-import { UserCog, Building2, MapPin, Trash2, Users, UserCheck, UserX, Save, Search, Plus, Bell, Edit2, Calendar, Download, Image as ImageIcon, FileText, Briefcase, Filter, Clock, Navigation } from 'lucide-react';
+import { UserCog, Building2, MapPin, Trash2, Users, UserCheck, UserX, Save, Search, Plus, Bell, Edit2, Calendar, Download, Image as ImageIcon, FileText, Briefcase, Filter, Navigation } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 import EmployeeOnboardForm from './EmployeeOnboardForm'; 
 import ExcelJS from 'exceljs';
@@ -120,137 +120,64 @@ const AdminDashboard = () => {
     else alert(`${name} is currently offline or their GPS signal is unavailable.`);
   };
 
-  // --- UNIFIED COMPREHENSIVE EXCEL EXPORT (SINGLE SHEET) ---
   const downloadUnifiedExcel = async () => {
     try {
       const workbook = new ExcelJS.Workbook();
       const ws = workbook.addWorksheet('Comprehensive Field Report');
 
-      // Setup Columns
       ws.columns = [
-        { header: 'Log Type', key: 'type', width: 18 },
-        { header: 'Date', key: 'date', width: 15 },
-        { header: 'Officer ID', key: 'officer_id', width: 20 },
-        { header: 'Officer Name', key: 'officer_name', width: 25 },
-        { header: 'Site Name', key: 'site_name', width: 25 },
-        { header: 'Entry Time', key: 'entry_time', width: 15 },
-        { header: 'Exit Time', key: 'exit_time', width: 15 },
-        { header: 'Duration (Mins)', key: 'duration', width: 18 },
-        { header: 'Purpose', key: 'purpose', width: 20 },
-        { header: 'Remarks', key: 'remarks', width: 40 },
-        { header: 'Officer Monthly Visits', key: 'officer_total', width: 22 },
-        { header: 'Site Monthly Visits', key: 'site_total', width: 22 },
+        { header: 'Log Type', key: 'type', width: 18 }, { header: 'Date', key: 'date', width: 15 },
+        { header: 'Officer ID', key: 'officer_id', width: 20 }, { header: 'Officer Name', key: 'officer_name', width: 25 },
+        { header: 'Site Name', key: 'site_name', width: 25 }, { header: 'Entry Time', key: 'entry_time', width: 15 },
+        { header: 'Exit Time', key: 'exit_time', width: 15 }, { header: 'Duration (Mins)', key: 'duration', width: 18 },
+        { header: 'Purpose', key: 'purpose', width: 20 }, { header: 'Remarks', key: 'remarks', width: 40 },
+        { header: 'Officer Monthly Visits', key: 'officer_total', width: 22 }, { header: 'Site Monthly Visits', key: 'site_total', width: 22 },
         { header: 'Photo Evidence', key: 'photo', width: 25 }
       ];
+      ws.getRow(1).font = { bold: true }; ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF2F2F2' } };
 
-      ws.getRow(1).font = { bold: true };
-      ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF2F2F2' } };
+      const officerTotals = {}; const siteTotals = {};
+      fieldReports.forEach(r => { officerTotals[r.officer_name] = (officerTotals[r.officer_name] || 0) + 1; siteTotals[r.site_name] = (siteTotals[r.site_name] || 0) + 1; });
+      geofenceLogs.forEach(r => { officerTotals[r.officer_name] = (officerTotals[r.officer_name] || 0) + 1; siteTotals[r.site_name] = (siteTotals[r.site_name] || 0) + 1; });
 
-      // 1. Calculate the Summaries for the selected month
-      const officerTotals = {};
-      const siteTotals = {};
-      
-      fieldReports.forEach(r => {
-          officerTotals[r.officer_name] = (officerTotals[r.officer_name] || 0) + 1;
-          siteTotals[r.site_name] = (siteTotals[r.site_name] || 0) + 1;
-      });
-      geofenceLogs.forEach(r => {
-          officerTotals[r.officer_name] = (officerTotals[r.officer_name] || 0) + 1;
-          siteTotals[r.site_name] = (siteTotals[r.site_name] || 0) + 1;
-      });
-
-      // 2. Combine all records into a single array
       const combinedData = [];
-      
-      fieldReports.forEach(r => combinedData.push({
-          type: 'Manual Photo Log',
-          date: r.date,
-          officer_id: r.officer_id,
-          officer_name: r.officer_name,
-          site_name: r.site_name,
-          entry_time: r.time,
-          exit_time: '-',
-          duration: '-',
-          purpose: r.purpose,
-          remarks: r.remarks || '',
-          officer_total: officerTotals[r.officer_name],
-          site_total: siteTotals[r.site_name],
-          photoRaw: r.photo
-      }));
-      
-      geofenceLogs.forEach(r => combinedData.push({
-          type: 'Auto Geofence Tracker',
-          date: r.date,
-          officer_id: r.officer_id,
-          officer_name: r.officer_name,
-          site_name: r.site_name,
-          entry_time: r.entry_time,
-          exit_time: r.exit_time,
-          duration: r.duration_mins,
-          purpose: 'Automated Tracking',
-          remarks: '-',
-          officer_total: officerTotals[r.officer_name],
-          site_total: siteTotals[r.site_name],
-          photoRaw: null
-      }));
+      fieldReports.forEach(r => combinedData.push({ type: 'Manual Log', date: r.date, officer_id: r.officer_id, officer_name: r.officer_name, site_name: r.site_name, entry_time: r.time, exit_time: '-', duration: '-', purpose: r.purpose, remarks: r.remarks || '', officer_total: officerTotals[r.officer_name], site_total: siteTotals[r.site_name], photoRaw: r.photo }));
+      geofenceLogs.forEach(r => combinedData.push({ type: 'Auto Geofence', date: r.date, officer_id: r.officer_id, officer_name: r.officer_name, site_name: r.site_name, entry_time: r.entry_time, exit_time: r.exit_time, duration: r.duration_mins, purpose: 'Tracking', remarks: '-', officer_total: officerTotals[r.officer_name], site_total: siteTotals[r.site_name], photoRaw: null }));
 
-      // Sort combined data chronologically by Date and Entry Time
       combinedData.sort((a, b) => new Date(b.date + ' ' + b.entry_time) - new Date(a.date + ' ' + a.entry_time));
 
-      // 3. Write rows to Excel and Embed Photos
       let rowIndex = 2;
       for (const row of combinedData) {
-          ws.addRow({
-              type: row.type, date: row.date, officer_id: row.officer_id, officer_name: row.officer_name,
-              site_name: row.site_name, entry_time: row.entry_time, exit_time: row.exit_time,
-              duration: row.duration, purpose: row.purpose, remarks: row.remarks,
-              officer_total: row.officer_total, site_total: row.site_total
-          });
-
-          // Expand row height if a photo is attached
-          ws.getRow(rowIndex).height = row.photoRaw ? 110 : 25;
-          ws.getRow(rowIndex).alignment = { vertical: 'middle', wrapText: true };
-
+          ws.addRow({ type: row.type, date: row.date, officer_id: row.officer_id, officer_name: row.officer_name, site_name: row.site_name, entry_time: row.entry_time, exit_time: row.exit_time, duration: row.duration, purpose: row.purpose, remarks: row.remarks, officer_total: row.officer_total, site_total: row.site_total });
+          ws.getRow(rowIndex).height = row.photoRaw ? 110 : 25; ws.getRow(rowIndex).alignment = { vertical: 'middle', wrapText: true };
           if (row.photoRaw) {
               let base64DataRaw = row.photoRaw;
-              // If it's an ImgBB URL, route through the python proxy to bypass CORS
               if (row.photoRaw.startsWith('http')) {
-                  try {
-                      const res = await fetch(`/api/admin/proxy-image?url=${encodeURIComponent(row.photoRaw)}`);
-                      const data = await res.json();
-                      base64DataRaw = data.base64;
-                  } catch(e) { console.error("Proxy error:", e); }
+                  try { const res = await fetch(`/api/admin/proxy-image?url=${encodeURIComponent(row.photoRaw)}`); base64DataRaw = (await res.json()).base64; } catch(e) {}
               }
-
               if (base64DataRaw) {
-                  const base64Data = base64DataRaw.split(',')[1];
-                  let extension = base64DataRaw.includes('jpeg') || base64DataRaw.includes('jpg') ? 'jpeg' : 'png';
                   try {
-                      const imageId = workbook.addImage({ base64: base64Data, extension });
-                      ws.addImage(imageId, { 
-                          tl: { col: 12, row: rowIndex - 1 }, // col 12 = Column M (Photo column)
-                          ext: { width: 100, height: 100 }, 
-                          editAs: 'oneCell' 
-                      });
-                  } catch(e) { console.error("ExcelJS embed error:", e); }
+                      const imageId = workbook.addImage({ base64: base64DataRaw.split(',')[1], extension: base64DataRaw.includes('jpeg') ? 'jpeg' : 'png' });
+                      ws.addImage(imageId, { tl: { col: 12, row: rowIndex - 1 }, ext: { width: 100, height: 100 }, editAs: 'oneCell' });
+                  } catch(e) {}
               }
           }
           rowIndex++;
       }
-
       const buffer = await workbook.xlsx.writeBuffer();
       saveAs(new Blob([buffer]), `Unified_Operations_Report_${reportMonth}_${reportYear}.xlsx`);
-    } catch (error) { 
-      console.error(error);
-      alert("Failed to generate Excel file."); 
-    }
+    } catch (error) { alert("Failed to generate Excel file."); }
   };
 
   const pending = employees.filter(e => !e.is_verified && e.user_type !== 'admin');
   const verified = employees.filter(e => e.is_verified);
   const fieldOfficers = verified.filter(e => e.user_type === 'field_officer');
   
-  const groupedReports = fieldReports.reduce((acc, visit) => {
+  // Combine both arrays to display in one single unified table in the UI
+  const allReportsCombined = [...fieldReports.map(r => ({...r, log_type: 'Manual'})), ...geofenceLogs.map(r => ({...r, log_type: 'Auto Geofence'}))];
+  allReportsCombined.sort((a, b) => new Date(b.date + ' ' + (b.time || b.entry_time)) - new Date(a.date + ' ' + (a.time || a.entry_time)));
+  
+  const groupedReports = allReportsCombined.reduce((acc, visit) => {
     if (!acc[visit.date]) acc[visit.date] = [];
     acc[visit.date].push(visit); return acc;
   }, {});
@@ -426,34 +353,10 @@ const AdminDashboard = () => {
 
                 <Card className="border-0 shadow-sm mb-4">
                   <Card.Header className="bg-dark text-white p-3 d-flex justify-content-between align-items-center">
-                    <h6 className="mb-0 fw-bold d-flex align-items-center"><Clock className="me-2 text-warning" size={18}/> Automated Geofence Entry/Exit Logs</h6>
+                    <h6 className="mb-0 fw-bold d-flex align-items-center"><FileText className="me-2 text-info" size={18}/> Unified Field Operations Timeline</h6>
                   </Card.Header>
                   <Card.Body className="p-0">
-                    {reportsLoading ? <div className="text-center py-5"><Spinner variant="primary" animation="border" /></div> : geofenceLogs.length === 0 ? <div className="text-center py-5 text-muted">No tracking data.</div> : (
-                      <Table hover responsive className="mb-0 align-middle small">
-                        <thead className="table-secondary"><tr><th>Date</th><th>Officer</th><th>Site</th><th>Entry Time</th><th>Exit Time</th><th>Total Duration</th><th>Actions</th></tr></thead>
-                        <tbody>
-                          {geofenceLogs.map((log, idx) => (
-                            <tr key={idx}>
-                              <td className="fw-bold">{log.date}</td><td>{log.officer_name}</td>
-                              <td><MapPin size={12} className="me-1 text-danger"/>{log.site_name}</td>
-                              <td className="text-success fw-bold">{log.entry_time}</td><td className="text-danger fw-bold">{log.exit_time}</td>
-                              <td><Badge bg={log.duration_mins > 10 ? "primary" : "secondary"}>{log.duration_mins} mins</Badge></td>
-                              <td><Button variant="outline-primary" size="sm" className="d-flex align-items-center" onClick={() => handleViewLiveLocation(log.officer_email, log.officer_name)}><Navigation size={12} className="me-1"/> Live Map</Button></td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </Table>
-                    )}
-                  </Card.Body>
-                </Card>
-
-                <Card className="border-0 shadow-sm mb-4">
-                  <Card.Header className="bg-dark text-white p-3 d-flex justify-content-between align-items-center">
-                    <h6 className="mb-0 fw-bold d-flex align-items-center"><MapPin className="me-2 text-danger" size={18}/> Manual Site Visits</h6>
-                  </Card.Header>
-                  <Card.Body className="p-0">
-                    {reportsLoading ? <div className="text-center py-5"><Spinner variant="primary" animation="border" /></div> : fieldReports.length === 0 ? <div className="text-center py-5 text-muted">No manual visits recorded.</div> : (
+                    {reportsLoading ? <div className="text-center py-5"><Spinner variant="primary" animation="border" /></div> : allReportsCombined.length === 0 ? <div className="text-center py-5 text-muted">No records found.</div> : (
                       <div className="accordion accordion-flush" id="reportAccordion">
                         {Object.keys(groupedReports).map((dateStr, index) => (
                           <div className="accordion-item border-bottom" key={dateStr}>
@@ -461,22 +364,42 @@ const AdminDashboard = () => {
                               <button className="accordion-button bg-light fw-bold" type="button" data-bs-toggle="collapse" data-bs-target={`#collapse${index}`}>
                                 <Calendar size={16} className="me-2 text-primary"/>
                                 {new Date(dateStr).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
-                                <Badge bg="primary" className="ms-3">{groupedReports[dateStr].length} Visits</Badge>
+                                <Badge bg="primary" className="ms-3">{groupedReports[dateStr].length} Events</Badge>
                               </button>
                             </h2>
                             <div id={`collapse${index}`} className="accordion-collapse collapse show">
                               <div className="accordion-body p-0">
                                 <Table hover responsive className="mb-0 align-middle small">
-                                  <thead className="table-secondary"><tr><th>Time</th><th>Officer</th><th>Site</th><th>Purpose</th><th>Remarks</th><th>Evidence</th><th>Actions</th></tr></thead>
+                                  <thead className="table-secondary">
+                                      <tr><th>Type</th><th>Time (Entry)</th><th>Exit Time</th><th>Officer</th><th>Site</th><th>Details</th><th>Photo/Evidence</th><th>Actions</th></tr>
+                                  </thead>
                                   <tbody>
-                                    {groupedReports[dateStr].map(visit => (
-                                      <tr key={visit.visit_id}>
-                                        <td className="fw-bold text-nowrap">{visit.time}</td>
+                                    {groupedReports[dateStr].map((visit, i) => (
+                                      <tr key={i}>
+                                        <td>
+                                            {visit.log_type === 'Manual' 
+                                                ? <Badge bg="dark"><ImageIcon size={10} className="me-1"/> Photo Log</Badge> 
+                                                : <Badge bg="secondary"><Clock size={10} className="me-1"/> Auto Geofence</Badge>}
+                                        </td>
+                                        <td className="fw-bold text-nowrap text-success">{visit.time || visit.entry_time}</td>
+                                        <td className="fw-bold text-nowrap text-danger">{visit.exit_time || '-'}</td>
                                         <td><span className="text-muted d-block" style={{fontSize:'0.7rem'}}>{visit.officer_id}</span>{visit.officer_name}</td>
                                         <td><MapPin size={12} className="me-1 text-danger"/>{visit.site_name}</td>
-                                        <td><Badge bg="dark">{visit.purpose}</Badge></td>
-                                        <td style={{ maxWidth: '250px' }} className="text-truncate">{visit.remarks || '-'}</td>
-                                        <td><Button variant="outline-secondary" size="sm" onClick={() => setPhotoPreview(visit.photo)}><ImageIcon size={14} className="me-1"/> View Photo</Button></td>
+                                        
+                                        {/* Details Column */}
+                                        <td style={{ maxWidth: '200px' }} className="text-truncate">
+                                            {visit.log_type === 'Manual' ? (
+                                                <><strong>{visit.purpose}</strong>: {visit.remarks || '-'}</>
+                                            ) : (
+                                                <><span className="text-muted">Duration:</span> {visit.duration_mins > 0 ? `${visit.duration_mins} mins` : '-'}</>
+                                            )}
+                                        </td>
+                                        
+                                        <td>
+                                            {visit.photo && (
+                                              <Button variant="outline-secondary" size="sm" onClick={() => setPhotoPreview(visit.photo)}>View Photo</Button>
+                                            )}
+                                        </td>
                                         <td><Button variant="outline-primary" size="sm" className="d-flex align-items-center" onClick={() => handleViewLiveLocation(visit.officer_email, visit.officer_name)}><Navigation size={12} className="me-1"/> Live Map</Button></td>
                                       </tr>
                                     ))}
