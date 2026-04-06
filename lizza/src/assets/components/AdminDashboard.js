@@ -120,32 +120,130 @@ const AdminDashboard = () => {
     else alert(`${name} is currently offline or their GPS signal is unavailable.`);
   };
 
-  const downloadCombinedExcel = async () => {
+  // --- UNIFIED COMPREHENSIVE EXCEL EXPORT (SINGLE SHEET) ---
+  const downloadUnifiedExcel = async () => {
     try {
       const workbook = new ExcelJS.Workbook();
-      
-      const ws1 = workbook.addWorksheet('Manual Visits');
-      ws1.columns = [
-        { header: 'Date', key: 'date', width: 15 }, { header: 'Time', key: 'time', width: 15 },
-        { header: 'Officer ID', key: 'officer_id', width: 20 }, { header: 'Officer Name', key: 'officer_name', width: 25 },
-        { header: 'Site Name', key: 'site_name', width: 25 }, { header: 'Purpose', key: 'purpose', width: 20 },
-        { header: 'Remarks', key: 'remarks', width: 50 }
-      ];
-      ws1.getRow(1).font = { bold: true }; ws1.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF2F2F2' } };
-      fieldReports.forEach(r => ws1.addRow({ ...r, remarks: r.remarks || '' }));
+      const ws = workbook.addWorksheet('Comprehensive Field Report');
 
-      const ws2 = workbook.addWorksheet('Automated Geofence Logs');
-      ws2.columns = [
-        { header: 'Date', key: 'date', width: 15 }, { header: 'Officer Name', key: 'officer_name', width: 25 },
-        { header: 'Site Name', key: 'site_name', width: 25 }, { header: 'Entry Time', key: 'entry_time', width: 20 },
-        { header: 'Exit Time', key: 'exit_time', width: 20 }, { header: 'Total Duration (Mins)', key: 'duration_mins', width: 25 }
+      // Setup Columns
+      ws.columns = [
+        { header: 'Log Type', key: 'type', width: 18 },
+        { header: 'Date', key: 'date', width: 15 },
+        { header: 'Officer ID', key: 'officer_id', width: 20 },
+        { header: 'Officer Name', key: 'officer_name', width: 25 },
+        { header: 'Site Name', key: 'site_name', width: 25 },
+        { header: 'Entry Time', key: 'entry_time', width: 15 },
+        { header: 'Exit Time', key: 'exit_time', width: 15 },
+        { header: 'Duration (Mins)', key: 'duration', width: 18 },
+        { header: 'Purpose', key: 'purpose', width: 20 },
+        { header: 'Remarks', key: 'remarks', width: 40 },
+        { header: 'Officer Monthly Visits', key: 'officer_total', width: 22 },
+        { header: 'Site Monthly Visits', key: 'site_total', width: 22 },
+        { header: 'Photo Evidence', key: 'photo', width: 25 }
       ];
-      ws2.getRow(1).font = { bold: true }; ws2.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF2F2F2' } };
-      geofenceLogs.forEach(log => ws2.addRow(log));
+
+      ws.getRow(1).font = { bold: true };
+      ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF2F2F2' } };
+
+      // 1. Calculate the Summaries for the selected month
+      const officerTotals = {};
+      const siteTotals = {};
+      
+      fieldReports.forEach(r => {
+          officerTotals[r.officer_name] = (officerTotals[r.officer_name] || 0) + 1;
+          siteTotals[r.site_name] = (siteTotals[r.site_name] || 0) + 1;
+      });
+      geofenceLogs.forEach(r => {
+          officerTotals[r.officer_name] = (officerTotals[r.officer_name] || 0) + 1;
+          siteTotals[r.site_name] = (siteTotals[r.site_name] || 0) + 1;
+      });
+
+      // 2. Combine all records into a single array
+      const combinedData = [];
+      
+      fieldReports.forEach(r => combinedData.push({
+          type: 'Manual Photo Log',
+          date: r.date,
+          officer_id: r.officer_id,
+          officer_name: r.officer_name,
+          site_name: r.site_name,
+          entry_time: r.time,
+          exit_time: '-',
+          duration: '-',
+          purpose: r.purpose,
+          remarks: r.remarks || '',
+          officer_total: officerTotals[r.officer_name],
+          site_total: siteTotals[r.site_name],
+          photoRaw: r.photo
+      }));
+      
+      geofenceLogs.forEach(r => combinedData.push({
+          type: 'Auto Geofence Tracker',
+          date: r.date,
+          officer_id: r.officer_id,
+          officer_name: r.officer_name,
+          site_name: r.site_name,
+          entry_time: r.entry_time,
+          exit_time: r.exit_time,
+          duration: r.duration_mins,
+          purpose: 'Automated Tracking',
+          remarks: '-',
+          officer_total: officerTotals[r.officer_name],
+          site_total: siteTotals[r.site_name],
+          photoRaw: null
+      }));
+
+      // Sort combined data chronologically by Date and Entry Time
+      combinedData.sort((a, b) => new Date(b.date + ' ' + b.entry_time) - new Date(a.date + ' ' + a.entry_time));
+
+      // 3. Write rows to Excel and Embed Photos
+      let rowIndex = 2;
+      for (const row of combinedData) {
+          ws.addRow({
+              type: row.type, date: row.date, officer_id: row.officer_id, officer_name: row.officer_name,
+              site_name: row.site_name, entry_time: row.entry_time, exit_time: row.exit_time,
+              duration: row.duration, purpose: row.purpose, remarks: row.remarks,
+              officer_total: row.officer_total, site_total: row.site_total
+          });
+
+          // Expand row height if a photo is attached
+          ws.getRow(rowIndex).height = row.photoRaw ? 110 : 25;
+          ws.getRow(rowIndex).alignment = { vertical: 'middle', wrapText: true };
+
+          if (row.photoRaw) {
+              let base64DataRaw = row.photoRaw;
+              // If it's an ImgBB URL, route through the python proxy to bypass CORS
+              if (row.photoRaw.startsWith('http')) {
+                  try {
+                      const res = await fetch(`/api/admin/proxy-image?url=${encodeURIComponent(row.photoRaw)}`);
+                      const data = await res.json();
+                      base64DataRaw = data.base64;
+                  } catch(e) { console.error("Proxy error:", e); }
+              }
+
+              if (base64DataRaw) {
+                  const base64Data = base64DataRaw.split(',')[1];
+                  let extension = base64DataRaw.includes('jpeg') || base64DataRaw.includes('jpg') ? 'jpeg' : 'png';
+                  try {
+                      const imageId = workbook.addImage({ base64: base64Data, extension });
+                      ws.addImage(imageId, { 
+                          tl: { col: 12, row: rowIndex - 1 }, // col 12 = Column M (Photo column)
+                          ext: { width: 100, height: 100 }, 
+                          editAs: 'oneCell' 
+                      });
+                  } catch(e) { console.error("ExcelJS embed error:", e); }
+              }
+          }
+          rowIndex++;
+      }
 
       const buffer = await workbook.xlsx.writeBuffer();
-      saveAs(new Blob([buffer]), `Combined_Field_Operations_${reportMonth}_${reportYear}.xlsx`);
-    } catch (error) { alert("Failed to generate Excel file."); }
+      saveAs(new Blob([buffer]), `Unified_Operations_Report_${reportMonth}_${reportYear}.xlsx`);
+    } catch (error) { 
+      console.error(error);
+      alert("Failed to generate Excel file."); 
+    }
   };
 
   const pending = employees.filter(e => !e.is_verified && e.user_type !== 'admin');
@@ -298,7 +396,7 @@ const AdminDashboard = () => {
                 </Form.Select>
               </div>
               <div className="ms-auto">
-                 <Button variant="success" size="sm" className="fw-bold d-flex align-items-center shadow-sm" onClick={downloadCombinedExcel} disabled={fieldReports.length === 0 && geofenceLogs.length === 0}>
+                 <Button variant="success" size="sm" className="fw-bold d-flex align-items-center shadow-sm" onClick={downloadUnifiedExcel} disabled={fieldReports.length === 0 && geofenceLogs.length === 0}>
                     <Download size={16} className="me-2 text-white"/> Download Full Report (Excel)
                  </Button>
               </div>
@@ -337,7 +435,8 @@ const AdminDashboard = () => {
                         <tbody>
                           {geofenceLogs.map((log, idx) => (
                             <tr key={idx}>
-                              <td className="fw-bold">{log.date}</td><td>{log.officer_name}</td><td><MapPin size={12} className="me-1 text-danger"/>{log.site_name}</td>
+                              <td className="fw-bold">{log.date}</td><td>{log.officer_name}</td>
+                              <td><MapPin size={12} className="me-1 text-danger"/>{log.site_name}</td>
                               <td className="text-success fw-bold">{log.entry_time}</td><td className="text-danger fw-bold">{log.exit_time}</td>
                               <td><Badge bg={log.duration_mins > 10 ? "primary" : "secondary"}>{log.duration_mins} mins</Badge></td>
                               <td><Button variant="outline-primary" size="sm" className="d-flex align-items-center" onClick={() => handleViewLiveLocation(log.officer_email, log.officer_name)}><Navigation size={12} className="me-1"/> Live Map</Button></td>
