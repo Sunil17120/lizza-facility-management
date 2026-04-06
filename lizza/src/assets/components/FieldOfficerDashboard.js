@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Container, Card, Row, Col, Badge, Form, Button, Alert, Spinner, Table } from 'react-bootstrap';
-import { MapPin, Camera, Navigation, CheckCircle, FileText } from 'lucide-react';
+import { MapPin, Camera, Navigation, UserPlus, CheckCircle, FileText } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
+import EmployeeOnboardForm from './EmployeeOnboardForm'; 
 import L from 'leaflet';
 
 const FieldOfficerDashboard = () => {
@@ -10,10 +11,12 @@ const FieldOfficerDashboard = () => {
   const [activeSite, setActiveSite] = useState(null);
   const [visitHistory, setVisitHistory] = useState([]);
   
+  // Form State
   const [purpose, setPurpose] = useState('');
   const [remarks, setRemarks] = useState('');
   const [photo, setPhoto] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showAddEmp, setShowAddEmp] = useState(false);
   const [alertMsg, setAlertMsg] = useState(null);
 
   const fileInputRef = useRef(null);
@@ -21,23 +24,30 @@ const FieldOfficerDashboard = () => {
 
   const fetchData = useCallback(async () => {
     try {
-      const [locRes, histRes] = await Promise.all([ fetch(`/api/admin/locations`), fetch(`/api/field-officer/my-visits?email=${userEmail}`) ]);
+      const [locRes, histRes] = await Promise.all([
+        fetch(`/api/admin/locations`),
+        fetch(`/api/field-officer/my-visits?email=${userEmail}`)
+      ]);
       if (locRes.ok) setLocations(await locRes.json());
       if (histRes.ok) setVisitHistory(await histRes.json());
-    } catch (err) { console.error(err); }
+    } catch (err) { console.error("Data fetch error", err); }
   }, [userEmail]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
   const getDistance = (lat1, lon1, lat2, lon2) => {
-    const R = 6371e3; const φ1 = lat1 * Math.PI/180; const φ2 = lat2 * Math.PI/180;
-    const Δφ = (lat2-lat1) * Math.PI/180; const Δλ = (lon2-lon1) * Math.PI/180;
+    const R = 6371e3;
+    const φ1 = lat1 * Math.PI/180;
+    const φ2 = lat2 * Math.PI/180;
+    const Δφ = (lat2-lat1) * Math.PI/180;
+    const Δλ = (lon2-lon1) * Math.PI/180;
     const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ/2) * Math.sin(Δλ/2);
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
   };
 
   const updateLocation = useCallback(() => {
     if (!navigator.geolocation) return;
+    
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         const { latitude, longitude } = pos.coords;
@@ -45,12 +55,15 @@ const FieldOfficerDashboard = () => {
 
         let insideSite = null;
         for (let site of locations) {
-            if (getDistance(latitude, longitude, site.lat, site.lon) <= (site.radius || 200)) { insideSite = site; break; }
+            const dist = getDistance(latitude, longitude, site.lat, site.lon);
+            if (dist <= (site.radius || 200)) {
+                insideSite = site;
+                break;
+            }
         }
         setActiveSite(insideSite);
         
-        const siteParam = insideSite ? `&current_site_id=${insideSite.id}` : '';
-        fetch(`/api/user/update-location?email=${userEmail}&lat=${latitude}&lon=${longitude}${siteParam}`, { method: 'POST' });
+        fetch(`/api/user/update-location?email=${userEmail}&lat=${latitude}&lon=${longitude}`, { method: 'POST' });
       },
       (err) => console.error(err),
       { enableHighAccuracy: true, maximumAge: 0 }
@@ -59,20 +72,24 @@ const FieldOfficerDashboard = () => {
 
   useEffect(() => {
     updateLocation();
-    
-    // CHANGED TO EVERY 5 SECONDS
-    const interval = setInterval(updateLocation, 5000); 
+    const interval = setInterval(updateLocation, 10000); 
     return () => clearInterval(interval);
   }, [updateLocation]);
 
   const handleVisitSubmit = async (e) => {
     e.preventDefault();
-    if (!photo) return alert("Capture a geotagged photo to log the visit.");
-    if (!activeSite || !myLoc) return alert("Geofence error: Must be inside site boundary.");
+    if (!photo) return alert("You must capture a geotagged photo to log the visit.");
+    if (!activeSite || !myLoc) return alert("Geofence error: You must be inside the site boundary.");
 
     setIsSubmitting(true);
     const formData = new FormData();
-    formData.append('email', userEmail); formData.append('location_id', activeSite.id); formData.append('purpose', purpose); formData.append('remarks', remarks); formData.append('lat', myLoc.lat); formData.append('lon', myLoc.lon); formData.append('photo', photo);
+    formData.append('email', userEmail);
+    formData.append('location_id', activeSite.id);
+    formData.append('purpose', purpose);
+    formData.append('remarks', remarks);
+    formData.append('lat', myLoc.lat);
+    formData.append('lon', myLoc.lon);
+    formData.append('photo', photo);
 
     try {
       const res = await fetch('/api/field-officer/log-visit', { method: 'POST', body: formData });
@@ -82,22 +99,37 @@ const FieldOfficerDashboard = () => {
         setPurpose(''); setRemarks(''); setPhoto(null);
         if(fileInputRef.current) fileInputRef.current.value = "";
         fetchData();
-      } else setAlertMsg({ type: 'danger', text: data.detail || 'Failed to log visit.' });
-    } catch (err) { setAlertMsg({ type: 'danger', text: 'Network error.' }); }
+      } else {
+        setAlertMsg({ type: 'danger', text: data.detail || 'Failed to log visit.' });
+      }
+    } catch (err) {
+      setAlertMsg({ type: 'danger', text: 'Network error submitting report.' });
+    }
     setIsSubmitting(false);
   };
 
   return (
     <Container className="py-4">
-      <div className="d-flex justify-content-between align-items-center mb-4"><h2 className="fw-bold m-0"><Navigation className="text-primary me-2" />Field Operations</h2></div>
+      <div className="d-flex justify-content-between align-items-center mb-4">
+        <h2 className="fw-bold m-0"><Navigation className="text-primary me-2" />Field Operations</h2>
+        <Button variant="danger" onClick={() => setShowAddEmp(true)}><UserPlus className="me-2" size={18}/>Onboard Staff</Button>
+      </div>
 
       <Row className="g-4 mb-4">
         <Col lg={8}>
           <Card className="border-0 shadow-sm overflow-hidden" style={{ height: '400px' }}>
             <MapContainer center={[22.5726, 88.3639]} zoom={5} style={{ height: '100%' }}>
               <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-              {locations.map(site => (<Circle key={site.id} center={[site.lat, site.lon]} radius={site.radius || 200} pathOptions={{ color: 'blue', fillOpacity: 0.2 }}><Popup>{site.name}</Popup></Circle>))}
-              {myLoc && (<Marker position={[myLoc.lat, myLoc.lon]}><Popup>Your Location</Popup></Marker>)}
+              {locations.map(site => (
+                <Circle key={site.id} center={[site.lat, site.lon]} radius={site.radius || 200} pathOptions={{ color: 'blue', fillOpacity: 0.2 }}>
+                  <Popup>{site.name}</Popup>
+                </Circle>
+              ))}
+              {myLoc && (
+                <Marker position={[myLoc.lat, myLoc.lon]}>
+                  <Popup>Your Live Location</Popup>
+                </Marker>
+              )}
             </MapContainer>
           </Card>
         </Col>
@@ -105,22 +137,56 @@ const FieldOfficerDashboard = () => {
         <Col lg={4}>
           <Card className="border-0 shadow-sm h-100">
             <Card.Body>
-              <h5 className="fw-bold mb-3 d-flex align-items-center"><MapPin className="me-2 text-danger"/> Current Status</h5>
-              {activeSite ? (<Alert variant="success" className="d-flex align-items-center fw-bold"><CheckCircle className="me-2"/> At Site: {activeSite.name}</Alert>) : (<Alert variant="warning">Searching for nearby sites...</Alert>)}
+              <h5 className="fw-bold mb-3 d-flex align-items-center">
+                <MapPin className="me-2 text-danger"/> Current Status
+              </h5>
+              
+              {activeSite ? (
+                <Alert variant="success" className="d-flex align-items-center fw-bold">
+                  <CheckCircle className="me-2"/> At Site: {activeSite.name}
+                </Alert>
+              ) : (
+                <Alert variant="warning">Searching for nearby sites... Drive to a geofence to log a visit.</Alert>
+              )}
 
               {activeSite && (
                 <Form onSubmit={handleVisitSubmit} className="mt-4 border-top pt-3">
                   <h6 className="fw-bold mb-3"><FileText className="me-2" size={18}/>Log Visit Report</h6>
                   {alertMsg && <Alert variant={alertMsg.type} className="small">{alertMsg.text}</Alert>}
+                  
                   <Form.Group className="mb-2">
-                    <Form.Select size="sm" value={purpose} onChange={e => setPurpose(e.target.value)} required><option value="">Select Purpose...</option><option value="Inspection">Site Inspection</option><option value="Maintenance">Maintenance</option><option value="Client Meeting">Client Meeting</option><option value="Delivery/Pickup">Delivery/Pickup</option></Form.Select>
+                    <Form.Select size="sm" value={purpose} onChange={e => setPurpose(e.target.value)} required>
+                      <option value="">Select Purpose...</option>
+                      <option value="Inspection">Site Inspection</option>
+                      <option value="Maintenance">Maintenance</option>
+                      <option value="Client Meeting">Client Meeting</option>
+                      <option value="Delivery/Pickup">Delivery/Pickup</option>
+                    </Form.Select>
                   </Form.Group>
-                  <Form.Group className="mb-2"><Form.Control size="sm" as="textarea" rows={2} placeholder="Remarks..." value={remarks} onChange={e => setRemarks(e.target.value)} /></Form.Group>
+
+                  <Form.Group className="mb-2">
+                    <Form.Control size="sm" as="textarea" rows={2} placeholder="Visit remarks/findings..." value={remarks} onChange={e => setRemarks(e.target.value)} />
+                  </Form.Group>
+
                   <Form.Group className="mb-3">
-                    <Form.Label className="small fw-bold"><Camera size={14} className="me-1"/> Live Photo</Form.Label>
-                    <Form.Control type="file" size="sm" accept="image/*" capture="environment" ref={fileInputRef} onChange={e => setPhoto(e.target.files[0])} required />
+                    <Form.Label className="small fw-bold"><Camera size={14} className="me-1"/> Live Photo (Required)</Form.Label>
+                    <Form.Control 
+                        type="file" 
+                        size="sm" 
+                        accept="image/*" 
+                        capture="environment" 
+                        ref={fileInputRef}
+                        onChange={e => setPhoto(e.target.files[0])} 
+                        required 
+                    />
+                    <Form.Text className="text-muted" style={{fontSize: '0.7rem'}}>
+                        *Photo will be geotagged using your current GPS coordinates.
+                    </Form.Text>
                   </Form.Group>
-                  <Button type="submit" variant="primary" className="w-100 fw-bold" disabled={isSubmitting}>{isSubmitting ? <Spinner size="sm" /> : "SUBMIT REPORT"}</Button>
+
+                  <Button type="submit" variant="primary" className="w-100 fw-bold" disabled={isSubmitting}>
+                    {isSubmitting ? <Spinner size="sm" /> : "SUBMIT REPORT"}
+                  </Button>
                 </Form>
               )}
             </Card.Body>
@@ -131,15 +197,43 @@ const FieldOfficerDashboard = () => {
       <Card className="border-0 shadow-sm mt-4">
         <Card.Header className="bg-white py-3"><h6 className="fw-bold m-0">My Recent Visits</h6></Card.Header>
         <Table responsive hover className="align-middle mb-0 small">
-          <thead className="table-light"><tr><th>Date & Time</th><th>Site</th><th>Purpose</th><th>Remarks</th></tr></thead>
+          <thead className="table-light">
+            <tr><th>Date & Time</th><th>Site</th><th>Purpose</th><th>Remarks</th></tr>
+          </thead>
           <tbody>
-            {visitHistory.length === 0 ? (<tr><td colSpan="4" className="text-center py-4 text-muted">No visits logged.</td></tr>) : (
-                visitHistory.map((v, i) => (<tr key={i}><td className="fw-bold">{v.visit_time}</td><td>{v.site_name}</td><td><Badge bg="info">{v.purpose}</Badge></td><td className="text-truncate" style={{maxWidth: '200px'}}>{v.remarks || '-'}</td></tr>))
+            {visitHistory.length === 0 ? (
+                <tr><td colSpan="4" className="text-center py-4 text-muted">No visits logged yet.</td></tr>
+            ) : (
+                visitHistory.map((v, i) => (
+                    <tr key={i}>
+                        <td className="fw-bold">{v.visit_time}</td>
+                        <td>{v.site_name}</td>
+                        <td><Badge bg="info">{v.purpose}</Badge></td>
+                        <td className="text-truncate" style={{maxWidth: '200px'}}>{v.remarks || '-'}</td>
+                    </tr>
+                ))
             )}
           </tbody>
         </Table>
       </Card>
+
+      {showAddEmp && (
+          <div className="position-fixed top-0 start-0 w-100 h-100 bg-dark bg-opacity-50" style={{zIndex: 1050, overflowY: 'auto'}}>
+              <Container className="py-5">
+                  <Card className="border-0 shadow">
+                      <Card.Header className="d-flex justify-content-between align-items-center bg-light">
+                          <h5 className="fw-bold m-0">Onboard Staff</h5>
+                          <Button variant="close" onClick={() => setShowAddEmp(false)}></Button>
+                      </Card.Header>
+                      <Card.Body>
+                          <EmployeeOnboardForm locations={locations} onCancel={() => setShowAddEmp(false)} onSuccess={() => setShowAddEmp(false)} />
+                      </Card.Body>
+                  </Card>
+              </Container>
+          </div>
+      )}
     </Container>
   );
 };
+
 export default FieldOfficerDashboard;

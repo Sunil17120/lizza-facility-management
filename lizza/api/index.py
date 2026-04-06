@@ -1,18 +1,23 @@
-import hashlib, os, redis, math, smtplib, base64, requests
+import hashlib, os, redis, math, smtplib, base64, json, requests
 from email.mime.text import MIMEText
 from typing import Optional 
-from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Form
+from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, Query, File, UploadFile, Form
 from sqlalchemy.orm import Session
 from sqlalchemy import extract 
 from pydantic import BaseModel
 from datetime import datetime, timedelta
-from .database import SessionLocal, User, OfficeLocation, FieldVisitLog, init_db, cipher
+from sqlalchemy.exc import IntegrityError
+
+try:
+    from .database import SessionLocal, User, EmployeeLocation, OfficeLocation, SiteVisit, init_db, cipher
+except ImportError:
+    from database import SessionLocal, User, EmployeeLocation, OfficeLocation, SiteVisit, init_db, cipher
 
 app = FastAPI()
 redis_url = os.environ.get("REDIS_URL") or os.environ.get("KV_URL")
 r = redis.from_url(redis_url, decode_responses=True) if redis_url else None
 init_db()
-PEPPER = os.environ.get("SECRET_PEPPER", "change_me")
+PEPPER = os.environ.get("SECRET_PEPPER", "change_me_in_vercel_settings")
 
 # --- SCHEMAS ---
 class AuthRequest(BaseModel): 
@@ -39,30 +44,59 @@ def get_db():
 def get_secure_hash(password: str, salt: str):
     return hashlib.sha256((password + salt + PEPPER).encode()).hexdigest()
 
-def process_upload_base64(upload_file: UploadFile) -> str:
-    if not upload_file: return None
+def process_upload_base64(upload_file: UploadFile, max_size_mb: int = 5) -> str:
+    """Used for PDFs/Documents that ImgBB cannot host (like the filled form)"""
+    if not upload_file or not upload_file.filename: return None
     content = upload_file.file.read()
+    if len(content) > max_size_mb * 1024 * 1024:
+        raise HTTPException(400, detail="File too large")
     return f"data:{upload_file.content_type};base64,{base64.b64encode(content).decode('utf-8')}"
 
 def upload_to_cloud(upload_file: UploadFile) -> str:
-    if not upload_file: return None
+    """Uploads Image directly to ImgBB and returns the public short URL."""
+    if not upload_file or not upload_file.filename: 
+        return None
+        
     try:
         image_bytes = upload_file.file.read()
         encoded_image = base64.b64encode(image_bytes).decode('utf-8')
-        res = requests.post("https://api.imgbb.com/1/upload", data={"key": os.environ.get("IMGBB_API_KEY"), "image": encoded_image}).json()
-        return res["data"]["url"] if res.get("success") else None
-    except: return None
+        
+        url = "https://api.imgbb.com/1/upload"
+        payload = {
+            "key": os.environ.get("IMGBB_API_KEY"),
+            "image": encoded_image
+        }
+        
+        response = requests.post(url, data=payload)
+        res_data = response.json()
+        
+        if res_data.get("success"):
+            return res_data["data"]["url"]
+            
+        print("ImgBB Upload Failed:", res_data)
+        return None
+        
+    except Exception as e:
+        print(f"Cloud upload error: {e}")
+        return None
 
 def send_onboarding_email(to_email, full_name, temp_password, login_email):
-    user, pw, host = os.environ.get("SMTP_USER"), os.environ.get("SMTP_PASS"), os.environ.get("SMTP_SERVER", "smtp.gmail.com")
+    user = os.environ.get("SMTP_USER") 
+    pw = os.environ.get("SMTP_PASS")
+    host = os.environ.get("SMTP_SERVER", "smtp.gmail.com")
     if not user or not pw: return False
     try:
-        msg = MIMEText(f"Hello {full_name},\n\nYour account is verified.\nEmail: {login_email}\nPassword: {temp_password}")
+        body = f"Hello {full_name},\n\nYour account is verified.\nEmail: {login_email}\nPassword: {temp_password}"
+        msg = MIMEText(body)
         msg['Subject'], msg['From'], msg['To'] = "LIZZA - Verification Successful", user, to_email
         with smtplib.SMTP(host, 587) as server:
-            server.starttls(); server.login(user, pw); server.sendmail(user, to_email, msg.as_string()) 
+            server.starttls()
+            server.login(user, pw)
+            server.sendmail(user, to_email, msg.as_string()) 
         return True
-    except: return False
+    except Exception as e:
+        print(f"Email Error: {e}")
+        return False
 
 def get_distance(lat1, lon1, lat2, lon2):
     R = 6371000 
@@ -75,67 +109,161 @@ def get_distance(lat1, lon1, lat2, lon2):
 @app.post("/api/login")
 def login(data: AuthRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == data.email.lower().strip()).first()
-    if not user or get_secure_hash(data.password, user.salt) != user.password: raise HTTPException(401, "Invalid credentials")
-    if not user.is_verified and user.user_type != 'admin': raise HTTPException(403, "Pending Admin Verification")
+    if not user or get_secure_hash(data.password, user.salt) != user.password:
+        raise HTTPException(401, detail="Invalid credentials")
+    if not user.is_verified and user.user_type != 'admin':
+        raise HTTPException(403, detail="Pending Admin Verification")
     return {"user_id": user.id, "user": user.full_name, "user_type": user.user_type, "force_password_change": not user.is_password_changed}
 
 @app.get("/api/user/profile")
 def get_user_profile(email: str, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == email.lower().strip()).first()
-    if not user: raise HTTPException(404, "User not found")
-    return {"id": user.id, "full_name": user.full_name, "email": user.email, "user_type": user.user_type, "blockchain_id": user.blockchain_id, "shift_start": user.shift_start, "shift_end": user.shift_end, "is_verified": user.is_verified, "location_id": user.location_id, "is_present": user.is_present}
+    if not user: raise HTTPException(status_code=404, detail="User not found")
+    return {
+        "id": user.id, "full_name": user.full_name, "email": user.email, "user_type": user.user_type,
+        "blockchain_id": user.blockchain_id, "shift_start": user.shift_start, "shift_end": user.shift_end,
+        "is_verified": user.is_verified, "location_id": user.location_id, "is_present": user.is_present
+    }
 
 @app.post("/api/change-password")
 def change_password(data: PasswordChange, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == data.email.lower().strip()).first()
-    if get_secure_hash(data.old_password, user.salt) != user.password: raise HTTPException(401, "Current password incorrect")
-    user.password, user.is_password_changed = get_secure_hash(data.new_password, user.salt), True
+    if not user: raise HTTPException(404, detail="User not found")
+    if get_secure_hash(data.old_password, user.salt) != user.password:
+        raise HTTPException(401, detail="Current password incorrect")
+    user.password = get_secure_hash(data.new_password, user.salt)
+    user.is_password_changed = True
     db.commit()
     return {"status": "success"}
 
-# --- ONBOARDING & MANAGER ROUTES ---
+# --- MANAGER & ONBOARDING ---
 @app.post("/api/manager/add-employee")
-async def add_employee(first_name: str=Form(...), last_name: str=Form(...), personal_email: str=Form(...), phone_number: str=Form(...), dob: str=Form(...), designation: str=Form(...), manager_id: int=Form(...), user_type: str=Form("employee"), aadhar_number: str=Form(...), pan_number: str=Form(...), profile_photo: UploadFile=File(None), filled_form: UploadFile=File(None), db: Session=Depends(get_db)):
+async def add_employee(
+    first_name: str = Form(...), 
+    last_name: str = Form(...), 
+    personal_email: str = Form(...),
+    phone_number: str = Form(...), 
+    dob: str = Form(...), 
+    father_name: str = Form(None),
+    mother_name: str = Form(None), 
+    blood_group: str = Form(None), 
+    emergency_contact: str = Form(None),
+    designation: str = Form(...), 
+    department: str = Form(...), 
+    experience_years: float = Form(0.0),
+    prev_company: str = Form(None), 
+    prev_role: str = Form(None), 
+    aadhar_number: str = Form(...),
+    pan_number: str = Form(...), 
+    manager_id: int = Form(...), 
+    user_type: str = Form("employee"),
+    location_id: Optional[int] = Form(None), 
+    shift_start: Optional[str] = Form(None),
+    shift_end: Optional[str] = Form(None),
+    profile_photo: UploadFile = File(None), 
+    aadhar_photo: UploadFile = File(None), 
+    pan_photo: UploadFile = File(None), 
+    filled_form: UploadFile = File(None), 
+    db: Session = Depends(get_db)
+):
     base_email = f"{first_name.lower()}.{last_name.lower()}@lizza.com"
-    try: initial_pw = datetime.strptime(dob, "%Y-%m-%d").strftime("%d%m%Y") 
-    except: initial_pw = datetime.strptime(dob, "%d-%m-%Y").strftime("%d%m%Y")
+    
+    try:
+        dt_obj = datetime.strptime(dob, "%Y-%m-%d")
+        initial_pw = dt_obj.strftime("%d%m%Y") 
+    except ValueError:
+        try:
+            dt_obj = datetime.strptime(dob, "%d-%m-%Y")
+            initial_pw = dt_obj.strftime("%d%m%Y")
+        except:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+
     salt = hashlib.sha256(base_email.encode()).hexdigest()[:16]
     
+    if user_type == 'field_officer':
+        shift_start = None
+        shift_end = None
+        location_id = None
+        
+    if not shift_start: shift_start = None
+    if not shift_end: shift_end = None
+
     new_user = User(
-        full_name=f"{first_name} {last_name}", email=base_email, personal_email=personal_email, phone_number=phone_number, password=get_secure_hash(initial_pw, salt), salt=salt, user_type=user_type, manager_id=manager_id, is_verified=False, dob=dob, designation=designation,
-        aadhar_enc=cipher.encrypt(aadhar_number.encode()).decode(), pan_enc=cipher.encrypt(pan_number.encode()).decode(),
-        profile_photo_path=upload_to_cloud(profile_photo), filled_form_path=process_upload_base64(filled_form)
+        first_name=first_name, last_name=last_name, full_name=f"{first_name} {last_name}",
+        email=base_email, personal_email=personal_email, phone_number=phone_number,
+        password=get_secure_hash(initial_pw, salt), salt=salt, user_type=user_type, 
+        manager_id=manager_id, location_id=location_id, is_verified=False, dob=dob,
+        father_name=father_name, mother_name=mother_name, blood_group=blood_group,
+        emergency_contact=emergency_contact, designation=designation, department=department,
+        experience_years=experience_years, prev_company=prev_company, prev_role=prev_role,
+        aadhar_enc=cipher.encrypt(aadhar_number.encode()).decode(),
+        pan_enc=cipher.encrypt(pan_number.encode()).decode(),
+        
+        # Store images cleanly in ImgBB cloud
+        profile_photo_path=upload_to_cloud(profile_photo),
+        aadhar_photo_path=upload_to_cloud(aadhar_photo),
+        pan_photo_path=upload_to_cloud(pan_photo),
+        
+        # Forms might be PDFs, so keep them as Base64 text in the DB
+        filled_form_path=process_upload_base64(filled_form, 2),
+        
+        shift_start=shift_start, shift_end=shift_end
     )
     db.add(new_user); db.commit()
     return {"status": "success", "official_email": base_email}
 
 @app.get("/api/manager/my-employees")
-def get_my_employees(manager_id: int, db: Session = Depends(get_db)): return db.query(User).filter(User.manager_id == manager_id).all()
+def get_my_employees(manager_id: int, db: Session = Depends(get_db)):
+    return db.query(User).filter(User.manager_id == manager_id).all()
+
+@app.get("/api/manager/live-tracking")
+def get_manager_live_tracking(manager_id: int, db: Session = Depends(get_db)):
+    team = db.query(User).filter(User.manager_id == manager_id, User.is_verified == True).all()
+    results = []
+    for m in team:
+        coords = r.get(f"loc:{m.email}") if r else None
+        lat, lon = (None, None)
+        if coords:
+            try:
+                parts = coords.split(',')
+                lat, lon = float(parts[0]), float(parts[1])
+            except: pass
+        results.append({"email": m.email, "name": m.full_name, "lat": lat, "lon": lon, "present": m.is_present})
+    return results
 
 # --- ADMIN ROUTES ---
 @app.post("/api/admin/verify-employee")
 def verify_employee(target_email: str, admin_email: str, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == target_email).first()
-    user.blockchain_id, user.is_verified = f"LZ-{hashlib.sha256(user.email.encode()).hexdigest()[:10]}".upper(), True
+    if not user: raise HTTPException(404, "User not found")
+    user.blockchain_id = f"LZ-{hashlib.sha256(user.email.encode()).hexdigest()[:10]}".upper()
+    user.is_verified = True
     db.commit()
     send_onboarding_email(user.personal_email, user.full_name, user.dob.replace("-",""), user.email)
     return {"status": "success"}
 
 @app.get("/api/admin/employees")
-def get_all_employees(admin_email: str, db: Session = Depends(get_db)): return db.query(User).all()
+def get_all_employees(admin_email: str, db: Session = Depends(get_db)):
+    return db.query(User).all()
 
 @app.get("/api/admin/locations")
-def get_locations(db: Session = Depends(get_db)): return db.query(OfficeLocation).all()
+def get_locations(db: Session = Depends(get_db)): 
+    return db.query(OfficeLocation).all()
 
 @app.post("/api/admin/add-location")
 def add_location(data: LocationCreate, db: Session = Depends(get_db)):
-    db.add(OfficeLocation(**data.dict())); db.commit()
+    db.add(OfficeLocation(**data.dict()))
+    db.commit()
     return {"message": "Location Added"}
 
 @app.put("/api/admin/update-location/{loc_id}")
 def update_location_endpoint(loc_id: int, data: LocationCreate, db: Session = Depends(get_db)):
     loc = db.query(OfficeLocation).filter(OfficeLocation.id == loc_id).first()
-    loc.name, loc.lat, loc.lon, loc.radius = data.name, data.lat, data.lon, data.radius
+    if not loc: raise HTTPException(404, "Location not found")
+    loc.name = data.name
+    loc.lat = data.lat
+    loc.lon = data.lon
+    loc.radius = data.radius
     db.commit()
     return {"status": "updated"}
 
@@ -144,9 +272,12 @@ def get_live_tracking(admin_email: str, db: Session = Depends(get_db)):
     users = db.query(User).filter(User.is_verified == True).all()
     results = []
     for u in users:
-        coords, lat, lon = r.get(f"loc:{u.email}") if r else None, None, None
+        coords = r.get(f"loc:{u.email}") if r else None
+        lat, lon = (None, None)
         if coords:
-            try: lat, lon = float(coords.split(',')[0]), float(coords.split(',')[1])
+            try:
+                parts = coords.split(',')
+                lat, lon = float(parts[0]), float(parts[1])
             except: pass
         results.append({"email": u.email, "name": u.full_name, "lat": lat, "lon": lon, "present": u.is_present})
     return results
@@ -154,8 +285,16 @@ def get_live_tracking(admin_email: str, db: Session = Depends(get_db)):
 @app.post("/api/admin/update-employee-inline")
 def update_employee_inline(data: dict, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == data.get("email")).first()
-    user.location_id, user.shift_start, user.shift_end, user.user_type = data.get("location_id"), data.get("shift_start"), data.get("shift_end"), data.get("user_type")
-    if "manager_id" in data: user.manager_id = data.get("manager_id")
+    if not user: raise HTTPException(404, "User not found")
+    
+    user.location_id = data.get("location_id")
+    user.shift_start = data.get("shift_start")
+    user.shift_end = data.get("shift_end")
+    user.user_type = data.get("user_type")
+    
+    if "manager_id" in data:
+        user.manager_id = data.get("manager_id")
+        
     db.commit()
     return {"status": "updated"}
 
@@ -171,60 +310,108 @@ def delete_location(loc_id: int, db: Session = Depends(get_db)):
     if loc: db.delete(loc); db.commit()
     return {"status": "deleted"}
 
-@app.get("/api/admin/proxy-image")
-def proxy_image(url: str):
-    res = requests.get(url)
-    return {"base64": f"data:{res.headers['Content-Type']};base64,{base64.b64encode(res.content).decode()}"}
+# --- FIELD OFFICER & REPORTING ROUTES ---
+@app.post("/api/field-officer/log-visit")
+async def log_site_visit(
+    email: str = Form(...),
+    location_id: int = Form(...),
+    purpose: str = Form(...),
+    remarks: str = Form(""),
+    lat: float = Form(...),
+    lon: float = Form(...),
+    photo: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    user = db.query(User).filter(User.email == email.lower().strip()).first()
+    if not user or user.user_type != 'field_officer':
+        raise HTTPException(403, "Unauthorized")
 
-# --- UNIFIED FIELD OPERATIONS ---
-@app.post("/api/user/update-location")
-async def update_location(email: str, lat: float, lon: float, current_site_id: Optional[int] = None, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == email.lower()).first()
-    if not user: return {"status": "error"}
-    r.set(f"loc:{email}", f"{lat},{lon}", ex=10) # Live Redis sync (5-10 sec)
-    now = datetime.utcnow() + timedelta(hours=5, minutes=30)
+    site = db.query(OfficeLocation).filter(OfficeLocation.id == location_id).first()
+    if not site:
+        raise HTTPException(404, "Site not found")
+
+    distance = get_distance(lat, lon, site.lat, site.lon)
+    if distance > site.radius:
+        raise HTTPException(400, f"Geotag validation failed. You are {int(distance)}m away from the site. Must be within {site.radius}m.")
+
+    # Upload the live photo to ImgBB
+    photo_url = upload_to_cloud(photo)
     
-    if user.user_type == 'field_officer':
-        active = db.query(FieldVisitLog).filter(FieldVisitLog.officer_id == user.id, FieldVisitLog.exit_time == None).first()
-        if current_site_id:
-            if not active:
-                db.add(FieldVisitLog(officer_id=user.id, site_id=current_site_id, entry_time=now))
-            elif active.site_id != current_site_id:
-                active.exit_time = now
-                db.add(FieldVisitLog(officer_id=user.id, site_id=current_site_id, entry_time=now))
-        elif active:
-            active.exit_time = now
-        db.commit()
-        return {"is_inside": True if current_site_id else False}
+    visit = SiteVisit(officer_id=user.id, location_id=site.id, purpose=purpose, remarks=remarks, photo_path=photo_url)
+    db.add(visit)
+    db.commit()
+    return {"status": "success", "message": "Visit logged and geotag verified."}
+
+@app.get("/api/field-officer/my-visits")
+def get_my_visits(email: str, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == email.lower().strip()).first()
+    if not user: raise HTTPException(404, "User not found")
+    visits = db.query(SiteVisit, OfficeLocation).join(OfficeLocation).filter(SiteVisit.officer_id == user.id).order_by(SiteVisit.visit_time.desc()).all()
+    return [{
+        "site_name": loc.name, "purpose": v.purpose, "remarks": v.remarks, 
+        "visit_time": v.visit_time.strftime("%Y-%m-%d %H:%M"), "photo": v.photo_path
+    } for v, loc in visits]
+
+@app.get("/api/admin/reports/monthly-field-visits")
+def get_monthly_field_visits(
+    month: int, 
+    year: int, 
+    officer_id: Optional[int] = None, 
+    location_id: Optional[int] = None, 
+    db: Session = Depends(get_db)
+):
+    query = db.query(SiteVisit, User, OfficeLocation)\
+              .join(User, SiteVisit.officer_id == User.id)\
+              .join(OfficeLocation, SiteVisit.location_id == OfficeLocation.id)
+    
+    query = query.filter(extract('month', SiteVisit.visit_time) == month)
+    query = query.filter(extract('year', SiteVisit.visit_time) == year)
+    
+    if officer_id:
+        query = query.filter(SiteVisit.officer_id == officer_id)
+    if location_id:
+        query = query.filter(SiteVisit.location_id == location_id)
+    
+    results = query.order_by(SiteVisit.visit_time.asc()).all()
+    
+    report_data = []
+    for v, u, loc in results:
+        report_data.append({
+            "visit_id": v.id,
+            "date": v.visit_time.strftime("%Y-%m-%d"),
+            "time": v.visit_time.strftime("%I:%M %p"),
+            "officer_id": u.blockchain_id or f"EMP-{u.id}",
+            "officer_name": u.full_name,
+            "site_id": loc.id,
+            "site_name": loc.name,
+            "purpose": v.purpose,
+            "remarks": v.remarks,
+            "photo": v.photo_path
+        })
+    return report_data
+
+# --- USER & LOCATION TRACKING ---
+@app.post("/api/user/update-location")
+async def update_location(email: str, lat: float, lon: float, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == email.lower().strip()).first()
+    if not user: return {"status": "error"}
+    
+    if r: r.set(f"loc:{email}", f"{lat},{lon}", ex=60)
+    
+    if user.user_type == 'field_officer' or not user.location_id or not user.shift_start:
+        return {"is_inside": True, "status": "normal", "message": "Location Updated"}
 
     office = db.query(OfficeLocation).filter(OfficeLocation.id == user.location_id).first()
-    if office:
-        is_inside = get_distance(lat, lon, office.lat, office.lon) <= office.radius
-        if is_inside and not user.is_present:
+    is_inside = get_distance(lat, lon, office.lat, office.lon) <= office.radius
+    now_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
+    now_str = now_ist.strftime("%H:%M")
+
+    if is_inside:
+        grace_end = (datetime.strptime(user.shift_start, "%H:%M") + timedelta(minutes=15)).strftime("%H:%M")
+        if not user.is_present and user.shift_start <= now_str <= grace_end:
             user.is_present = True
             db.commit()
-        return {"is_inside": is_inside}
-    return {"status": "ok"}
-
-@app.post("/api/field-officer/log-visit")
-async def log_site_visit(email: str=Form(...), location_id: int=Form(...), purpose: str=Form(...), remarks: str=Form(""), photo: UploadFile=File(...), db: Session=Depends(get_db)):
-    user = db.query(User).filter(User.email == email.lower()).first()
-    log = db.query(FieldVisitLog).filter(FieldVisitLog.officer_id == user.id, FieldVisitLog.site_id == location_id, FieldVisitLog.exit_time == None).first()
-    if not log: raise HTTPException(400, "Must be inside geofence to upload photo.")
-    log.photo_path, log.purpose, log.remarks = upload_to_cloud(photo), purpose, remarks
-    log.photo_time = datetime.utcnow() + timedelta(hours=5, minutes=30)
-    db.commit()
-    return {"status": "success"}
-
-@app.get("/api/admin/reports/unified-logs")
-def get_unified_logs(month: int, year: int, officer_id: Optional[int] = None, location_id: Optional[int] = None, db: Session = Depends(get_db)):
-    query = db.query(FieldVisitLog, User, OfficeLocation).join(User).join(OfficeLocation)
-    query = query.filter(extract('month', FieldVisitLog.entry_time) == month, extract('year', FieldVisitLog.entry_time) == year)
-    if officer_id: query = query.filter(FieldVisitLog.officer_id == officer_id)
-    if location_id: query = query.filter(FieldVisitLog.site_id == location_id)
-    return [{
-        "date": l.entry_time.strftime("%Y-%m-%d"), "officer_name": u.full_name, "officer_email": u.email, "site_name": loc.name,
-        "entry": l.entry_time.strftime("%I:%M:%S %p"), "photo_at": l.photo_time.strftime("%I:%M:%S %p") if l.photo_time else "No Photo",
-        "exit": l.exit_time.strftime("%I:%M:%S %p") if l.exit_time else "Still Inside",
-        "purpose": l.purpose or "-", "photo_url": l.photo_path
-    } for l, u, loc in query.all()]
+            return {"is_inside": True, "status": "normal", "message": "Marked Present"}
+        return {"is_inside": True, "status": "normal", "message": "On Duty"}
+    
+    return {"is_inside": False, "status": "warning", "message": "Outside Geofence"}
