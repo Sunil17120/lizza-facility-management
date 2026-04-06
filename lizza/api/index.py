@@ -42,13 +42,11 @@ def get_secure_hash(password: str, salt: str):
     return hashlib.sha256((password + salt + PEPPER).encode()).hexdigest()
 
 def process_upload_base64(upload_file: UploadFile, max_size_mb: int = 5) -> str:
-    """For PDFs and Documents"""
     if not upload_file or not upload_file.filename: return None
     content = upload_file.file.read()
     return f"data:{upload_file.content_type};base64,{base64.b64encode(content).decode('utf-8')}"
 
 def upload_to_cloud(upload_file: UploadFile) -> str:
-    """Uploads Images directly to ImgBB"""
     if not upload_file or not upload_file.filename: return None
     try:
         image_bytes = upload_file.file.read()
@@ -178,10 +176,8 @@ def delete_location(loc_id: int, db: Session = Depends(get_db)):
     if loc: db.delete(loc); db.commit()
     return {"status": "deleted"}
 
-# --- IMAGE PROXY FOR EXCEL DOWNLOAD ---
 @app.get("/api/admin/proxy-image")
 def proxy_image(url: str):
-    """Fetches an image from ImgBB bypassing browser CORS, returning Base64 for ExcelJS."""
     try:
         response = requests.get(url)
         if response.status_code == 200:
@@ -190,10 +186,8 @@ def proxy_image(url: str):
             return {"base64": f"data:{content_type};base64,{encoded}"}
         return {"base64": None}
     except Exception as e:
-        print("Proxy Image Error:", e)
         return {"base64": None}
 
-# --- FIELD OFFICER & REPORTING ROUTES ---
 @app.post("/api/field-officer/log-visit")
 async def log_site_visit(email: str=Form(...), location_id: int=Form(...), purpose: str=Form(...), remarks: str=Form(""), lat: float=Form(...), lon: float=Form(...), photo: UploadFile=File(...), db: Session=Depends(get_db)):
     user = db.query(User).filter(User.email == email.lower().strip()).first()
@@ -215,7 +209,7 @@ def get_monthly_field_visits(month: int, year: int, officer_id: Optional[int] = 
     query = query.filter(extract('month', SiteVisit.visit_time) == month, extract('year', SiteVisit.visit_time) == year)
     if officer_id: query = query.filter(SiteVisit.officer_id == officer_id)
     if location_id: query = query.filter(SiteVisit.location_id == location_id)
-    return [{"visit_id": v.id, "date": v.visit_time.strftime("%Y-%m-%d"), "time": v.visit_time.strftime("%I:%M %p"), "officer_id": u.blockchain_id or f"EMP-{u.id}", "officer_name": u.full_name, "officer_email": u.email, "site_id": loc.id, "site_name": loc.name, "purpose": v.purpose, "remarks": v.remarks, "photo": v.photo_path} for v, u, loc in query.order_by(SiteVisit.visit_time.asc()).all()]
+    return [{"visit_id": v.id, "date": v.visit_time.strftime("%Y-%m-%d"), "time": v.visit_time.strftime("%I:%M:%S %p"), "officer_id": u.blockchain_id or f"EMP-{u.id}", "officer_name": u.full_name, "officer_email": u.email, "site_id": loc.id, "site_name": loc.name, "purpose": v.purpose, "remarks": v.remarks, "photo": v.photo_path} for v, u, loc in query.order_by(SiteVisit.visit_time.asc()).all()]
 
 @app.get("/api/admin/reports/geofence-logs")
 def get_geofence_logs(month: int, year: int, officer_id: Optional[int] = None, location_id: Optional[int] = None, db: Session = Depends(get_db)):
@@ -223,7 +217,23 @@ def get_geofence_logs(month: int, year: int, officer_id: Optional[int] = None, l
     query = query.filter(extract('month', FieldVisitLog.entry_time) == month, extract('year', FieldVisitLog.entry_time) == year)
     if officer_id: query = query.filter(FieldVisitLog.officer_id == officer_id)
     if location_id: query = query.filter(FieldVisitLog.site_id == location_id)
-    return [{"date": log.entry_time.strftime("%Y-%m-%d"), "entry_time": log.entry_time.strftime("%I:%M:%S %p"), "exit_time": log.exit_time.strftime("%I:%M:%S %p"), "duration_mins": round((log.exit_time - log.entry_time).total_seconds() / 60, 1), "officer_id": u.blockchain_id or f"EMP-{u.id}", "officer_name": u.full_name, "officer_email": u.email, "site_name": loc.name} for log, u, loc in query.order_by(FieldVisitLog.entry_time.desc()).all()]
+    
+    results = query.order_by(FieldVisitLog.entry_time.desc()).all()
+    output = []
+    for log, u, loc in results:
+        exit_str = log.exit_time.strftime("%I:%M:%S %p") if log.exit_time else "Still Inside"
+        duration = round((log.exit_time - log.entry_time).total_seconds() / 60, 1) if log.exit_time else 0
+        output.append({
+            "date": log.entry_time.strftime("%Y-%m-%d"),
+            "entry_time": log.entry_time.strftime("%I:%M:%S %p"),
+            "exit_time": exit_str,
+            "duration_mins": duration,
+            "officer_id": u.blockchain_id or f"EMP-{u.id}",
+            "officer_name": u.full_name,
+            "officer_email": u.email,
+            "site_name": loc.name
+        })
+    return output
 
 @app.post("/api/user/update-location")
 async def update_location(email: str, lat: float, lon: float, current_site_id: Optional[int] = None, db: Session = Depends(get_db)):
@@ -232,14 +242,24 @@ async def update_location(email: str, lat: float, lon: float, current_site_id: O
     if r: r.set(f"loc:{email}", f"{lat},{lon}", ex=60)
     now_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
     
+    # STRICT ENTRY/EXIT LOGIC FOR FIELD OFFICERS
     if user.user_type == 'field_officer':
+        open_logs = db.query(FieldVisitLog).filter(FieldVisitLog.officer_id == user.id, FieldVisitLog.exit_time == None).all()
+        
         if current_site_id:
             site = db.query(OfficeLocation).filter(OfficeLocation.id == current_site_id).first()
             if site and get_distance(lat, lon, site.lat, site.lon) <= site.radius:
-                last_log = db.query(FieldVisitLog).filter(FieldVisitLog.officer_id == user.id, FieldVisitLog.site_id == current_site_id).order_by(FieldVisitLog.exit_time.desc()).first()
-                if last_log and (now_ist - last_log.exit_time).total_seconds() < 300: last_log.exit_time = now_ist
-                else: db.add(FieldVisitLog(officer_id=user.id, site_id=current_site_id, entry_time=now_ist, exit_time=now_ist))
+                already_in_this_site = any(log.site_id == current_site_id for log in open_logs)
+                if not already_in_this_site:
+                    for log in open_logs: log.exit_time = now_ist # Close previous if they jumped sites
+                    db.add(FieldVisitLog(officer_id=user.id, site_id=current_site_id, entry_time=now_ist, exit_time=None))
+                    db.commit()
+        else:
+            # If they ping from outside any geofence, close open logs
+            if open_logs:
+                for log in open_logs: log.exit_time = now_ist
                 db.commit()
+                
         return {"is_inside": True if current_site_id else False, "status": "normal", "message": "Location Updated"}
 
     office = db.query(OfficeLocation).filter(OfficeLocation.id == user.location_id).first()
