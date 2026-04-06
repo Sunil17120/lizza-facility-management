@@ -1,8 +1,11 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom'; // <-- NEW: Required for redirection
 import { Container, Row, Col, Card, Spinner, Button, Alert, Badge, ProgressBar, Modal, Form } from 'react-bootstrap';
 import { ShieldCheck, MapPin, Map as MapIcon, Clock, AlertTriangle, KeyRound } from 'lucide-react';
 
 const UserDashboard = () => {
+  const navigate = useNavigate(); // <-- NEW: Setup navigator
+  
   const [dbUser, setDbUser] = useState(null);
   const [loading, setLoading] = useState(true);
   
@@ -25,7 +28,7 @@ const UserDashboard = () => {
   
   const userEmail = localStorage.getItem('userEmail');
 
-  // --- 1. Load User Profile & Check Force Password Change ---
+  // --- 1. Load User Profile & Check Auto-Redirects ---
   useEffect(() => {
     if (localStorage.getItem('forcePasswordChange') === 'true') {
       setIsForceChange(true);
@@ -36,17 +39,36 @@ const UserDashboard = () => {
       fetch(`/api/user/profile?email=${userEmail}`)
         .then(res => res.json())
         .then(data => { 
+          // --- NEW: AUTO-REDIRECT LOGIC ---
+          // If they land here but aren't standard employees, immediately teleport them!
+          if (data.user_type === 'field_officer') {
+             navigate('/field-operations', { replace: true });
+             return;
+          }
+          if (data.user_type === 'manager') {
+             navigate('/manager', { replace: true });
+             return;
+          }
+          if (data.user_type === 'admin') {
+             navigate('/admin', { replace: true });
+             return;
+          }
+
+          // If they ARE a standard employee, load the dashboard normally
           setDbUser(data); 
           setLoading(false); 
         })
         .catch(() => setLoading(false));
     }
-  }, [userEmail]);
+  }, [userEmail, navigate]);
 
   // --- 2. Calculate Check-In Timer ---
   useEffect(() => {
     if (!dbUser) return;
     
+    // Field officers shouldn't hit this, but just in case of empty shifts
+    if (!dbUser.shift_start) return; 
+
     const interval = setInterval(() => {
       const [h, m] = dbUser.shift_start.split(':');
       const now = new Date();
@@ -74,7 +96,6 @@ const UserDashboard = () => {
          return;
     }
 
-    // FIX: Added timeout and maximumAge to prevent the browser from hanging indefinitely
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         const { latitude, longitude } = pos.coords;
@@ -107,8 +128,8 @@ const UserDashboard = () => {
       },
       { 
         enableHighAccuracy: true, 
-        timeout: 15000, // FIX: Fail and retry if location takes longer than 15 seconds to resolve
-        maximumAge: 0   // FIX: Force the browser to get a fresh GPS reading, not a cached one
+        timeout: 15000, 
+        maximumAge: 0   
       }
     );
   }, [userEmail]);
@@ -117,8 +138,6 @@ const UserDashboard = () => {
     if (!dbUser) return;
     syncLocation();
     
-    // FIX: Changed to 30 seconds. This is friendlier on the browser and battery, 
-    // but still updates before the backend Redis 60-second expiration triggers.
     const interval = setInterval(syncLocation, 30000);
     return () => clearInterval(interval);
   }, [dbUser, syncLocation]);
@@ -212,12 +231,12 @@ const UserDashboard = () => {
               <div className="d-flex justify-content-center gap-5 mb-4">
                 <div className="text-center">
                   <p className="text-muted small fw-bold mb-1">SHIFT START</p>
-                  <h3 className="fw-bold text-dark">{dbUser?.shift_start}</h3>
+                  <h3 className="fw-bold text-dark">{dbUser?.shift_start || '--:--'}</h3>
                 </div>
                 <div className="vr"></div>
                 <div className="text-center">
                   <p className="text-muted small fw-bold mb-1">SHIFT END</p>
-                  <h3 className="fw-bold text-dark">{dbUser?.shift_end}</h3>
+                  <h3 className="fw-bold text-dark">{dbUser?.shift_end || '--:--'}</h3>
                 </div>
               </div>
 
