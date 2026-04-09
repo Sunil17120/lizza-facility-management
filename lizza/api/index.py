@@ -406,7 +406,7 @@ def get_monthly_field_visits(
             "remarks": v.remarks,
             "photo": v.photo_path,
             # NEW: Provide the exact Excel formula for the frontend to use in exports
-            "excel_photo": f'=IMAGE("{v.photo_path}")' if v.photo_path else "No Photo"
+           "excel_photo": f'=IMAGE("{v.photo_path}", "Visit Photo", 0)' if v.photo_path else "No Photo"
         })
     return report_data
 
