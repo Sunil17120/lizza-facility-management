@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Container, Card, Row, Col, Badge, Form, Button, Alert, Spinner, Table } from 'react-bootstrap';
-import { MapPin, Camera, Navigation, UserPlus, CheckCircle, FileText } from 'lucide-react';
+import { MapPin, Camera, Navigation, UserPlus, CheckCircle, FileText, Map as MapIcon } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 import EmployeeOnboardForm from './EmployeeOnboardForm'; 
 import L from 'leaflet';
@@ -10,6 +10,9 @@ const FieldOfficerDashboard = () => {
   const [myLoc, setMyLoc] = useState(null);
   const [activeSite, setActiveSite] = useState(null);
   const [visitHistory, setVisitHistory] = useState([]);
+  
+  // NEW: State to hold sites sorted by distance
+  const [nearbySites, setNearbySites] = useState([]);
   
   // Form State
   const [purpose, setPurpose] = useState('');
@@ -54,13 +57,20 @@ const FieldOfficerDashboard = () => {
         setMyLoc({ lat: latitude, lon: longitude });
 
         let insideSite = null;
-        for (let site of locations) {
+        
+        // NEW: Calculate distance for all sites and store them
+        const sitesWithDistance = locations.map(site => {
             const dist = getDistance(latitude, longitude, site.lat, site.lon);
             if (dist <= (site.radius || 200)) {
                 insideSite = site;
-                break;
             }
-        }
+            return { ...site, distance: dist };
+        });
+
+        // Sort the array by closest distance first
+        sitesWithDistance.sort((a, b) => a.distance - b.distance);
+        
+        setNearbySites(sitesWithDistance);
         setActiveSite(insideSite);
         
         fetch(`/api/user/update-location?email=${userEmail}&lat=${latitude}&lon=${longitude}`, { method: 'POST' });
@@ -117,7 +127,7 @@ const FieldOfficerDashboard = () => {
 
       <Row className="g-4 mb-4">
         <Col lg={8}>
-          <Card className="border-0 shadow-sm overflow-hidden" style={{ height: '400px' }}>
+          <Card className="border-0 shadow-sm overflow-hidden" style={{ height: '600px' }}>
             <MapContainer center={[22.5726, 88.3639]} zoom={5} style={{ height: '100%' }}>
               <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
               {locations.map(site => (
@@ -135,62 +145,109 @@ const FieldOfficerDashboard = () => {
         </Col>
 
         <Col lg={4}>
-          <Card className="border-0 shadow-sm h-100">
-            <Card.Body>
-              <h5 className="fw-bold mb-3 d-flex align-items-center">
-                <MapPin className="me-2 text-danger"/> Current Status
-              </h5>
-              
-              {activeSite ? (
-                <Alert variant="success" className="d-flex align-items-center fw-bold">
-                  <CheckCircle className="me-2"/> At Site: {activeSite.name}
-                </Alert>
-              ) : (
-                <Alert variant="warning">Searching for nearby sites... Drive to a geofence to log a visit.</Alert>
-              )}
+          <div className="d-flex flex-column gap-3 h-100">
+            {/* CURRENT STATUS CARD */}
+            <Card className="border-0 shadow-sm">
+              <Card.Body>
+                <h5 className="fw-bold mb-3 d-flex align-items-center">
+                  <MapPin className="me-2 text-danger"/> Current Status
+                </h5>
+                
+                {activeSite ? (
+                  <Alert variant="success" className="d-flex align-items-center fw-bold mb-0">
+                    <CheckCircle className="me-2"/> At Site: {activeSite.name}
+                  </Alert>
+                ) : (
+                  <Alert variant="warning" className="mb-0">Searching for nearby sites... Drive to a geofence to log a visit.</Alert>
+                )}
 
-              {activeSite && (
-                <Form onSubmit={handleVisitSubmit} className="mt-4 border-top pt-3">
-                  <h6 className="fw-bold mb-3"><FileText className="me-2" size={18}/>Log Visit Report</h6>
-                  {alertMsg && <Alert variant={alertMsg.type} className="small">{alertMsg.text}</Alert>}
-                  
-                  <Form.Group className="mb-2">
-                    <Form.Select size="sm" value={purpose} onChange={e => setPurpose(e.target.value)} required>
-                      <option value="">Select Purpose...</option>
-                      <option value="Inspection">Site Inspection</option>
-                      <option value="Maintenance">Maintenance</option>
-                      <option value="Client Meeting">Client Meeting</option>
-                      <option value="Delivery/Pickup">Delivery/Pickup</option>
-                    </Form.Select>
-                  </Form.Group>
+                {activeSite && (
+                  <Form onSubmit={handleVisitSubmit} className="mt-4 border-top pt-3">
+                    <h6 className="fw-bold mb-3"><FileText className="me-2" size={18}/>Log Visit Report</h6>
+                    {alertMsg && <Alert variant={alertMsg.type} className="small">{alertMsg.text}</Alert>}
+                    
+                    <Form.Group className="mb-2">
+                      <Form.Select size="sm" value={purpose} onChange={e => setPurpose(e.target.value)} required>
+                        <option value="">Select Purpose...</option>
+                        <option value="Inspection">Site Inspection</option>
+                        <option value="Maintenance">Maintenance</option>
+                        <option value="Client Meeting">Client Meeting</option>
+                        <option value="Delivery/Pickup">Delivery/Pickup</option>
+                      </Form.Select>
+                    </Form.Group>
 
-                  <Form.Group className="mb-2">
-                    <Form.Control size="sm" as="textarea" rows={2} placeholder="Visit remarks/findings..." value={remarks} onChange={e => setRemarks(e.target.value)} />
-                  </Form.Group>
+                    <Form.Group className="mb-2">
+                      <Form.Control size="sm" as="textarea" rows={2} placeholder="Visit remarks/findings..." value={remarks} onChange={e => setRemarks(e.target.value)} />
+                    </Form.Group>
 
-                  <Form.Group className="mb-3">
-                    <Form.Label className="small fw-bold"><Camera size={14} className="me-1"/> Live Photo (Required)</Form.Label>
-                    <Form.Control 
-                        type="file" 
-                        size="sm" 
-                        accept="image/*" 
-                        capture="environment" 
-                        ref={fileInputRef}
-                        onChange={e => setPhoto(e.target.files[0])} 
-                        required 
-                    />
-                    <Form.Text className="text-muted" style={{fontSize: '0.7rem'}}>
-                        *Photo will be geotagged using your current GPS coordinates.
-                    </Form.Text>
-                  </Form.Group>
+                    <Form.Group className="mb-3">
+                      <Form.Label className="small fw-bold"><Camera size={14} className="me-1"/> Live Photo (Required)</Form.Label>
+                      <Form.Control 
+                          type="file" 
+                          size="sm" 
+                          accept="image/*" 
+                          capture="environment" 
+                          ref={fileInputRef}
+                          onChange={e => setPhoto(e.target.files[0])} 
+                          required 
+                      />
+                      <Form.Text className="text-muted" style={{fontSize: '0.7rem'}}>
+                          *Photo will be geotagged using your current GPS coordinates.
+                      </Form.Text>
+                    </Form.Group>
 
-                  <Button type="submit" variant="primary" className="w-100 fw-bold" disabled={isSubmitting}>
-                    {isSubmitting ? <Spinner size="sm" /> : "SUBMIT REPORT"}
-                  </Button>
-                </Form>
-              )}
-            </Card.Body>
-          </Card>
+                    <Button type="submit" variant="primary" className="w-100 fw-bold" disabled={isSubmitting}>
+                      {isSubmitting ? <Spinner size="sm" /> : "SUBMIT REPORT"}
+                    </Button>
+                  </Form>
+                )}
+              </Card.Body>
+            </Card>
+
+            {/* NEW: NEARBY SITES DIRECTORY */}
+            <Card className="border-0 shadow-sm flex-grow-1 d-flex flex-column">
+              <Card.Header className="bg-white py-3 border-bottom-0">
+                <h6 className="fw-bold m-0 d-flex align-items-center">
+                  <MapIcon className="me-2 text-primary" size={18} /> 
+                  Nearby Sites Directory
+                </h6>
+              </Card.Header>
+              <Card.Body className="p-0 overflow-auto" style={{ maxHeight: '250px' }}>
+                <Table hover responsive className="mb-0 align-middle">
+                  <tbody>
+                    {nearbySites.length === 0 ? (
+                      <tr><td className="text-center py-4 text-muted small">No sites available or waiting for GPS...</td></tr>
+                    ) : (
+                      nearbySites.map(site => (
+                        <tr key={site.id}>
+                          <td className="ps-3 border-0 border-bottom">
+                            <div className="fw-bold">{site.name}</div>
+                            <div className="text-muted small">
+                              {/* Automatically switch between meters and kilometers for readability */}
+                              {site.distance < 1000 
+                                ? `${Math.round(site.distance)} m away` 
+                                : `${(site.distance / 1000).toFixed(1)} km away`}
+                            </div>
+                          </td>
+                          <td className="text-end pe-3 border-0 border-bottom">
+                            <Button 
+                              variant="outline-primary" 
+                              size="sm" 
+                              className="rounded-pill px-3 fw-bold"
+                              style={{fontSize: '0.8rem'}}
+                              onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=${site.lat},${site.lon}`, '_blank')}
+                            >
+                              Directions
+                            </Button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </Table>
+              </Card.Body>
+            </Card>
+          </div>
         </Col>
       </Row>
 
