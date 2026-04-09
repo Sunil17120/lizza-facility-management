@@ -473,22 +473,105 @@ const AdminDashboard = () => {
         </Modal.Body>
       </Modal>
 
-      {/* Verification Review */}
+    {/* Verification Review */}
       <Modal show={!!selectedStaff} onHide={() => setSelectedStaff(null)} size="xl" centered>
-        <Modal.Header closeButton className="bg-dark text-white"><Modal.Title className="h6">Reviewing: {selectedStaff?.full_name}</Modal.Title></Modal.Header>
+        <Modal.Header closeButton className="bg-dark text-white d-flex justify-content-between align-items-center w-100">
+          <Modal.Title className="h6 mb-0">Reviewing: {selectedStaff?.full_name}</Modal.Title>
+          {/* NEW: Download generated PDF Button */}
+          <Button variant="outline-light" size="sm" className="fw-bold ms-auto me-3 d-flex align-items-center" onClick={() => {
+              const printWindow = window.open('', '_blank');
+              printWindow.document.write(`
+                <html>
+                  <head>
+                    <title>Verification_${selectedStaff?.full_name}</title>
+                    <style>
+                      body { font-family: Arial, sans-serif; padding: 40px; color: #333; }
+                      h2 { text-align: center; border-bottom: 2px solid #dc3545; padding-bottom: 10px; }
+                      .flex-row { display: flex; justify-content: space-between; margin-top: 30px; }
+                      .photo { width: 150px; height: 150px; border-radius: 8px; object-fit: cover; border: 2px solid #ccc; }
+                      .details { flex-grow: 1; padding-left: 30px; }
+                      table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+                      td, th { padding: 10px; border: 1px solid #ddd; text-align: left; }
+                      th { background-color: #f8f9fa; width: 30%; }
+                      .doc-img { width: 100%; max-width: 500px; margin-top: 10px; border: 1px solid #ccc; }
+                    </style>
+                  </head>
+                  <body>
+                    <h2>Lizza - Employee Verification Report</h2>
+                    <div class="flex-row">
+                      <div><img src="${selectedStaff?.profile_photo_path}" class="photo" alt="Profile" /></div>
+                      <div class="details">
+                        <table>
+                          <tr><th>Full Name</th><td>${selectedStaff?.full_name}</td></tr>
+                          <tr><th>Email</th><td>${selectedStaff?.personal_email}</td></tr>
+                          <tr><th>Mobile</th><td>${selectedStaff?.phone_number}</td></tr>
+                          <tr><th>Date of Birth</th><td>${selectedStaff?.dob}</td></tr>
+                          <tr><th>Father's Name</th><td>${selectedStaff?.father_name || 'N/A'}</td></tr>
+                          <tr><th>Designation</th><td>${selectedStaff?.designation}</td></tr>
+                          <tr><th>Department</th><td>${selectedStaff?.department}</td></tr>
+                        </table>
+                      </div>
+                    </div>
+                    <h3 style="margin-top: 40px;">Identity Document (Aadhaar)</h3>
+                    <img src="${selectedStaff?.aadhar_photo_path}" class="doc-img" alt="Aadhaar Document" />
+                    <script>
+                      // Wait slightly for images to load before popping print dialog
+                      setTimeout(() => { window.print(); window.close(); }, 500);
+                    </script>
+                  </body>
+                </html>
+              `);
+              printWindow.document.close();
+          }}>
+            <FileText size={16} className="me-2"/> Download PDF
+          </Button>
+        </Modal.Header>
         <Modal.Body className="bg-light p-4">
           <Row>
-            <Col md={4}>
-              <Card className="p-3 shadow-sm border-0 mb-3">
-                <p><strong>Phone:</strong> {selectedStaff?.phone_number}</p>
-                <p><strong>DOB:</strong> {selectedStaff?.dob}</p>
-                <p><strong>Designation:</strong> {selectedStaff?.designation}</p>
-                <Button variant="success" className="w-100 fw-bold mt-3" onClick={() => handleVerify(selectedStaff.email)}>APPROVE & ACTIVATE</Button>
+            {/* Quick Actions Panel */}
+            <Col md={3}>
+              <Card className="p-3 shadow-sm border-0 mb-3 text-center">
+                <img src={selectedStaff?.profile_photo_path} alt="Profile" className="img-fluid rounded-circle mb-3 mx-auto" style={{width: '120px', height: '120px', objectFit: 'cover'}} />
+                <h5 className="fw-bold mb-1">{selectedStaff?.first_name}</h5>
+                <Badge bg="primary" className="mb-3">{selectedStaff?.designation}</Badge>
+                
+                <div className="text-start small mb-4">
+                    <p className="mb-1"><strong>Phone:</strong> {selectedStaff?.phone_number}</p>
+                    <p className="mb-1"><strong>DOB:</strong> {selectedStaff?.dob}</p>
+                    <p className="mb-1"><strong>Email:</strong> {selectedStaff?.personal_email}</p>
+                </div>
+                
+                <Button variant="success" className="w-100 fw-bold" onClick={() => handleVerify(selectedStaff.email)}>APPROVE & ACTIVATE</Button>
               </Card>
             </Col>
-            <Col md={8}>
-              <Card className="border-0 shadow-sm overflow-hidden" style={{ height: '70vh' }}>
-                <iframe src={selectedStaff?.filled_form_path} width="100%" height="100%" title="Verification PDF" />
+            
+            {/* dynamically Generated Summary Panel (Replaces old PDF Viewer) */}
+            <Col md={9}>
+              <Card className="border-0 shadow-sm p-4 h-100 overflow-auto">
+                <h5 className="fw-bold border-bottom pb-2 mb-4 text-primary">Application Details</h5>
+                <Row className="mb-4">
+                    <Col sm={6} className="mb-3">
+                        <small className="text-muted d-block text-uppercase fw-bold">Full Name</small>
+                        <span>{selectedStaff?.full_name}</span>
+                    </Col>
+                    <Col sm={6} className="mb-3">
+                        <small className="text-muted d-block text-uppercase fw-bold">Father's Name</small>
+                        <span>{selectedStaff?.father_name || '-'}</span>
+                    </Col>
+                    <Col sm={6} className="mb-3">
+                        <small className="text-muted d-block text-uppercase fw-bold">Department</small>
+                        <span>{selectedStaff?.department}</span>
+                    </Col>
+                    <Col sm={6} className="mb-3">
+                        <small className="text-muted d-block text-uppercase fw-bold">Assigned Shift</small>
+                        <span>{selectedStaff?.shift_start} to {selectedStaff?.shift_end}</span>
+                    </Col>
+                </Row>
+                
+                <h5 className="fw-bold border-bottom pb-2 mb-3 mt-2 text-primary">Aadhaar Evidence</h5>
+                <div className="bg-white border rounded p-3 text-center">
+                    <img src={selectedStaff?.aadhar_photo_path} alt="Aadhaar" className="img-fluid rounded" style={{maxHeight: '300px'}} />
+                </div>
               </Card>
             </Col>
           </Row>

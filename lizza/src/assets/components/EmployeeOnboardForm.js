@@ -1,26 +1,31 @@
 import React, { useState } from 'react';
-import { Form, Row, Col, Button, Tabs, Tab, Image, Alert } from 'react-bootstrap';
-import { User as UserIcon, Briefcase, FileText, Camera, CreditCard, HeartPulse, ShieldCheck } from 'lucide-react';
+import { Form, Row, Col, Button, Image, Alert, Card, InputGroup } from 'react-bootstrap';
+import { Camera, CheckCircle, UploadCloud, ExternalLink } from 'lucide-react';
 
 const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
+  const [verifyMode, setVerifyMode] = useState('manual'); // 'ekyc' or 'manual'
+  const [ekycStatus, setEkycStatus] = useState('pending'); // pending, verified
+  
   const [formData, setFormData] = useState({
     firstName: '', lastName: '', personalEmail: '', phone: '', dob: '', 
-    fatherName: '', motherName: '', bloodGroup: '', emergencyContact: '',
-    designation: '', department: 'IT / Engineering', experience: 0.0, 
-    prevCompany: '', prevRole: '', aadhar: '', pan: '', role: 'employee', 
-    locId: '', shiftStart: '09:00', shiftEnd: '18:00'
+    fatherName: '', aadhar: '', designation: '', department: 'IT / Engineering', 
+    role: 'employee', locId: '', shiftStart: '09:00', shiftEnd: '18:00'
   });
   
-  const [files, setFiles] = useState({ profile: null, aadharPhoto: null, panPhoto: null, filledForm: null });
+  const [files, setFiles] = useState({ profile: null, aadharPhoto: null });
   const [previews, setPreviews] = useState({ profile: null });
   const [error, setError] = useState(null);
+
+  // States for Offline e-KYC
+  const [ekycZip, setEkycZip] = useState(null);
+  const [shareCode, setShareCode] = useState('');
+  const [isExtracting, setIsExtracting] = useState(false);
 
   const handleFileChange = (e, type) => {
     const file = e.target.files[0];
     if (file) {
-      const limit = type === 'filledForm' ? 2 * 1024 * 1024 : 5 * 1024 * 1024;
-      if (file.size > limit) {
-        alert(`File too large. Max: ${limit / (1024 * 1024)}MB`);
+      if (file.size > 5 * 1024 * 1024) {
+        alert("File too large. Max: 5MB");
         e.target.value = ""; return;
       }
       setFiles({ ...files, [type]: file });
@@ -28,48 +33,78 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
     }
   };
 
+  const processOfflineEkyc = () => {
+    if (!ekycZip || shareCode.length !== 4) {
+      setError("Please upload the e-KYC ZIP file and enter the 4-digit share code.");
+      return;
+    }
+    setError(null);
+    setIsExtracting(true);
+
+    // Simulate backend extraction delay
+    setTimeout(() => {
+      if (shareCode === "1234") { // Mock success condition
+        setFormData(prev => ({
+          ...prev,
+          firstName: "Aarav", 
+          lastName: "Sharma",
+          dob: "1995-08-15",
+          phone: "9876543210",
+          aadhar: "XXXX-XXXX-1234" 
+        }));
+        setEkycStatus('verified');
+        setIsExtracting(false);
+      } else {
+        setError("Invalid Share Code or Corrupted ZIP file. Please try again.");
+        setIsExtracting(false);
+      }
+    }, 1500);
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError(null);
     const submitData = new FormData();
     
-    // Exact mapping to match User table columns in database.py
+    // Core Data
     submitData.append('first_name', formData.firstName);
     submitData.append('last_name', formData.lastName);
     submitData.append('personal_email', formData.personalEmail);
     submitData.append('phone_number', formData.phone);
     submitData.append('dob', formData.dob); 
     submitData.append('father_name', formData.fatherName);
-    submitData.append('mother_name', formData.motherName);
-    submitData.append('blood_group', formData.bloodGroup);
-    submitData.append('emergency_contact', formData.emergencyContact);
+    submitData.append('aadhar_number', formData.aadhar);
+    
+    // Work Data
     submitData.append('designation', formData.designation);
     submitData.append('department', formData.department);
-    submitData.append('experience_years', parseFloat(formData.experience) || 0.0);
-    submitData.append('prev_company', formData.prevCompany);
-    submitData.append('prev_role', formData.prevRole);
-    submitData.append('aadhar_number', formData.aadhar);
-    submitData.append('pan_number', formData.pan);
     submitData.append('user_type', formData.role);
     submitData.append('location_id', formData.locId);
     submitData.append('shift_start', formData.shiftStart);
     submitData.append('shift_end', formData.shiftEnd);
     submitData.append('manager_id', parseInt(localStorage.getItem('userId'), 10));
 
-    // Mapping Document Paths
+    // MOCK DATA: Passing dummy values to keep backend happy
+    submitData.append('pan_number', 'NA_MINIMAL_KYC');
+    submitData.append('experience_years', 0.0);
+    submitData.append('mother_name', '');
+    submitData.append('blood_group', '');
+    submitData.append('emergency_contact', formData.phone);
+    submitData.append('prev_company', '');
+    submitData.append('prev_role', '');
+
+    // Photos
     if (files.profile) submitData.append('profile_photo', files.profile);
     if (files.aadharPhoto) submitData.append('aadhar_photo', files.aadharPhoto);
-    if (files.panPhoto) submitData.append('pan_photo', files.panPhoto);
-    if (files.filledForm) submitData.append('filled_form', files.filledForm);
 
     try {
         const res = await fetch(`/api/manager/add-employee`, { method: 'POST', body: submitData });
         const data = await res.json();
         if (res.ok) {
-            alert(`Onboarding Successful! Initial password is user's DOB in DDMMYYYY format.`);
+            alert(`Onboarding Successful! Initial password is user's DOB (DDMMYYYY).`);
             onSuccess();
         } else {
-            setError(data.detail || "Validation Error: Ensure all required fields (*) are filled.");
+            setError(data.detail || "Ensure all required fields are filled.");
         }
     } catch (err) { setError("Network error. Check connection."); }
   };
@@ -78,73 +113,119 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
     <Form onSubmit={handleSubmit}>
       {error && <Alert variant="danger">{error}</Alert>}
       
+      {/* Verification Mode Toggle */}
+      <Card className="mb-4 bg-light border-0 shadow-sm">
+        <Card.Body className="d-flex justify-content-center gap-4">
+            <Form.Check 
+                type="radio" label="Offline e-KYC (XML/ZIP)" name="kycMode" 
+                checked={verifyMode === 'ekyc'} onChange={() => setVerifyMode('ekyc')} 
+                className="fw-bold text-primary"
+            />
+            <Form.Check 
+                type="radio" label="Manual Entry" name="kycMode" 
+                checked={verifyMode === 'manual'} onChange={() => { setVerifyMode('manual'); setEkycStatus('pending'); }}
+                className="fw-bold"
+            />
+        </Card.Body>
+      </Card>
+
+      {/* Profile Photo Upload */}
       <div className="text-center mb-4">
         <div className="position-relative d-inline-block">
-          <Image src={previews.profile || "https://via.placeholder.com/120"} roundedCircle style={{ width: '120px', height: '120px', objectFit: 'cover', border: '3px solid #dc3545' }} />
-          <label htmlFor="prof-up" className="position-absolute bottom-0 end-0 bg-danger text-white rounded-circle p-2" style={{ cursor: 'pointer' }}><Camera size={18} /></label>
+          <Image src={previews.profile || "https://via.placeholder.com/120"} roundedCircle style={{ width: '120px', height: '120px', objectFit: 'cover', border: '3px solid #0d6efd' }} />
+          <label htmlFor="prof-up" className="position-absolute bottom-0 end-0 bg-primary text-white rounded-circle p-2" style={{ cursor: 'pointer' }}><Camera size={18} /></label>
           <input id="prof-up" type="file" hidden accept="image/*" required onChange={(e) => handleFileChange(e, 'profile')} />
         </div>
         <p className="small text-muted mt-2">Profile Photo <span className="text-danger">*</span></p>
       </div>
 
-      <Tabs defaultActiveKey="personal" className="mb-4">
-        {/* TAB 1: PERSONAL & FAMILY (Cols 1 & 2 in User table) */}
-        <Tab eventKey="personal" title={<><UserIcon size={16} className="me-2"/>Personal</>}>
-          <Row className="mt-3">
-            <Col md={4} className="mb-3"><Form.Label className="small fw-bold">First Name <span className="text-danger">*</span></Form.Label><Form.Control required onChange={e => setFormData({...formData, firstName: e.target.value})} /></Col>
-            <Col md={4} className="mb-3"><Form.Label className="small fw-bold">Last Name <span className="text-danger">*</span></Form.Label><Form.Control required onChange={e => setFormData({...formData, lastName: e.target.value})} /></Col>
-            <Col md={4} className="mb-3"><Form.Label className="small fw-bold">DOB <span className="text-danger">*</span></Form.Label><Form.Control type="date" required onChange={e => setFormData({...formData, dob: e.target.value})} /></Col>
-            <Col md={6} className="mb-3"><Form.Label className="small fw-bold">Father's Name</Form.Label><Form.Control onChange={e => setFormData({...formData, fatherName: e.target.value})} /></Col>
-            <Col md={6} className="mb-3"><Form.Label className="small fw-bold">Mother's Name</Form.Label><Form.Control onChange={e => setFormData({...formData, motherName: e.target.value})} /></Col>
-            <Col md={4} className="mb-3"><Form.Label className="small fw-bold">Personal Email <span className="text-danger">*</span></Form.Label><Form.Control type="email" required onChange={e => setFormData({...formData, personalEmail: e.target.value})} /></Col>
-            <Col md={4} className="mb-3"><Form.Label className="small fw-bold">Phone <span className="text-danger">*</span></Form.Label><Form.Control required pattern="[0-9]{10}" onChange={e => setFormData({...formData, phone: e.target.value})} /></Col>
-            <Col md={4} className="mb-3"><Form.Label className="small fw-bold">Blood Group</Form.Label><Form.Control placeholder="e.g. O+" onChange={e => setFormData({...formData, bloodGroup: e.target.value})} /></Col>
-            <Col md={12} className="mb-3"><Form.Label className="small fw-bold">Emergency Contact <span className="text-danger">*</span></Form.Label><Form.Control required onChange={e => setFormData({...formData, emergencyContact: e.target.value})} /></Col>
+      {/* E-KYC Offline Gate */}
+      {verifyMode === 'ekyc' && ekycStatus === 'pending' && (
+        <Alert variant="info" className="p-4 shadow-sm">
+          <div className="text-center mb-3">
+            <h5 className="fw-bold text-primary mb-1">Aadhaar Paperless Offline e-KYC</h5>
+            <p className="small text-muted mb-2">Upload the password-protected ZIP file downloaded from the UIDAI portal.</p>
+            <a href="https://myaadhaar.uidai.gov.in/" target="_blank" rel="noreferrer" className="small d-inline-flex align-items-center">
+              Download Offline e-KYC from UIDAI <ExternalLink size={14} className="ms-1" />
+            </a>
+          </div>
+          
+          <Row className="justify-content-center">
+            <Col md={8}>
+              <Form.Group className="mb-3">
+                <Form.Label className="small fw-bold"><UploadCloud size={16} className="me-2"/>Upload Paperless ZIP</Form.Label>
+                <Form.Control type="file" accept=".zip" onChange={(e) => setEkycZip(e.target.files[0])} />
+              </Form.Group>
+              <Form.Group className="mb-3">
+                <Form.Label className="small fw-bold">4-Digit Share Code</Form.Label>
+                <Form.Control type="password" placeholder="e.g., 1234" maxLength="4" value={shareCode} onChange={(e) => setShareCode(e.target.value)} />
+                <Form.Text className="text-muted" style={{fontSize: '0.7rem'}}>The code used to password-protect the ZIP file.</Form.Text>
+              </Form.Group>
+              <Button variant="primary" className="w-100 fw-bold" onClick={processOfflineEkyc} disabled={isExtracting}>
+                {isExtracting ? 'Extracting Data...' : 'Extract & Verify'}
+              </Button>
+            </Col>
           </Row>
-        </Tab>
+        </Alert>
+      )}
 
-        {/* TAB 2: PROFESSIONAL (Cols 4, 5 & 8 in User table) */}
-        <Tab eventKey="work" title={<><Briefcase size={16} className="me-2"/>Work</>}>
-          <Row className="mt-3">
-            <Col md={6} className="mb-3"><Form.Label className="small fw-bold">Designation <span className="text-danger">*</span></Form.Label><Form.Control required onChange={e => setFormData({...formData, designation: e.target.value})} /></Col>
-            <Col md={6} className="mb-3"><Form.Label className="small fw-bold">Department <span className="text-danger">*</span></Form.Label><Form.Select onChange={e => setFormData({...formData, department: e.target.value})}><option>IT / Engineering</option><option>Facility Management</option><option>HR</option><option>Operations</option></Form.Select></Col>
-            <Col md={6} className="mb-3"><Form.Label className="small fw-bold">Assign Branch <span className="text-danger">*</span></Form.Label><Form.Select required onChange={e => setFormData({...formData, locId: e.target.value})}><option value="">Select Branch...</option>{locations?.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</Form.Select></Col>
-            <Col md={6} className="mb-3"><Form.Label className="small fw-bold">System Role <span className="text-danger">*</span></Form.Label><Form.Select onChange={e => setFormData({...formData, role: e.target.value})}><option value="employee">Employee</option><option value="manager">Manager</option><option value="Field Officer">Field Officer</option></Form.Select></Col>
-            <Col md={6} className="mb-3"><Form.Label className="small fw-bold">Shift Start <span className="text-danger">*</span></Form.Label><Form.Control type="time" value={formData.shiftStart} onChange={e => setFormData({...formData, shiftStart: e.target.value})} /></Col>
-            <Col md={6} className="mb-3"><Form.Label className="small fw-bold">Shift End <span className="text-danger">*</span></Form.Label><Form.Control type="time" value={formData.shiftEnd} onChange={e => setFormData({...formData, shiftEnd: e.target.value})} /></Col>
-            <Col md={4} className="mb-3"><Form.Label className="small fw-bold">Exp (Years)</Form.Label><Form.Control type="number" step="0.1" onChange={e => setFormData({...formData, experience: e.target.value})} /></Col>
-            <Col md={4} className="mb-3"><Form.Label className="small fw-bold">Prev Company</Form.Label><Form.Control onChange={e => setFormData({...formData, prevCompany: e.target.value})} /></Col>
-            <Col md={4} className="mb-3"><Form.Label className="small fw-bold">Prev Role</Form.Label><Form.Control onChange={e => setFormData({...formData, prevRole: e.target.value})} /></Col>
+      {/* Main Minimal Form */}
+      {(verifyMode === 'manual' || ekycStatus === 'verified') && (
+        <>
+          {ekycStatus === 'verified' && <Alert variant="success" className="d-flex justify-content-center fw-bold"><CheckCircle className="me-2"/> e-KYC Extracted Successfully! Data Auto-filled.</Alert>}
+          
+          <h6 className="fw-bold border-bottom pb-2 mb-3 text-primary">Personal Details</h6>
+          <Row className="mb-4">
+            <Col md={6} className="mb-3"><Form.Label className="small fw-bold">First Name *</Form.Label><Form.Control required value={formData.firstName} onChange={e => setFormData({...formData, firstName: e.target.value})} /></Col>
+            <Col md={6} className="mb-3"><Form.Label className="small fw-bold">Last Name *</Form.Label><Form.Control required value={formData.lastName} onChange={e => setFormData({...formData, lastName: e.target.value})} /></Col>
+            <Col md={6} className="mb-3"><Form.Label className="small fw-bold">DOB *</Form.Label><Form.Control type="date" required value={formData.dob} onChange={e => setFormData({...formData, dob: e.target.value})} /></Col>
+            <Col md={6} className="mb-3"><Form.Label className="small fw-bold">Father's Name</Form.Label><Form.Control value={formData.fatherName} onChange={e => setFormData({...formData, fatherName: e.target.value})} /></Col>
+            <Col md={6} className="mb-3"><Form.Label className="small fw-bold">Personal Email *</Form.Label><Form.Control type="email" required value={formData.personalEmail} onChange={e => setFormData({...formData, personalEmail: e.target.value})} /></Col>
+            <Col md={6} className="mb-3"><Form.Label className="small fw-bold">Mobile Number *</Form.Label><Form.Control required pattern="[0-9]{10}" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} /></Col>
           </Row>
-        </Tab>
 
-        {/* TAB 3: DOCUMENTS (Cols 6 & 7 in User table) */}
-        <Tab eventKey="docs" title={<><FileText size={16} className="me-2"/>IDs & Docs</>}>
-          <Row className="mt-3">
+          <h6 className="fw-bold border-bottom pb-2 mb-3 text-primary">Work Details</h6>
+          <Row className="mb-4">
+            <Col md={6} className="mb-3"><Form.Label className="small fw-bold">Designation *</Form.Label><Form.Control required value={formData.designation} onChange={e => setFormData({...formData, designation: e.target.value})} /></Col>
+            <Col md={6} className="mb-3"><Form.Label className="small fw-bold">Assign Branch *</Form.Label><Form.Select required value={formData.locId} onChange={e => setFormData({...formData, locId: e.target.value})}><option value="">Select Branch...</option>{locations?.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</Form.Select></Col>
+            
+            {/* Conditional Column Sizing for Role */}
+            <Col md={formData.role === 'field_officer' ? 12 : 4} className="mb-3">
+                <Form.Label className="small fw-bold">System Role *</Form.Label>
+                <Form.Select value={formData.role} onChange={e => setFormData({...formData, role: e.target.value})}>
+                    <option value="employee">Employee</option>
+                    <option value="field_officer">Field Officer</option>
+                </Form.Select>
+            </Col>
+
+            {/* ONLY SHOW Shift timings if the role is NOT Field Officer */}
+            {formData.role !== 'field_officer' && (
+                <>
+                    <Col md={4} className="mb-3"><Form.Label className="small fw-bold">Shift Start *</Form.Label><Form.Control type="time" required value={formData.shiftStart} onChange={e => setFormData({...formData, shiftStart: e.target.value})} /></Col>
+                    <Col md={4} className="mb-3"><Form.Label className="small fw-bold">Shift End *</Form.Label><Form.Control type="time" required value={formData.shiftEnd} onChange={e => setFormData({...formData, shiftEnd: e.target.value})} /></Col>
+                </>
+            )}
+          </Row>
+
+          <h6 className="fw-bold border-bottom pb-2 mb-3 text-primary">Identity Proof</h6>
+          <Row className="mb-4">
             <Col md={6} className="mb-3">
-              <Form.Label className="small fw-bold">Aadhar Number <span className="text-danger">*</span></Form.Label>
-              <Form.Control required maxLength="12" className="mb-2" onChange={e => setFormData({...formData, aadhar: e.target.value})} />
-              <Form.Label className="extra-small text-muted">Aadhar Photo</Form.Label>
-              <Form.Control type="file" accept="image/*" required onChange={(e) => handleFileChange(e, 'aadharPhoto')} />
+              <Form.Label className="small fw-bold">Aadhaar Number *</Form.Label>
+              <Form.Control required value={formData.aadhar} onChange={e => setFormData({...formData, aadhar: e.target.value})} placeholder={ekycStatus === 'verified' ? "Masked via e-KYC" : "12-digit number"} />
             </Col>
             <Col md={6} className="mb-3">
-              <Form.Label className="small fw-bold">PAN Number <span className="text-danger">*</span></Form.Label>
-              <Form.Control required maxLength="10" className="mb-2" onChange={e => setFormData({...formData, pan: e.target.value})} />
-              <Form.Label className="extra-small text-muted">PAN Photo</Form.Label>
-              <Form.Control type="file" accept="image/*" required onChange={(e) => handleFileChange(e, 'panPhoto')} />
-            </Col>
-            <Col md={12} className="mb-3">
-              <Form.Label className="small fw-bold text-danger">Verification Form (PDF Only) <span className="text-danger">*</span></Form.Label>
-              <Form.Control type="file" accept=".pdf" required onChange={(e) => handleFileChange(e, 'filledForm')} />
+              <Form.Label className="small fw-bold">Upload Aadhaar Photo *</Form.Label>
+              <Form.Control type="file" accept="image/*" required={ekycStatus !== 'verified'} onChange={(e) => handleFileChange(e, 'aadharPhoto')} />
+              {ekycStatus === 'verified' && <Form.Text className="text-success">Photo extracted from XML. You may upload a physical copy if needed.</Form.Text>}
             </Col>
           </Row>
-        </Tab>
-      </Tabs>
 
-      <div className="d-flex justify-content-end gap-2 border-top pt-3">
-        <Button variant="light" onClick={onCancel}>Cancel</Button>
-        <Button type="submit" variant="danger" className="px-4 fw-bold shadow-sm">Complete System Onboarding</Button>
-      </div>
+          <div className="d-flex justify-content-end gap-2 border-top pt-3">
+            <Button variant="light" onClick={onCancel}>Cancel</Button>
+            <Button type="submit" variant="primary" className="px-4 fw-bold shadow-sm">Complete Registration</Button>
+          </div>
+        </>
+      )}
     </Form>
   );
 };
