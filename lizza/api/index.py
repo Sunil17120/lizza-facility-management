@@ -405,7 +405,7 @@ def get_monthly_field_visits(
             "site_name": loc.name,
             "purpose": v.purpose,
             "remarks": v.remarks,
-            "photo_url": v.photo_path
+            "photo": v.photo_path
         })
     return report_data
 
