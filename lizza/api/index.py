@@ -360,7 +360,7 @@ def get_my_visits(email: str, db: Session = Depends(get_db)):
         "purpose": v.purpose, 
         "remarks": v.remarks, 
         # Manually convert UTC to IST
-        "visit_time": convert_utc_to_ist(v.visit_time).strftime("%d-%m-%Y %I:%M %p") if v.visit_time else "N/A", 
+        "visit_time": convert_utc_to_ist(v.visit_time).strftime("%d-%b-%Y %I:%M %p") if v.visit_time else "N/A", 
         "photo_url": v.photo_path
     } for v, loc in visits]
 
@@ -399,7 +399,7 @@ def get_monthly_field_visits(
         ist_time = convert_utc_to_ist(v.visit_time)
         report_data.append({
             "visit_id": v.id,
-            "date": ist_time.strftime("%d-%m-%Y") if ist_time else "N/A",
+            "date": ist_time.strftime("%d-%b-%Y") if ist_time else "N/A",
             "time": ist_time.strftime("%I:%M %p IST") if ist_time else "N/A",
             "officer_id": u.blockchain_id or f"EMP-{u.id}",
             "officer_name": u.full_name,
