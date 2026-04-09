@@ -7,7 +7,7 @@ from sqlalchemy import extract
 from pydantic import BaseModel
 from datetime import datetime, timedelta
 from sqlalchemy.exc import IntegrityError
-import zipfile
+import pyzipper
 import io
 import xml.etree.ElementTree as ET
 
@@ -449,18 +449,21 @@ async def extract_ekyc(
         # 1. Read the uploaded ZIP file into memory
         zip_bytes = await file.read()
         
-        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
+        # 2. Extract using pyzipper to handle UIDAI's AES encryption
+        with pyzipper.AESZipFile(io.BytesIO(zip_bytes)) as z:
+            # Set the 4-digit share code as the password
+            z.setpassword(share_code.encode('utf-8'))
+            
             # UIDAI zip contains exactly one XML file
             xml_filename = z.namelist()[0]
             
-            # 2. Extract using the 4-digit share code
-            with z.open(xml_filename, pwd=share_code.encode()) as xml_file:
+            with z.open(xml_filename) as xml_file:
                 xml_content = xml_file.read()
                 
         # 3. Parse the XML
         root = ET.fromstring(xml_content)
         
-        # Strip namespaces to make searching reliable across different UIDAI XML versions
+        # Strip namespaces to make searching reliable across different UIDAI versions
         for elem in root.iter():
             if '}' in elem.tag:
                 elem.tag = elem.tag.split('}', 1)[1]
@@ -472,11 +475,11 @@ async def extract_ekyc(
         if poi is None:
             raise HTTPException(400, "Invalid UIDAI XML format.")
             
-        # Extract attributes
+        # Extract attributes safely
         name = poi.attrib.get('name', '')
-        dob = poi.attrib.get('dob', '') # Usually comes as DD-MM-YYYY
+        dob = poi.attrib.get('dob', '') # Usually DD-MM-YYYY
         
-        # Convert UIDAI DOB format (DD-MM-YYYY) to HTML Input format (YYYY-MM-DD)
+        # Convert UIDAI DOB to HTML Input format (YYYY-MM-DD)
         try:
             dob_obj = datetime.strptime(dob, "%d-%m-%Y")
             dob_formatted = dob_obj.strftime("%Y-%m-%d")
@@ -493,7 +496,7 @@ async def extract_ekyc(
         if photo_base64:
             photo_base64 = f"data:image/jpeg;base64,{photo_base64}"
             
-        # Note: UIDAI Offline XML purposefully does NOT contain the full ID number for security.
+        # UIDAI Offline XML purposefully does NOT contain the full ID number.
         # It provides a reference ID where the first 4 digits usually match the last 4 of the ID.
         reference_id = root.attrib.get('referenceId', '')
         last_4 = reference_id[0:4] if reference_id else "XXXX"
@@ -512,7 +515,8 @@ async def extract_ekyc(
     except RuntimeError as e:
         if 'Bad password' in str(e) or 'password required' in str(e):
             raise HTTPException(400, "Incorrect 4-Digit Share Code.")
-        raise HTTPException(400, "Failed to unlock ZIP. The file may be corrupted.")
+        print(f"Extraction Error: {e}")
+        raise HTTPException(400, "Failed to unlock ZIP. Ensure it is a valid UIDAI file and the code is correct.")
     except Exception as e:
-        print(f"e-KYC Error: {e}")
-        raise HTTPException(500, "Failed to process e-KYC. Ensure it is a valid downloaded ZIP.")
+        print(f"e-KYC Parsing Error: {e}")
+        raise HTTPException(500, "Failed to process e-KYC XML data.")
