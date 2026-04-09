@@ -382,7 +382,6 @@ def get_monthly_field_visits(
               .join(User, SiteVisit.officer_id == User.id)\
               .join(OfficeLocation, SiteVisit.location_id == OfficeLocation.id)
     
-    # Query using precise UTC boundaries
     query = query.filter(SiteVisit.visit_time >= start_utc, SiteVisit.visit_time <= end_utc)
     
     if officer_id:
@@ -405,7 +404,9 @@ def get_monthly_field_visits(
             "site_name": loc.name,
             "purpose": v.purpose,
             "remarks": v.remarks,
-            "photo": v.photo_path
+            "photo": v.photo_path,
+            # NEW: Provide the exact Excel formula for the frontend to use in exports
+            "excel_photo": f'=IMAGE("{v.photo_path}")' if v.photo_path else "No Photo"
         })
     return report_data
 
