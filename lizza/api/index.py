@@ -97,7 +97,7 @@ def send_onboarding_email(to_email, full_name, temp_password, login_email):
     host = os.environ.get("SMTP_SERVER", "smtp.gmail.com")
     if not user or not pw: return False
     try:
-        body = f"Hello {full_name},\n\nYour account is verified.\nEmail: {login_email}\nPassword: {temp_password}"
+        body = f"Hello {full_name},\n\nYour account is verified.\nEmail: {login_email}\nPassword: Date of Birth"
         msg = MIMEText(body)
         msg['Subject'], msg['From'], msg['To'] = "LIZZA - Verification Successful", user, to_email
         with smtplib.SMTP(host, 587) as server:
