@@ -1,11 +1,11 @@
-import hashlib, os, redis, math, smtplib, base64, json, requests, pytz, calendar
+import hashlib, os, redis, math, smtplib, base64, json, requests
 from email.mime.text import MIMEText
 from typing import Optional 
 from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, Query, File, UploadFile, Form
 from sqlalchemy.orm import Session
 from sqlalchemy import extract 
 from pydantic import BaseModel
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from sqlalchemy.exc import IntegrityError
 
 try:
@@ -18,17 +18,6 @@ redis_url = os.environ.get("REDIS_URL") or os.environ.get("KV_URL")
 r = redis.from_url(redis_url, decode_responses=True) if redis_url else None
 init_db()
 PEPPER = os.environ.get("SECRET_PEPPER", "change_me_in_vercel_settings")
-
-# --- TIMEZONE HELPERS ---
-IST = pytz.timezone('Asia/Kolkata')
-
-def convert_utc_to_ist(utc_dt):
-    """Takes a UTC datetime from the database and converts it to IST."""
-    if not utc_dt:
-        return None
-    if utc_dt.tzinfo is None:
-        utc_dt = pytz.utc.localize(utc_dt)
-    return utc_dt.astimezone(IST)
 
 # --- SCHEMAS ---
 class AuthRequest(BaseModel): 
@@ -56,6 +45,7 @@ def get_secure_hash(password: str, salt: str):
     return hashlib.sha256((password + salt + PEPPER).encode()).hexdigest()
 
 def process_upload_base64(upload_file: UploadFile, max_size_mb: int = 5) -> str:
+    """Used for PDFs/Documents that ImgBB cannot host (like the filled form)"""
     if not upload_file or not upload_file.filename: return None
     content = upload_file.file.read()
     if len(content) > max_size_mb * 1024 * 1024:
@@ -63,6 +53,7 @@ def process_upload_base64(upload_file: UploadFile, max_size_mb: int = 5) -> str:
     return f"data:{upload_file.content_type};base64,{base64.b64encode(content).decode('utf-8')}"
 
 def upload_to_cloud(upload_file: UploadFile) -> str:
+    """Uploads Image directly to ImgBB and returns the public short URL."""
     if not upload_file or not upload_file.filename: 
         return None
         
@@ -207,10 +198,15 @@ async def add_employee(
         experience_years=experience_years, prev_company=prev_company, prev_role=prev_role,
         aadhar_enc=cipher.encrypt(aadhar_number.encode()).decode(),
         pan_enc=cipher.encrypt(pan_number.encode()).decode(),
+        
+        # Store images cleanly in ImgBB cloud
         profile_photo_path=upload_to_cloud(profile_photo),
         aadhar_photo_path=upload_to_cloud(aadhar_photo),
         pan_photo_path=upload_to_cloud(pan_photo),
+        
+        # Forms might be PDFs, so keep them as Base64 text in the DB
         filled_form_path=process_upload_base64(filled_form, 2),
+        
         shift_start=shift_start, shift_end=shift_end
     )
     db.add(new_user); db.commit()
@@ -350,15 +346,10 @@ async def log_site_visit(
 def get_my_visits(email: str, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == email.lower().strip()).first()
     if not user: raise HTTPException(404, "User not found")
-    
     visits = db.query(SiteVisit, OfficeLocation).join(OfficeLocation).filter(SiteVisit.officer_id == user.id).order_by(SiteVisit.visit_time.desc()).all()
-    
     return [{
-        "site_name": loc.name, 
-        "purpose": v.purpose, 
-        "remarks": v.remarks, 
-        "visit_time": convert_utc_to_ist(v.visit_time).strftime("%d-%m-%Y %I:%M %p") if convert_utc_to_ist(v.visit_time) else "N/A", 
-        "photo_url": v.photo_path
+        "site_name": loc.name, "purpose": v.purpose, "remarks": v.remarks, 
+        "visit_time": v.visit_time.strftime("%Y-%m-%d %H:%M"), "photo": v.photo_path
     } for v, loc in visits]
 
 @app.get("/api/admin/reports/monthly-field-visits")
@@ -369,21 +360,12 @@ def get_monthly_field_visits(
     location_id: Optional[int] = None, 
     db: Session = Depends(get_db)
 ):
-    # Calculate exact start and end of the month in IST to prevent boundary bugs
-    _, last_day = calendar.monthrange(year, month)
-    start_ist = IST.localize(datetime(year, month, 1, 0, 0, 0))
-    end_ist = IST.localize(datetime(year, month, last_day, 23, 59, 59))
-
-    # Convert to UTC for database querying
-    start_utc = start_ist.astimezone(pytz.utc)
-    end_utc = end_ist.astimezone(pytz.utc)
-
     query = db.query(SiteVisit, User, OfficeLocation)\
               .join(User, SiteVisit.officer_id == User.id)\
               .join(OfficeLocation, SiteVisit.location_id == OfficeLocation.id)
     
-    # Query using precise boundaries instead of 'extract'
-    query = query.filter(SiteVisit.visit_time >= start_utc, SiteVisit.visit_time <= end_utc)
+    query = query.filter(extract('month', SiteVisit.visit_time) == month)
+    query = query.filter(extract('year', SiteVisit.visit_time) == year)
     
     if officer_id:
         query = query.filter(SiteVisit.officer_id == officer_id)
@@ -394,18 +376,17 @@ def get_monthly_field_visits(
     
     report_data = []
     for v, u, loc in results:
-        ist_time = convert_utc_to_ist(v.visit_time)
         report_data.append({
             "visit_id": v.id,
-            "date": ist_time.strftime("%d-%m-%Y") if ist_time else "N/A",
-            "time": ist_time.strftime("%I:%M %p IST") if ist_time else "N/A",
+            "date": v.visit_time.strftime("%Y-%m-%d"),
+            "time": v.visit_time.strftime("%I:%M %p"),
             "officer_id": u.blockchain_id or f"EMP-{u.id}",
             "officer_name": u.full_name,
             "site_id": loc.id,
             "site_name": loc.name,
             "purpose": v.purpose,
             "remarks": v.remarks,
-            "photo_url": v.photo_path
+            "photo": v.photo_path
         })
     return report_data
 
@@ -422,9 +403,7 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
 
     office = db.query(OfficeLocation).filter(OfficeLocation.id == user.location_id).first()
     is_inside = get_distance(lat, lon, office.lat, office.lon) <= office.radius
-    
-    # Safely calculate current IST time for shift comparison
-    now_ist = datetime.now(timezone.utc).astimezone(IST)
+    now_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
     now_str = now_ist.strftime("%H:%M")
 
     if is_inside:

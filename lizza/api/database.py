@@ -2,7 +2,7 @@ import os
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, ForeignKey, Float, Boolean, text, Text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-from datetime import datetime, timezone
+from datetime import datetime
 from cryptography.fernet import Fernet 
 
 # --- SECURITY CONFIG ---
@@ -64,9 +64,9 @@ class User(Base):
     
     # 8. Status
     is_present = Column(Boolean, default=False)
-    shift_start = Column(String, nullable=True) 
-    shift_end = Column(String, nullable=True)   
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    shift_start = Column(String, nullable=True) # CHANGED: Now nullable for Field Officers
+    shift_end = Column(String, nullable=True)   # CHANGED: Now nullable for Field Officers
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 class EmployeeLocation(Base):
     __tablename__ = "employee_locations"
@@ -74,7 +74,7 @@ class EmployeeLocation(Base):
     user_id = Column(Integer, ForeignKey("users.id"))
     latitude = Column(String)
     longitude = Column(String)
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 class OfficeLocation(Base):
     __tablename__ = "office_locations"
@@ -84,6 +84,7 @@ class OfficeLocation(Base):
     lon = Column(Float)
     radius = Column(Integer, default=200)
 
+# NEW: Site Visit model for Field Officers
 class SiteVisit(Base):
     __tablename__ = "site_visits"
     id = Column(Integer, primary_key=True, index=True)
@@ -91,8 +92,8 @@ class SiteVisit(Base):
     location_id = Column(Integer, ForeignKey("office_locations.id"))
     purpose = Column(String)
     remarks = Column(Text, nullable=True)
-    photo_path = Column(Text) 
-    visit_time = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    photo_path = Column(Text) # Will store the Base64 image
+    visit_time = Column(DateTime, default=datetime.utcnow)
 
 def init_db():
     Base.metadata.create_all(bind=engine)
