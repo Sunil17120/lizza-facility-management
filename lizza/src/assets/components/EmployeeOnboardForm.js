@@ -162,7 +162,7 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
         <div className="position-relative d-inline-block">
           <Image src={previews.profile || "https://via.placeholder.com/120"} roundedCircle style={{ width: '120px', height: '120px', objectFit: 'cover', border: '3px solid #0d6efd' }} />
           <label htmlFor="prof-up" className="position-absolute bottom-0 end-0 bg-primary text-white rounded-circle p-2" style={{ cursor: 'pointer' }}><Camera size={18} /></label>
-          <input id="prof-up" type="file" hidden accept="image/*" required onChange={(e) => handleFileChange(e, 'profile')} />
+         <input id="prof-up" type="file" hidden accept="image/*" onChange={(e) => handleFileChange(e, 'profile')} />
         </div>
         <p className="small text-muted mt-2">Profile Photo <span className="text-danger">*</span></p>
       </div>
