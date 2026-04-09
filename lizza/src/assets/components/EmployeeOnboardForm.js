@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Form, Row, Col, Button, Image, Alert, Card, InputGroup } from 'react-bootstrap';
+import { Form, Row, Col, Button, Image, Alert, Card } from 'react-bootstrap';
 import { Camera, CheckCircle, UploadCloud, ExternalLink } from 'lucide-react';
 
 const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
@@ -33,7 +33,8 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
     }
   };
 
-  const processOfflineEkyc = () => {
+  // REAL OFFLINE E-KYC EXTRACTION CALLING THE FASTAPI BACKEND
+  const processOfflineEkyc = async () => {
     if (!ekycZip || shareCode.length !== 4) {
       setError("Please upload the e-KYC ZIP file and enter the 4-digit share code.");
       return;
@@ -41,24 +42,51 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
     setError(null);
     setIsExtracting(true);
 
-    // Simulate backend extraction delay
-    setTimeout(() => {
-      if (shareCode === "1234") { // Mock success condition
+    const ekycData = new FormData();
+    ekycData.append('file', ekycZip);
+    ekycData.append('share_code', shareCode);
+
+    try {
+      // Call the real Python backend endpoint
+      const res = await fetch('/api/manager/extract-ekyc', {
+        method: 'POST',
+        body: ekycData
+      });
+      
+      const data = await res.json();
+      
+      if (res.ok && data.status === "success") {
+        // 1. Auto-fill the form with real extracted data
         setFormData(prev => ({
           ...prev,
-          firstName: "Aarav", 
-          lastName: "Sharma",
-          dob: "1995-08-15",
-          phone: "9876543210",
-          aadhar: "XXXX-XXXX-1234" 
+          firstName: data.data.firstName || prev.firstName,
+          lastName: data.data.lastName || prev.lastName,
+          dob: data.data.dob || prev.dob,
+          aadhar: data.data.aadhar_reference || prev.aadhar
         }));
+        
+        // 2. Set the extracted photo as the profile picture
+        if (data.data.photo) {
+          setPreviews(prev => ({ ...prev, profile: data.data.photo }));
+          
+          // Convert the Base64 image back into a standard File object 
+          // so the existing form submission handles it normally.
+          fetch(data.data.photo)
+            .then(res => res.blob())
+            .then(blob => {
+              const file = new File([blob], "ekyc_extracted_photo.jpg", { type: "image/jpeg" });
+              setFiles(prev => ({ ...prev, profile: file }));
+            });
+        }
+        
         setEkycStatus('verified');
-        setIsExtracting(false);
       } else {
-        setError("Invalid Share Code or Corrupted ZIP file. Please try again.");
-        setIsExtracting(false);
+        setError(data.detail || "Invalid Share Code or Corrupted ZIP file.");
       }
-    }, 1500);
+    } catch (err) {
+      setError("Network error while contacting the server to process e-KYC.");
+    }
+    setIsExtracting(false);
   };
 
   const handleSubmit = async (e) => {
@@ -195,6 +223,7 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
                 <Form.Select value={formData.role} onChange={e => setFormData({...formData, role: e.target.value})}>
                     <option value="employee">Employee</option>
                     <option value="field_officer">Field Officer</option>
+                    <option value="field_officer">Manager</option>
                 </Form.Select>
             </Col>
 
