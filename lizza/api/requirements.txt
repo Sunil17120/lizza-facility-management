@@ -6,3 +6,4 @@ redis
 python-multipart
 cryptography
 requests
+pyzipper
