@@ -94,6 +94,13 @@ class SiteVisit(Base):
     remarks = Column(Text, nullable=True)
     photo_path = Column(Text) # Will store the Base64 image
     visit_time = Column(DateTime, default=datetime.utcnow)
+class SiteStay(Base):
+    __tablename__ = "site_stays"
+    id = Column(Integer, primary_key=True, index=True)
+    officer_id = Column(Integer, ForeignKey("users.id"))
+    location_id = Column(Integer, ForeignKey("office_locations.id"))
+    entry_time = Column(DateTime, default=datetime.utcnow)
+    exit_time = Column(DateTime, nullable=True)
 
 def init_db():
     Base.metadata.create_all(bind=engine)

@@ -126,21 +126,21 @@ const AdminDashboard = () => {
 
   // --- EXCEL WITH PHOTOS DOWNLOADER ---
   const downloadExcelWithPhotos = () => {
-    // We construct an HTML table. Excel can open this natively and will render the base64 images inside the cells.
     let tableHtml = `
       <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
       <head><meta charset="utf-8"></head><body>
       <table border="1">
         <thead>
           <tr style="background-color: #f2f2f2; font-weight: bold;">
-            <th>Date</th><th>Time</th><th>Officer ID</th><th>Officer Name</th><th>Site Name</th><th>Purpose</th><th>Remarks</th><th>Geotagged Photo</th>
+            <th>Date</th><th>Photo Time</th><th>Officer ID</th><th>Officer Name</th><th>Site Name</th>
+            <th>Site Entry</th><th>Site Exit</th><th>Total Duration</th>
+            <th>Purpose</th><th>Remarks</th><th>Geotagged Photo</th>
           </tr>
         </thead>
         <tbody>
     `;
 
     fieldReports.forEach(r => {
-      // Create image tag if photo exists
       const imgTag = r.photo ? `<img src="${r.photo}" width="120" height="120" style="object-fit: contain;" />` : 'No Photo';
       tableHtml += `
         <tr>
@@ -149,6 +149,9 @@ const AdminDashboard = () => {
           <td>${r.officer_id}</td>
           <td>${r.officer_name}</td>
           <td>${r.site_name}</td>
+          <td>${r.entry_time}</td>
+          <td>${r.exit_time}</td>
+          <td>${r.duration}</td>
           <td>${r.purpose}</td>
           <td>${r.remarks || ''}</td>
           <td style="height: 130px; text-align: center; vertical-align: middle;">${imgTag}</td>
@@ -158,12 +161,11 @@ const AdminDashboard = () => {
 
     tableHtml += `</tbody></table></body></html>`;
 
-    // Create Blob and Download
     const blob = new Blob([tableHtml], { type: 'application/vnd.ms-excel' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `Field_Visits_${reportMonth}_${reportYear}.xls`; // Needs .xls for Excel to interpret HTML tables
+    link.download = `Field_Visits_${reportMonth}_${reportYear}.xls`; 
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -426,7 +428,17 @@ const AdminDashboard = () => {
                               <div className="accordion-body p-0">
                                 <Table hover responsive className="mb-0 align-middle small">
                                   <thead className="table-secondary">
-                                    <tr><th>Time</th><th>Officer</th><th>Site</th><th>Purpose</th><th>Remarks</th><th>Evidence</th></tr>
+                                    <tr>
+                                      <th>Photo Time</th>
+                                      <th>Officer</th>
+                                      <th>Site</th>
+                                      <th>Entry</th>
+                                      <th>Exit</th>
+                                      <th>Duration</th>
+                                      <th>Purpose</th>
+                                      <th>Remarks</th>
+                                      <th>Evidence</th>
+                                    </tr>
                                   </thead>
                                   <tbody>
                                     {groupedReports[dateStr].map(visit => (
@@ -434,8 +446,18 @@ const AdminDashboard = () => {
                                         <td className="fw-bold text-nowrap">{visit.time}</td>
                                         <td><span className="text-muted d-block" style={{fontSize:'0.7rem'}}>{visit.officer_id}</span>{visit.officer_name}</td>
                                         <td><MapPin size={12} className="me-1 text-danger"/>{visit.site_name}</td>
+                                        
+                                        {/* Merged Automated Tracking Columns */}
+                                        <td className="text-success fw-bold text-nowrap">{visit.entry_time}</td>
+                                        <td className={visit.exit_time === 'Active' ? 'text-primary fw-bold text-nowrap' : 'text-danger fw-bold text-nowrap'}>{visit.exit_time}</td>
+                                        <td>
+                                          <Badge bg={visit.duration === 'In Progress' ? 'primary' : 'secondary'} className="text-nowrap">
+                                            {visit.duration}
+                                          </Badge>
+                                        </td>
+                                        
                                         <td><Badge bg="dark">{visit.purpose}</Badge></td>
-                                        <td style={{ maxWidth: '250px' }} className="text-truncate" title={visit.remarks}>{visit.remarks || '-'}</td>
+                                        <td style={{ maxWidth: '200px' }} className="text-truncate" title={visit.remarks}>{visit.remarks || '-'}</td>
                                         <td>
                                           <Button variant="outline-secondary" size="sm" onClick={() => setPhotoPreview(visit.photo)}>
                                             <ImageIcon size={14} className="me-1"/> View Photo
@@ -477,7 +499,6 @@ const AdminDashboard = () => {
       <Modal show={!!selectedStaff} onHide={() => setSelectedStaff(null)} size="xl" centered>
         <Modal.Header closeButton className="bg-dark text-white d-flex justify-content-between align-items-center w-100">
           <Modal.Title className="h6 mb-0">Reviewing: {selectedStaff?.full_name}</Modal.Title>
-          {/* NEW: Download generated PDF Button */}
           <Button variant="outline-light" size="sm" className="fw-bold ms-auto me-3 d-flex align-items-center" onClick={() => {
               const printWindow = window.open('', '_blank');
               printWindow.document.write(`
@@ -515,7 +536,6 @@ const AdminDashboard = () => {
                     <h3 style="margin-top: 40px;">Identity Document (Aadhaar)</h3>
                     <img src="${selectedStaff?.aadhar_photo_path}" class="doc-img" alt="Aadhaar Document" />
                     <script>
-                      // Wait slightly for images to load before popping print dialog
                       setTimeout(() => { window.print(); window.close(); }, 500);
                     </script>
                   </body>
@@ -528,7 +548,6 @@ const AdminDashboard = () => {
         </Modal.Header>
         <Modal.Body className="bg-light p-4">
           <Row>
-            {/* Quick Actions Panel */}
             <Col md={3}>
               <Card className="p-3 shadow-sm border-0 mb-3 text-center">
                 <img src={selectedStaff?.profile_photo_path} alt="Profile" className="img-fluid rounded-circle mb-3 mx-auto" style={{width: '120px', height: '120px', objectFit: 'cover'}} />
@@ -545,7 +564,6 @@ const AdminDashboard = () => {
               </Card>
             </Col>
             
-            {/* dynamically Generated Summary Panel (Replaces old PDF Viewer) */}
             <Col md={9}>
               <Card className="border-0 shadow-sm p-4 h-100 overflow-auto">
                 <h5 className="fw-bold border-bottom pb-2 mb-4 text-primary">Application Details</h5>

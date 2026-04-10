@@ -12,9 +12,9 @@ import io
 import xml.etree.ElementTree as ET
 
 try:
-    from .database import SessionLocal, User, EmployeeLocation, OfficeLocation, SiteVisit, init_db, cipher
+    from .database import SessionLocal, User, EmployeeLocation, OfficeLocation, SiteVisit,SiteStay, init_db, cipher
 except ImportError:
-    from database import SessionLocal, User, EmployeeLocation, OfficeLocation, SiteVisit, init_db, cipher
+    from database import SessionLocal, User, EmployeeLocation, OfficeLocation, SiteVisit, SiteStay,init_db, cipher
 
 app = FastAPI()
 redis_url = os.environ.get("REDIS_URL") or os.environ.get("KV_URL")
@@ -366,18 +366,13 @@ def get_my_visits(email: str, db: Session = Depends(get_db)):
 
 @app.get("/api/admin/reports/monthly-field-visits")
 def get_monthly_field_visits(
-    month: int, 
-    year: int, 
-    officer_id: Optional[int] = None, 
-    location_id: Optional[int] = None, 
-    db: Session = Depends(get_db)
+    month: int, year: int, officer_id: Optional[int] = None, 
+    location_id: Optional[int] = None, db: Session = Depends(get_db)
 ):
-    # 1. Define the start and end of the month in naive IST
     _, last_day = calendar.monthrange(year, month)
     start_ist = datetime(year, month, 1, 0, 0, 0)
     end_ist = datetime(year, month, last_day, 23, 59, 59)
 
-    # 2. Subtract 5 hours and 30 minutes to find the exact UTC boundaries
     start_utc = start_ist - timedelta(hours=5, minutes=30)
     end_utc = end_ist - timedelta(hours=5, minutes=30)
 
@@ -387,29 +382,59 @@ def get_monthly_field_visits(
     
     query = query.filter(SiteVisit.visit_time >= start_utc, SiteVisit.visit_time <= end_utc)
     
-    if officer_id:
-        query = query.filter(SiteVisit.officer_id == officer_id)
-    if location_id:
-        query = query.filter(SiteVisit.location_id == location_id)
+    if officer_id: query = query.filter(SiteVisit.officer_id == officer_id)
+    if location_id: query = query.filter(SiteVisit.location_id == location_id)
     
     results = query.order_by(SiteVisit.visit_time.asc()).all()
     
     report_data = []
     for v, u, loc in results:
         ist_time = convert_utc_to_ist(v.visit_time)
+        
+        # --- NEW: Find the matching automated SiteStay for this visit ---
+        # Get the most recent entry that happened before or during this photo upload
+        stay = db.query(SiteStay).filter(
+            SiteStay.officer_id == v.officer_id,
+            SiteStay.location_id == v.location_id,
+            SiteStay.entry_time <= v.visit_time
+        ).order_by(SiteStay.entry_time.desc()).first()
+
+        entry_str, exit_str, duration_str = "N/A", "N/A", "N/A"
+
+        # Validate that the visit actually happened during this stay
+        if stay and (stay.exit_time is None or stay.exit_time >= v.visit_time):
+            entry_ist = convert_utc_to_ist(stay.entry_time)
+            entry_str = entry_ist.strftime("%I:%M %p") if entry_ist else "N/A"
+            
+            if stay.exit_time:
+                exit_ist = convert_utc_to_ist(stay.exit_time)
+                exit_str = exit_ist.strftime("%I:%M %p")
+                diff = stay.exit_time - stay.entry_time
+                hours, remainder = divmod(diff.total_seconds(), 3600)
+                minutes, _ = divmod(remainder, 60)
+                duration_str = f"{int(hours)}h {int(minutes)}m"
+            else:
+                exit_str = "Active"
+                duration_str = "In Progress"
+
         report_data.append({
             "visit_id": v.id,
             "date": ist_time.strftime("%d-%b-%Y") if ist_time else "N/A",
-            "time": ist_time.strftime("%I:%M %p IST") if ist_time else "N/A",
+            "time": ist_time.strftime("%I:%M %p") if ist_time else "N/A",
             "officer_id": u.blockchain_id or f"EMP-{u.id}",
             "officer_name": u.full_name,
             "site_id": loc.id,
             "site_name": loc.name,
+            
+            # Merged Data
+            "entry_time": entry_str,
+            "exit_time": exit_str,
+            "duration": duration_str,
+            
             "purpose": v.purpose,
             "remarks": v.remarks,
             "photo": v.photo_path,
-            # NEW: Provide the exact Excel formula for the frontend to use in exports
-           "excel_photo": f'=IMAGE("{v.photo_path}", "Visit Photo", 0)' if v.photo_path else "No Photo"
+            "excel_photo": f'=IMAGE("{v.photo_path}", "Visit Photo", 0)' if v.photo_path else "No Photo"
         })
     return report_data
 
@@ -421,13 +446,48 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
     
     if r: r.set(f"loc:{email}", f"{lat},{lon}", ex=60)
     
-    if user.user_type == 'field_officer' or not user.location_id or not user.shift_start:
+    # --- NEW: Automated Entry/Exit Tracking for Field Officers ---
+    if user.user_type == 'field_officer':
+        now_utc = datetime.utcnow()
+        offices = db.query(OfficeLocation).all()
+        current_site = None
+
+        # Check if they are inside any site's radius
+        for office in offices:
+            if get_distance(lat, lon, office.lat, office.lon) <= office.radius:
+                current_site = office
+                break
+
+        # Find their current active stay (if any)
+        active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
+
+        if current_site:
+            if not active_stay:
+                # 1. Just entered a site -> Open a new stay
+                new_stay = SiteStay(officer_id=user.id, location_id=current_site.id, entry_time=now_utc)
+                db.add(new_stay)
+                db.commit()
+            elif active_stay.location_id != current_site.id:
+                # 2. Suddenly jumped to a different site -> Close old, open new
+                active_stay.exit_time = now_utc
+                new_stay = SiteStay(officer_id=user.id, location_id=current_site.id, entry_time=now_utc)
+                db.add(new_stay)
+                db.commit()
+        else:
+            if active_stay:
+                # 3. Exited the geofence -> Close the active stay
+                active_stay.exit_time = now_utc
+                db.commit()
+                
+        return {"is_inside": current_site is not None, "status": "normal", "message": "Location Updated"}
+
+    # --- Existing logic for regular employees ---
+    if not user.location_id or not user.shift_start:
         return {"is_inside": True, "status": "normal", "message": "Location Updated"}
 
     office = db.query(OfficeLocation).filter(OfficeLocation.id == user.location_id).first()
     is_inside = get_distance(lat, lon, office.lat, office.lon) <= office.radius
     
-    # Simple manual addition for tracking
     now_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
     now_str = now_ist.strftime("%H:%M")
 
