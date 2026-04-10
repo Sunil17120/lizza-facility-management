@@ -442,45 +442,99 @@ def get_monthly_field_visits(
 @app.post("/api/user/update-location")
 async def update_location(email: str, lat: float, lon: float, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == email.lower().strip()).first()
-    if not user: return {"status": "error"}
+    if not user: 
+        return {"status": "error", "message": "User not found"}
     
-    if r: r.set(f"loc:{email}", f"{lat},{lon}", ex=60)
+    # 1. Update Live Location in Redis for Admin Map (60s expiry)
+    if r:
+        r.set(f"loc:{email}", f"{lat},{lon}", ex=60)
     
-    # --- NEW: Automated Entry/Exit Tracking for Field Officers ---
+    # --- FIELD OFFICER LOGIC ---
     if user.user_type == 'field_officer':
         now_utc = datetime.utcnow()
         offices = db.query(OfficeLocation).all()
         current_site = None
 
-        # Check if they are inside any site's radius
         for office in offices:
             if get_distance(lat, lon, office.lat, office.lon) <= office.radius:
                 current_site = office
                 break
 
-        # Find their current active stay (if any)
         active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
 
         if current_site:
             if not active_stay:
-                # 1. Just entered a site -> Open a new stay
                 new_stay = SiteStay(officer_id=user.id, location_id=current_site.id, entry_time=now_utc)
                 db.add(new_stay)
                 db.commit()
             elif active_stay.location_id != current_site.id:
-                # 2. Suddenly jumped to a different site -> Close old, open new
                 active_stay.exit_time = now_utc
                 new_stay = SiteStay(officer_id=user.id, location_id=current_site.id, entry_time=now_utc)
                 db.add(new_stay)
                 db.commit()
         else:
             if active_stay:
-                # 3. Exited the geofence -> Close the active stay
                 active_stay.exit_time = now_utc
                 db.commit()
                 
         return {"is_inside": current_site is not None, "status": "normal", "message": "Location Updated"}
 
+    # --- REGULAR EMPLOYEE LOGIC (15min and 5min logic) ---
+    if not user.location_id or not user.shift_start:
+        return {"is_inside": True, "status": "normal", "message": "Location Updated"}
+
+    office = db.query(OfficeLocation).filter(OfficeLocation.id == user.location_id).first()
+    is_inside = get_distance(lat, lon, office.lat, office.lon) <= office.radius
+    
+    # Convert UTC to IST for time-based comparisons
+    now_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
+    now_str = now_ist.strftime("%H:%M")
+
+    # A. 15-MINUTE ATTENDANCE LOGIC
+    # Check if user is inside during the first 15 mins of their shift
+    shift_start_dt = datetime.strptime(user.shift_start, "%H:%M")
+    grace_end_dt = shift_start_dt + timedelta(minutes=15)
+    grace_end_str = grace_end_dt.strftime("%H:%M")
+
+    if is_inside:
+        # Clear any existing violation timers in Redis since they are back inside
+        if r:
+            r.delete(f"out_time:{email}")
+            
+        if not user.is_present and user.shift_start <= now_str <= grace_end_str:
+            user.is_present = True
+            db.commit()
+            return {"is_inside": True, "status": "normal", "message": "Attendance Marked Present"}
+        
+        return {"is_inside": True, "status": "inside", "message": "Inside Geofence"}
+
+    # B. 5-MINUTE (300s) OUT-OF-BOUNDS VIOLATION LOGIC
+    else:
+        # Only track violations for users who have already checked in
+        if user.is_present:
+            out_since = r.get(f"out_time:{email}") if r else None
+            
+            if not out_since:
+                # First time they are seen outside, start the clock
+                if r:
+                    r.set(f"out_time:{email}", datetime.utcnow().timestamp())
+                return {"is_inside": False, "status": "warning", "warning_seconds": 300}
+            else:
+                # Calculate how long they've been out
+                elapsed = int(datetime.utcnow().timestamp() - float(out_since))
+                remaining = 300 - elapsed
+                
+                if remaining <= 0:
+                    # 5 minutes finished -> Mark Absent
+                    user.is_present = False
+                    db.commit()
+                    if r:
+                        r.delete(f"out_time:{email}")
+                    return {"is_inside": False, "status": "violation", "message": "Violation: Marked Absent"}
+                
+                return {"is_inside": False, "status": "warning", "warning_seconds": remaining}
+    
+    return {"is_inside": False, "status": "outside", "message": "Outside Geofence"}
     # --- Existing logic for regular employees ---
     if not user.location_id or not user.shift_start:
         return {"is_inside": True, "status": "normal", "message": "Location Updated"}

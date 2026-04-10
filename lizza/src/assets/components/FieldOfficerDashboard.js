@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Container, Card, Row, Col, Badge, Form, Button, Alert, Spinner, Table } from 'react-bootstrap';
 import { MapPin, Camera, Navigation, UserPlus, CheckCircle, FileText, Map as MapIcon } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
+import { BackgroundGeolocation } from '@capacitor-community/background-geolocation'; // Added for background tracking
 import EmployeeOnboardForm from './EmployeeOnboardForm'; 
 import L from 'leaflet';
 
@@ -11,7 +12,7 @@ const FieldOfficerDashboard = () => {
   const [activeSite, setActiveSite] = useState(null);
   const [visitHistory, setVisitHistory] = useState([]);
   
-  // NEW: State to hold sites sorted by distance
+  // State to hold sites sorted by distance
   const [nearbySites, setNearbySites] = useState([]);
   
   // Form State
@@ -48,43 +49,65 @@ const FieldOfficerDashboard = () => {
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
   };
 
-  const updateLocation = useCallback(() => {
-    if (!navigator.geolocation) return;
+  // Logic to process location data and update geofence status
+  const processNewLocation = useCallback((lat, lon) => {
+    setMyLoc({ lat, lon });
+
+    let insideSite = null;
+    const sitesWithDistance = locations.map(site => {
+        const dist = getDistance(lat, lon, site.lat, site.lon);
+        if (dist <= (site.radius || 200)) {
+            insideSite = site;
+        }
+        return { ...site, distance: dist };
+    });
+
+    sitesWithDistance.sort((a, b) => a.distance - b.distance);
+    setNearbySites(sitesWithDistance);
+    setActiveSite(insideSite);
     
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const { latitude, longitude } = pos.coords;
-        setMyLoc({ lat: latitude, lon: longitude });
-
-        let insideSite = null;
-        
-        // NEW: Calculate distance for all sites and store them
-        const sitesWithDistance = locations.map(site => {
-            const dist = getDistance(latitude, longitude, site.lat, site.lon);
-            if (dist <= (site.radius || 200)) {
-                insideSite = site;
-            }
-            return { ...site, distance: dist };
-        });
-
-        // Sort the array by closest distance first
-        sitesWithDistance.sort((a, b) => a.distance - b.distance);
-        
-        setNearbySites(sitesWithDistance);
-        setActiveSite(insideSite);
-        
-        fetch(`/api/user/update-location?email=${userEmail}&lat=${latitude}&lon=${longitude}`, { method: 'POST' });
-      },
-      (err) => console.error(err),
-      { enableHighAccuracy: true, maximumAge: 0 }
-    );
+    // Ping backend
+    fetch(`/api/user/update-location?email=${userEmail}&lat=${lat}&lon=${lon}`, { method: 'POST' });
   }, [locations, userEmail]);
 
+  // NATIVE BACKGROUND TRACKING (Pings every 5 minutes)
   useEffect(() => {
-    updateLocation();
-    const interval = setInterval(updateLocation, 10000); 
-    return () => clearInterval(interval);
-  }, [updateLocation]);
+    if (!userEmail) return;
+
+    const startTracking = async () => {
+      try {
+        await BackgroundGeolocation.addWatcher(
+          {
+            backgroundMessage: "Lizza is tracking your site visits for attendance.",
+            backgroundTitle: "Field Operations Active",
+            requestPermissions: true,
+            stale: false,
+            // 300,000ms = 5 minutes
+            interval: 300000, 
+            // Ensures a ping even if stationary every 5 mins
+            distanceFilter: 0 
+          },
+          (location, error) => {
+            if (error) {
+              console.error("Tracking Error:", error);
+              return;
+            }
+            if (location) {
+              processNewLocation(location.latitude, location.longitude);
+            }
+          }
+        );
+      } catch (err) {
+        console.error("Could not start background tracking", err);
+      }
+    };
+
+    startTracking();
+
+    return () => {
+      BackgroundGeolocation.removeWatcher();
+    };
+  }, [userEmail, processNewLocation]);
 
   const handleVisitSubmit = async (e) => {
     e.preventDefault();
@@ -205,7 +228,7 @@ const FieldOfficerDashboard = () => {
               </Card.Body>
             </Card>
 
-            {/* NEW: NEARBY SITES DIRECTORY */}
+            {/* NEARBY SITES DIRECTORY */}
             <Card className="border-0 shadow-sm flex-grow-1 d-flex flex-column">
               <Card.Header className="bg-white py-3 border-bottom-0">
                 <h6 className="fw-bold m-0 d-flex align-items-center">
@@ -224,7 +247,6 @@ const FieldOfficerDashboard = () => {
                           <td className="ps-3 border-0 border-bottom">
                             <div className="fw-bold">{site.name}</div>
                             <div className="text-muted small">
-                              {/* Automatically switch between meters and kilometers for readability */}
                               {site.distance < 1000 
                                 ? `${Math.round(site.distance)} m away` 
                                 : `${(site.distance / 1000).toFixed(1)} km away`}

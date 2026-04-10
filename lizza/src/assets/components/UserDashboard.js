@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom'; 
 import { Container, Row, Col, Card, Spinner, Button, Alert, Badge, ProgressBar, Modal, Form } from 'react-bootstrap';
 import { ShieldCheck, MapPin, Map as MapIcon, Clock, AlertTriangle, KeyRound } from 'lucide-react';
+import { BackgroundGeolocation } from '@capacitor-community/background-geolocation';
 
 const UserDashboard = () => {
   const navigate = useNavigate(); 
@@ -17,6 +18,7 @@ const UserDashboard = () => {
   
   const userEmail = localStorage.getItem('userEmail');
 
+  // 1. Profile Loading & Role Redirection
   useEffect(() => {
     if (localStorage.getItem('forcePasswordChange') === 'true') { setIsForceChange(true); setShowPassModal(true); }
 
@@ -34,45 +36,96 @@ const UserDashboard = () => {
     }
   }, [userEmail, navigate]);
 
+  // 2. Attendance Grace Period Timer (15-minute logic)
   useEffect(() => {
     if (!dbUser || !dbUser.shift_start) return;
     const interval = setInterval(() => {
       const [h, m] = dbUser.shift_start.split(':');
       const now = new Date(), shiftStart = new Date();
       shiftStart.setHours(parseInt(h), parseInt(m), 0);
-      const diff = new Date(shiftStart.getTime() + 15 * 60000) - now;
-      if (diff > 0 && diff < 15 * 60000) setCheckInTimeLeft(`${Math.floor(diff / 60000)}m ${Math.floor((diff % 60000) / 1000)}s`);
-      else setCheckInTimeLeft(null);
+      
+      // Calculate 15-minute grace period from shift start
+      const gracePeriodEnd = new Date(shiftStart.getTime() + 15 * 60000);
+      const diff = gracePeriodEnd - now;
+
+      if (diff > 0 && diff < 15 * 60000) {
+        setCheckInTimeLeft(`${Math.floor(diff / 60000)}m ${Math.floor((diff % 60000) / 1000)}s`);
+      } else {
+        setCheckInTimeLeft(null);
+      }
     }, 1000);
     return () => clearInterval(interval);
   }, [dbUser]);
 
-  const syncLocation = useCallback((isManual = false) => {
-    if (!navigator.geolocation) return setStatus({ type: 'danger', msg: 'GPS not supported', code: 'error' });
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        fetch(`/api/user/update-location?email=${userEmail}&lat=${pos.coords.latitude}&lon=${pos.coords.longitude}`, { method: 'POST' })
-          .then(res => res.json())
-          .then(data => {
-            if (data.status === 'warning') { setViolationTime(data.warning_seconds); setStatus({ type: 'danger', msg: `OUT OF BOUNDS! Return in ${data.warning_seconds}s`, code: 'warning' }); } 
-            else if (data.status === 'violation') { setViolationTime(0); setStatus({ type: 'danger', msg: 'MARKED ABSENT', code: 'violation' }); }
-            else if (data.is_inside) { setViolationTime(null); setStatus({ type: 'success', msg: data.message || 'Inside Geofence', code: 'inside' }); } 
-            else { setViolationTime(null); setStatus({ type: 'warning', msg: 'Outside Geofence', code: 'outside' }); }
-          })
-          .catch(() => setStatus({ type: 'danger', msg: 'Sync Error', code: 'error' }));
-      },
-      (err) => setStatus({ type: 'danger', msg: 'Location blocked or timed out.', code: 'gps_error' }),
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
-    );
+  // 3. Location Sync Logic (Handles Geofence Violations)
+  const syncLocation = useCallback(async (lat, lon) => {
+    try {
+      const res = await fetch(`/api/user/update-location?email=${userEmail}&lat=${lat}&lon=${lon}`, { method: 'POST' });
+      const data = await res.json();
+
+      if (data.status === 'warning') { 
+        // Handles the 5-minute (300s) return-to-office timer
+        setViolationTime(data.warning_seconds); 
+        setStatus({ type: 'danger', msg: `OUT OF BOUNDS! Return in ${data.warning_seconds}s`, code: 'warning' }); 
+      } 
+      else if (data.status === 'violation') { 
+        setViolationTime(0); 
+        setStatus({ type: 'danger', msg: 'MARKED ABSENT (VIOLATION)', code: 'violation' }); 
+      }
+      else if (data.is_inside) { 
+        setViolationTime(null); 
+        setStatus({ type: 'success', msg: data.message || 'Inside Geofence', code: 'inside' }); 
+      } 
+      else { 
+        setViolationTime(null); 
+        setStatus({ type: 'warning', msg: 'Outside Geofence', code: 'outside' }); 
+      }
+    } catch (err) {
+      setStatus({ type: 'danger', msg: 'Sync Error', code: 'error' });
+    }
   }, [userEmail]);
 
+  // 4. Manual Sync Trigger
+  const handleManualSync = () => {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition((pos) => {
+      syncLocation(pos.coords.latitude, pos.coords.longitude);
+    });
+  };
+
+  // 5. NATIVE BACKGROUND TRACKING (Pings every 5 minutes)
   useEffect(() => {
     if (!dbUser) return;
-    syncLocation();
-    
-    // CHANGED TO EVERY 5 SECONDS
-    const interval = setInterval(syncLocation, 5000);
-    return () => clearInterval(interval);
+
+    const startBackgroundTracking = async () => {
+      try {
+        await BackgroundGeolocation.addWatcher(
+          {
+            backgroundMessage: "Tracking duty status and geofence safety.",
+            backgroundTitle: "Lizza Duty Tracking Active",
+            requestPermissions: true,
+            stale: false,
+            // 300,000ms = 5 minutes
+            interval: 300000, 
+            distanceFilter: 0 
+          },
+          (location, error) => {
+            if (error) return console.error(error);
+            if (location) {
+              syncLocation(location.latitude, location.longitude);
+            }
+          }
+        );
+      } catch (err) {
+        console.error("Native tracking failed", err);
+      }
+    };
+
+    startBackgroundTracking();
+
+    return () => {
+      BackgroundGeolocation.removeWatcher();
+    };
   }, [dbUser, syncLocation]);
 
   const handlePasswordSubmit = async (e) => {
@@ -104,26 +157,47 @@ const UserDashboard = () => {
             
             <Card.Body className="p-4 text-center">
               {violationTime !== null && (
-                <div className="mb-4"><h1 className="display-4 fw-bold text-danger">{violationTime}s</h1><ProgressBar animated variant="danger" now={(violationTime / 300) * 100} className="mb-2" style={{height: '10px'}} /><small className="text-danger fw-bold">If this reaches 0, you will be marked ABSENT.</small></div>
+                <div className="mb-4">
+                  <h1 className="display-4 fw-bold text-danger">{violationTime}s</h1>
+                  <ProgressBar animated variant="danger" now={(violationTime / 300) * 100} className="mb-2" style={{height: '10px'}} />
+                  <small className="text-danger fw-bold">If this reaches 0, you will be marked ABSENT.</small>
+                </div>
               )}
-              <Alert variant={status.type} className="mb-4 small fw-bold py-3 text-start d-flex align-items-center justify-content-center">{status.code === 'warning' ? <AlertTriangle size={18} className="me-2" /> : <MapIcon size={18} className="me-2" />} {status.msg}</Alert>
+              
+              <Alert variant={status.type} className="mb-4 small fw-bold py-3 text-start d-flex align-items-center justify-content-center">
+                {status.code === 'warning' ? <AlertTriangle size={18} className="me-2" /> : <MapIcon size={18} className="me-2" />} 
+                {status.msg}
+              </Alert>
+
               <div className="d-flex justify-content-center gap-5 mb-4">
                 <div className="text-center"><p className="text-muted small fw-bold mb-1">SHIFT START</p><h3 className="fw-bold text-dark">{dbUser?.shift_start || '--:--'}</h3></div><div className="vr"></div>
                 <div className="text-center"><p className="text-muted small fw-bold mb-1">SHIFT END</p><h3 className="fw-bold text-dark">{dbUser?.shift_end || '--:--'}</h3></div>
               </div>
+
               {checkInTimeLeft && status.code !== 'violation' && (
-                  <div className="mb-4 p-2 bg-warning bg-opacity-10 rounded border border-warning"><div className="d-flex align-items-center justify-content-center text-warning fw-bold"><Clock size={16} className="me-2"/>Time remaining to mark Present:</div><h4 className="fw-bold text-dark mt-1">{checkInTimeLeft}</h4></div>
+                  <div className="mb-4 p-2 bg-warning bg-opacity-10 rounded border border-warning">
+                    <div className="d-flex align-items-center justify-content-center text-warning fw-bold"><Clock size={16} className="me-2"/>Time remaining to mark Present:</div>
+                    <h4 className="fw-bold text-dark mt-1">{checkInTimeLeft}</h4>
+                  </div>
               )}
+
               <div className="p-3 bg-light rounded-3 border mb-4">
                 <p className="small text-muted mb-2">Duty Status</p>
-                <div className="d-flex align-items-center justify-content-center gap-2"><div className={`rounded-circle ${status.code === 'inside' ? 'bg-success' : 'bg-secondary'}`} style={{width: 10, height: 10}}></div><span className="fw-bold">{status.code === 'inside' ? "ON DUTY" : (status.code === 'violation' ? "ABSENT (VIOLATION)" : "OFF DUTY / OUTSIDE")}</span></div>
+                <div className="d-flex align-items-center justify-content-center gap-2">
+                  <div className={`rounded-circle ${status.code === 'inside' ? 'bg-success' : 'bg-secondary'}`} style={{width: 10, height: 10}}></div>
+                  <span className="fw-bold">{status.code === 'inside' ? "ON DUTY" : (status.code === 'violation' ? "ABSENT (VIOLATION)" : "OFF DUTY / OUTSIDE")}</span>
+                </div>
               </div>
-              <Button variant="danger" className="mb-4 fw-bold w-100 py-3 shadow-sm" onClick={() => syncLocation(true)}><MapPin size={18} className="me-2" /> Manual Sync & Check-In</Button>
+
+              <Button variant="danger" className="mb-4 fw-bold w-100 py-3 shadow-sm" onClick={handleManualSync}>
+                <MapPin size={18} className="me-2" /> Manual Sync & Check-In
+              </Button>
             </Card.Body>
           </Card>
         </Col>
       </Row>
 
+      {/* Password Modal - Standard logic */}
       <Modal show={showPassModal} onHide={() => !isForceChange && setShowPassModal(false)} backdrop={isForceChange ? 'static' : true} keyboard={!isForceChange} centered>
         <Modal.Header closeButton={!isForceChange} className="border-0 bg-light"><Modal.Title className="fw-bold h5 d-flex align-items-center"><KeyRound className="me-2 text-danger" size={20}/> {isForceChange ? 'Mandatory Security Update' : 'Change Password'}</Modal.Title></Modal.Header>
         <Modal.Body className="p-4">
@@ -140,4 +214,5 @@ const UserDashboard = () => {
     </Container>
   );
 };
+
 export default UserDashboard;
