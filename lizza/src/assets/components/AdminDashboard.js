@@ -12,6 +12,23 @@ import markerShadow from 'leaflet/dist/images/marker-shadow.png';
 let DefaultIcon = L.icon({ iconUrl: markerIcon, shadowUrl: markerShadow, iconSize: [25, 41], iconAnchor: [12, 41] });
 L.Marker.prototype.options.icon = DefaultIcon;
 
+// Helper to create color-coded live tracking icons
+const getStatusIcon = (isPresent) => {
+  return L.divIcon({
+    html: `<div style="
+      background-color: ${isPresent ? '#28a745' : '#dc3545'}; 
+      width: 16px; 
+      height: 16px; 
+      border-radius: 50%; 
+      border: 2px solid white; 
+      box-shadow: 0 0 5px rgba(0,0,0,0.3);
+    "></div>`,
+    className: 'custom-status-marker',
+    iconSize: [16, 16],
+    iconAnchor: [8, 8]
+  });
+};
+
 const AdminDashboard = () => {
   // --- CORE STATES ---
   const [mainTab, setMainTab] = useState('overview');
@@ -251,13 +268,27 @@ const AdminDashboard = () => {
               <Card className="border-0 shadow-sm overflow-hidden mb-4" style={{ height: '380px' }}>
                 <MapContainer center={[22.5726, 88.3639]} zoom={5} style={{ height: '100%' }}>
                   <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+                  
+                  {/* Live Tracking Markers: green for present, red for outside */}
                   {liveLocations.map(loc => (loc.lat && loc.lon) && (
-                    <Marker key={loc.email} position={[loc.lat, loc.lon]}>
-                      <Popup>{loc.name} - {loc.present ? "Present" : "Outside"}</Popup>
+                    <Marker 
+                        key={loc.email} 
+                        position={[loc.lat, loc.lon]}
+                        icon={getStatusIcon(loc.present)}
+                    >
+                      <Popup>
+                        <div className="text-center">
+                            <strong className="d-block">{loc.name}</strong>
+                            <Badge bg={loc.present ? "success" : "danger"} className="mt-1">
+                                {loc.present ? "In Geofence" : "Outside"}
+                            </Badge>
+                        </div>
+                      </Popup>
                     </Marker>
                   ))}
+                  
                   {locations.map(office => (
-                    <Circle key={office.id} center={[office.lat, office.lon]} radius={office.radius} pathOptions={{ color: 'red', fillColor: 'red', fillOpacity: 0.2 }}>
+                    <Circle key={office.id} center={[office.lat, office.lon]} radius={office.radius} pathOptions={{ color: 'red', fillColor: 'red', fillOpacity: 0.1 }}>
                       <Popup>{office.name} Geofence ({office.radius}m)</Popup>
                     </Circle>
                   ))}
