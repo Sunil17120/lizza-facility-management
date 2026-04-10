@@ -1,3 +1,4 @@
+// Build trigger IST 2026-04-10
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Container, Card, Row, Col, Badge, Form, Button, Alert, Spinner, Table } from 'react-bootstrap';
 import { MapPin, Camera, Navigation, UserPlus, CheckCircle, FileText, Map as MapIcon } from 'lucide-react';
