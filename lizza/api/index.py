@@ -445,9 +445,12 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
     if not user: 
         return {"status": "error", "message": "User not found"}
     
-    # 1. Update Live Location in Redis for Admin Map (60s expiry)
+    # 1. Update Live Location in Redis for Admin Map 
     if r:
-        r.set(f"loc:{email}", f"{lat},{lon}", ex=60)
+        if user.is_present:
+            r.set(f"loc:{email}", f"{lat},{lon}", ex=43200) # 12 hours
+        else:
+            r.set(f"loc:{email}", f"{lat},{lon}", ex=360)   # 6 minutes buffer
     
     # --- FIELD OFFICER LOGIC ---
     if user.user_type == 'field_officer':
@@ -535,25 +538,7 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
                 return {"is_inside": False, "status": "warning", "warning_seconds": remaining}
     
     return {"is_inside": False, "status": "outside", "message": "Outside Geofence"}
-    # --- Existing logic for regular employees ---
-    if not user.location_id or not user.shift_start:
-        return {"is_inside": True, "status": "normal", "message": "Location Updated"}
-
-    office = db.query(OfficeLocation).filter(OfficeLocation.id == user.location_id).first()
-    is_inside = get_distance(lat, lon, office.lat, office.lon) <= office.radius
     
-    now_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
-    now_str = now_ist.strftime("%H:%M")
-
-    if is_inside:
-        grace_end = (datetime.strptime(user.shift_start, "%H:%M") + timedelta(minutes=15)).strftime("%H:%M")
-        if not user.is_present and user.shift_start <= now_str <= grace_end:
-            user.is_present = True
-            db.commit()
-            return {"is_inside": True, "status": "normal", "message": "Marked Present"}
-        return {"is_inside": True, "status": "normal", "message": "On Duty"}
-    
-    return {"is_inside": False, "status": "warning", "message": "Outside Geofence"}
 @app.post("/api/manager/extract-ekyc")
 async def extract_ekyc(
     file: UploadFile = File(...),
