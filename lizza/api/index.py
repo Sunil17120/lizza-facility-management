@@ -22,15 +22,19 @@ r = redis.from_url(redis_url, decode_responses=True) if redis_url else None
 init_db()
 PEPPER = os.environ.get("SECRET_PEPPER", "change_me_in_vercel_settings")
 
-# --- TIMEZONE ADDITION HELPER ---
+# --- TIMEZONE & SHIFT HELPERS ---
 def convert_utc_to_ist(utc_dt):
-    """Manually adds 5 hours and 30 minutes to a UTC datetime."""
-    if not utc_dt:
-        return None
-    # Strip tzinfo just in case, then add 5 hours and 30 minutes
-    if utc_dt.tzinfo is not None:
-        utc_dt = utc_dt.replace(tzinfo=None)
+    if not utc_dt: return None
+    if utc_dt.tzinfo is not None: utc_dt = utc_dt.replace(tzinfo=None)
     return utc_dt + timedelta(hours=5, minutes=30)
+
+def is_time_between(start_str, end_str, check_str):
+    """Handles time comparisons, including overnight shifts crossing midnight."""
+    if not start_str or not end_str: return False
+    if start_str <= end_str:
+        return start_str <= check_str <= end_str
+    else: # Shift crosses midnight (e.g., 22:00 to 06:00)
+        return start_str <= check_str or check_str <= end_str
 
 # --- SCHEMAS ---
 class AuthRequest(BaseModel): 
@@ -67,26 +71,17 @@ def process_upload_base64(upload_file: UploadFile, max_size_mb: int = 5) -> str:
 def upload_to_cloud(upload_file: UploadFile) -> str:
     if not upload_file or not upload_file.filename: 
         return None
-        
     try:
         image_bytes = upload_file.file.read()
         encoded_image = base64.b64encode(image_bytes).decode('utf-8')
         
         url = "https://api.imgbb.com/1/upload"
-        payload = {
-            "key": os.environ.get("IMGBB_API_KEY"),
-            "image": encoded_image
-        }
+        payload = {"key": os.environ.get("IMGBB_API_KEY"), "image": encoded_image}
         
         response = requests.post(url, data=payload)
         res_data = response.json()
-        
-        if res_data.get("success"):
-            return res_data["data"]["url"]
-            
-        print("ImgBB Upload Failed:", res_data)
+        if res_data.get("success"): return res_data["data"]["url"]
         return None
-        
     except Exception as e:
         print(f"Cloud upload error: {e}")
         return None
@@ -106,7 +101,6 @@ def send_onboarding_email(to_email, full_name, temp_password, login_email):
             server.sendmail(user, to_email, msg.as_string()) 
         return True
     except Exception as e:
-        print(f"Email Error: {e}")
         return False
 
 def get_distance(lat1, lon1, lat2, lon2):
@@ -150,35 +144,18 @@ def change_password(data: PasswordChange, db: Session = Depends(get_db)):
 # --- MANAGER & ONBOARDING ---
 @app.post("/api/manager/add-employee")
 async def add_employee(
-    first_name: str = Form(...), 
-    last_name: str = Form(...), 
-    personal_email: str = Form(...),
-    phone_number: str = Form(...), 
-    dob: str = Form(...), 
-    father_name: str = Form(None),
-    mother_name: str = Form(None), 
-    blood_group: str = Form(None), 
-    emergency_contact: str = Form(None),
-    designation: str = Form(...), 
-    department: str = Form(...), 
-    experience_years: float = Form(0.0),
-    prev_company: str = Form(None), 
-    prev_role: str = Form(None), 
-    aadhar_number: str = Form(...),
-    pan_number: str = Form(...), 
-    manager_id: int = Form(...), 
-    user_type: str = Form("employee"),
-    location_id: Optional[int] = Form(None), 
-    shift_start: Optional[str] = Form(None),
-    shift_end: Optional[str] = Form(None),
-    profile_photo: UploadFile = File(None), 
-    aadhar_photo: UploadFile = File(None), 
-    pan_photo: UploadFile = File(None), 
-    filled_form: UploadFile = File(None), 
-    db: Session = Depends(get_db)
+    first_name: str = Form(...), last_name: str = Form(...), personal_email: str = Form(...),
+    phone_number: str = Form(...), dob: str = Form(...), father_name: str = Form(None),
+    mother_name: str = Form(None), blood_group: str = Form(None), emergency_contact: str = Form(None),
+    designation: str = Form(...), department: str = Form(...), experience_years: float = Form(0.0),
+    prev_company: str = Form(None), prev_role: str = Form(None), aadhar_number: str = Form(...),
+    pan_number: str = Form(...), manager_id: int = Form(...), user_type: str = Form("employee"),
+    location_id: Optional[int] = Form(None), shift_start: Optional[str] = Form(None),
+    shift_end: Optional[str] = Form(None), profile_photo: UploadFile = File(None), 
+    aadhar_photo: UploadFile = File(None), pan_photo: UploadFile = File(None), 
+    filled_form: UploadFile = File(None), db: Session = Depends(get_db)
 ):
     base_email = f"{first_name.strip().replace(' ', '').lower()}.{last_name.strip().replace(' ', '').lower()}@lizza.com"
-    
     try:
         dt_obj = datetime.strptime(dob, "%Y-%m-%d")
         initial_pw = dt_obj.strftime("%d%m%Y") 
@@ -191,11 +168,7 @@ async def add_employee(
 
     salt = hashlib.sha256(base_email.encode()).hexdigest()[:16]
     
-    if user_type == 'field_officer':
-        shift_start = None
-        shift_end = None
-        location_id = None
-        
+    if user_type == 'field_officer': shift_start, shift_end, location_id = None, None, None
     if not shift_start: shift_start = None
     if not shift_end: shift_end = None
 
@@ -266,12 +239,8 @@ def add_location(data: LocationCreate, db: Session = Depends(get_db)):
 def update_location_endpoint(loc_id: int, data: LocationCreate, db: Session = Depends(get_db)):
     loc = db.query(OfficeLocation).filter(OfficeLocation.id == loc_id).first()
     if not loc: raise HTTPException(404, "Location not found")
-    loc.name = data.name
-    loc.lat = data.lat
-    loc.lon = data.lon
-    loc.radius = data.radius
-    db.commit()
-    return {"status": "updated"}
+    loc.name, loc.lat, loc.lon, loc.radius = data.name, data.lat, data.lon, data.radius
+    db.commit(); return {"status": "updated"}
 
 @app.get("/api/admin/live-tracking")
 def get_live_tracking(admin_email: str, db: Session = Depends(get_db)):
@@ -292,17 +261,9 @@ def get_live_tracking(admin_email: str, db: Session = Depends(get_db)):
 def update_employee_inline(data: dict, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == data.get("email")).first()
     if not user: raise HTTPException(404, "User not found")
-    
-    user.location_id = data.get("location_id")
-    user.shift_start = data.get("shift_start")
-    user.shift_end = data.get("shift_end")
-    user.user_type = data.get("user_type")
-    
-    if "manager_id" in data:
-        user.manager_id = data.get("manager_id")
-        
-    db.commit()
-    return {"status": "updated"}
+    user.location_id, user.shift_start, user.shift_end, user.user_type = data.get("location_id"), data.get("shift_start"), data.get("shift_end"), data.get("user_type")
+    if "manager_id" in data: user.manager_id = data.get("manager_id")
+    db.commit(); return {"status": "updated"}
 
 @app.delete("/api/admin/delete-employee/{user_id}")
 def delete_employee(user_id: int, db: Session = Depends(get_db)):
@@ -319,122 +280,70 @@ def delete_location(loc_id: int, db: Session = Depends(get_db)):
 # --- FIELD OFFICER & REPORTING ROUTES ---
 @app.post("/api/field-officer/log-visit")
 async def log_site_visit(
-    email: str = Form(...),
-    location_id: int = Form(...),
-    purpose: str = Form(...),
-    remarks: str = Form(""),
-    lat: float = Form(...),
-    lon: float = Form(...),
-    photo: UploadFile = File(...),
-    db: Session = Depends(get_db)
+    email: str = Form(...), location_id: int = Form(...), purpose: str = Form(...), remarks: str = Form(""),
+    lat: float = Form(...), lon: float = Form(...), photo: UploadFile = File(...), db: Session = Depends(get_db)
 ):
     user = db.query(User).filter(User.email == email.lower().strip()).first()
-    if not user or user.user_type != 'field_officer':
-        raise HTTPException(403, "Unauthorized")
-
+    if not user or user.user_type != 'field_officer': raise HTTPException(403, "Unauthorized")
     site = db.query(OfficeLocation).filter(OfficeLocation.id == location_id).first()
-    if not site:
-        raise HTTPException(404, "Site not found")
+    if not site: raise HTTPException(404, "Site not found")
 
     distance = get_distance(lat, lon, site.lat, site.lon)
-    if distance > site.radius:
-        raise HTTPException(400, f"Geotag validation failed. You are {int(distance)}m away from the site. Must be within {site.radius}m.")
+    if distance > site.radius: raise HTTPException(400, f"Geotag validation failed. You are {int(distance)}m away from the site. Must be within {site.radius}m.")
 
-    # Upload the live photo to ImgBB
     photo_url = upload_to_cloud(photo)
-    
     visit = SiteVisit(officer_id=user.id, location_id=site.id, purpose=purpose, remarks=remarks, photo_path=photo_url)
-    db.add(visit)
-    db.commit()
+    db.add(visit); db.commit()
     return {"status": "success", "message": "Visit logged and geotag verified."}
 
 @app.get("/api/field-officer/my-visits")
 def get_my_visits(email: str, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == email.lower().strip()).first()
     if not user: raise HTTPException(404, "User not found")
-    
     visits = db.query(SiteVisit, OfficeLocation).join(OfficeLocation).filter(SiteVisit.officer_id == user.id).order_by(SiteVisit.visit_time.desc()).all()
-    
     return [{
-        "site_name": loc.name, 
-        "purpose": v.purpose, 
-        "remarks": v.remarks, 
-        # Manually convert UTC to IST
+        "site_name": loc.name, "purpose": v.purpose, "remarks": v.remarks, 
         "visit_time": convert_utc_to_ist(v.visit_time).strftime("%d-%b-%Y %I:%M %p") if v.visit_time else "N/A", 
         "photo_url": v.photo_path
     } for v, loc in visits]
 
 @app.get("/api/admin/reports/monthly-field-visits")
 def get_monthly_field_visits(
-    month: int, year: int, officer_id: Optional[int] = None, 
-    location_id: Optional[int] = None, db: Session = Depends(get_db)
+    month: int, year: int, officer_id: Optional[int] = None, location_id: Optional[int] = None, db: Session = Depends(get_db)
 ):
     _, last_day = calendar.monthrange(year, month)
-    start_ist = datetime(year, month, 1, 0, 0, 0)
-    end_ist = datetime(year, month, last_day, 23, 59, 59)
+    start_utc = datetime(year, month, 1, 0, 0, 0) - timedelta(hours=5, minutes=30)
+    end_utc = datetime(year, month, last_day, 23, 59, 59) - timedelta(hours=5, minutes=30)
 
-    start_utc = start_ist - timedelta(hours=5, minutes=30)
-    end_utc = end_ist - timedelta(hours=5, minutes=30)
-
-    query = db.query(SiteVisit, User, OfficeLocation)\
-              .join(User, SiteVisit.officer_id == User.id)\
-              .join(OfficeLocation, SiteVisit.location_id == OfficeLocation.id)
-    
+    query = db.query(SiteVisit, User, OfficeLocation).join(User, SiteVisit.officer_id == User.id).join(OfficeLocation, SiteVisit.location_id == OfficeLocation.id)
     query = query.filter(SiteVisit.visit_time >= start_utc, SiteVisit.visit_time <= end_utc)
-    
     if officer_id: query = query.filter(SiteVisit.officer_id == officer_id)
     if location_id: query = query.filter(SiteVisit.location_id == location_id)
     
     results = query.order_by(SiteVisit.visit_time.asc()).all()
-    
     report_data = []
+    
     for v, u, loc in results:
         ist_time = convert_utc_to_ist(v.visit_time)
-        
-        # --- NEW: Find the matching automated SiteStay for this visit ---
-        # Get the most recent entry that happened before or during this photo upload
-        stay = db.query(SiteStay).filter(
-            SiteStay.officer_id == v.officer_id,
-            SiteStay.location_id == v.location_id,
-            SiteStay.entry_time <= v.visit_time
-        ).order_by(SiteStay.entry_time.desc()).first()
+        stay = db.query(SiteStay).filter(SiteStay.officer_id == v.officer_id, SiteStay.location_id == v.location_id, SiteStay.entry_time <= v.visit_time).order_by(SiteStay.entry_time.desc()).first()
 
         entry_str, exit_str, duration_str = "N/A", "N/A", "N/A"
-
-        # Validate that the visit actually happened during this stay
         if stay and (stay.exit_time is None or stay.exit_time >= v.visit_time):
             entry_ist = convert_utc_to_ist(stay.entry_time)
             entry_str = entry_ist.strftime("%I:%M %p") if entry_ist else "N/A"
-            
             if stay.exit_time:
                 exit_ist = convert_utc_to_ist(stay.exit_time)
                 exit_str = exit_ist.strftime("%I:%M %p")
-                diff = stay.exit_time - stay.entry_time
-                hours, remainder = divmod(diff.total_seconds(), 3600)
-                minutes, _ = divmod(remainder, 60)
-                duration_str = f"{int(hours)}h {int(minutes)}m"
+                hours, remainder = divmod((stay.exit_time - stay.entry_time).total_seconds(), 3600)
+                duration_str = f"{int(hours)}h {int(remainder // 60)}m"
             else:
-                exit_str = "Active"
-                duration_str = "In Progress"
+                exit_str, duration_str = "Active", "In Progress"
 
         report_data.append({
-            "visit_id": v.id,
-            "date": ist_time.strftime("%d-%b-%Y") if ist_time else "N/A",
-            "time": ist_time.strftime("%I:%M %p") if ist_time else "N/A",
-            "officer_id": u.blockchain_id or f"EMP-{u.id}",
-            "officer_name": u.full_name,
-            "site_id": loc.id,
-            "site_name": loc.name,
-            
-            # Merged Data
-            "entry_time": entry_str,
-            "exit_time": exit_str,
-            "duration": duration_str,
-            
-            "purpose": v.purpose,
-            "remarks": v.remarks,
-            "photo": v.photo_path,
-            "excel_photo": f'=IMAGE("{v.photo_path}", "Visit Photo", 0)' if v.photo_path else "No Photo"
+            "visit_id": v.id, "date": ist_time.strftime("%d-%b-%Y") if ist_time else "N/A", "time": ist_time.strftime("%I:%M %p") if ist_time else "N/A",
+            "officer_id": u.blockchain_id or f"EMP-{u.id}", "officer_name": u.full_name, "site_id": loc.id, "site_name": loc.name,
+            "entry_time": entry_str, "exit_time": exit_str, "duration": duration_str, "purpose": v.purpose, "remarks": v.remarks,
+            "photo": v.photo_path, "excel_photo": f'=IMAGE("{v.photo_path}", "Visit Photo", 0)' if v.photo_path else "No Photo"
         })
     return report_data
 
@@ -442,180 +351,108 @@ def get_monthly_field_visits(
 @app.post("/api/user/update-location")
 async def update_location(email: str, lat: float, lon: float, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == email.lower().strip()).first()
-    if not user: 
-        return {"status": "error", "message": "User not found"}
+    if not user: return {"status": "error", "message": "User not found"}
     
+    now_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
+    now_str = now_ist.strftime("%H:%M")
+
+    # ==========================================
+    # STRICT PRIVACY GATE: EMPLOYEES & MANAGERS
+    # ==========================================
+    if user.user_type in ['employee', 'manager']:
+        # If they are completely outside their duty hours
+        if not user.shift_start or not user.shift_end or not is_time_between(user.shift_start, user.shift_end, now_str):
+            # 1. Wipe their location from the Admin map to protect privacy
+            if r: r.delete(f"loc:{email}")
+            
+            # 2. Return an off_duty status so the frontend dashboard pauses tracking
+            return {"is_inside": False, "status": "off_duty", "message": "Off Duty - Location tracking paused."}
+
     # 1. Update Live Location in Redis for Admin Map 
     if r:
-        if user.is_present:
-            r.set(f"loc:{email}", f"{lat},{lon}", ex=43200) # 12 hours
-        else:
-            r.set(f"loc:{email}", f"{lat},{lon}", ex=360)   # 6 minutes buffer
+        if user.is_present: r.set(f"loc:{email}", f"{lat},{lon}", ex=43200) # 12 hours
+        else: r.set(f"loc:{email}", f"{lat},{lon}", ex=360)   # 6 minutes buffer
     
     # --- FIELD OFFICER LOGIC ---
     if user.user_type == 'field_officer':
         now_utc = datetime.utcnow()
         offices = db.query(OfficeLocation).all()
-        current_site = None
-
-        for office in offices:
-            if get_distance(lat, lon, office.lat, office.lon) <= office.radius:
-                current_site = office
-                break
-
+        current_site = next((o for o in offices if get_distance(lat, lon, o.lat, o.lon) <= o.radius), None)
         active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
 
         if current_site:
-            if not active_stay:
-                new_stay = SiteStay(officer_id=user.id, location_id=current_site.id, entry_time=now_utc)
-                db.add(new_stay)
-                db.commit()
-            elif active_stay.location_id != current_site.id:
-                active_stay.exit_time = now_utc
-                new_stay = SiteStay(officer_id=user.id, location_id=current_site.id, entry_time=now_utc)
-                db.add(new_stay)
+            if not active_stay or active_stay.location_id != current_site.id:
+                if active_stay: active_stay.exit_time = now_utc
+                db.add(SiteStay(officer_id=user.id, location_id=current_site.id, entry_time=now_utc))
                 db.commit()
         else:
-            if active_stay:
-                active_stay.exit_time = now_utc
-                db.commit()
+            if active_stay: active_stay.exit_time = now_utc; db.commit()
                 
         return {"is_inside": current_site is not None, "status": "normal", "message": "Location Updated"}
 
-    # --- REGULAR EMPLOYEE LOGIC (15min and 5min logic) ---
-    if not user.location_id or not user.shift_start:
-        return {"is_inside": True, "status": "normal", "message": "Location Updated"}
+    # --- REGULAR EMPLOYEE LOGIC ---
+    if not user.location_id or not user.shift_start: return {"is_inside": True, "status": "normal", "message": "Location Updated"}
 
     office = db.query(OfficeLocation).filter(OfficeLocation.id == user.location_id).first()
     is_inside = get_distance(lat, lon, office.lat, office.lon) <= office.radius
     
-    # Convert UTC to IST for time-based comparisons
-    now_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
-    now_str = now_ist.strftime("%H:%M")
-
-    # A. 15-MINUTE ATTENDANCE LOGIC
-    # Check if user is inside during the first 15 mins of their shift
-    shift_start_dt = datetime.strptime(user.shift_start, "%H:%M")
-    grace_end_dt = shift_start_dt + timedelta(minutes=15)
+    grace_end_dt = datetime.strptime(user.shift_start, "%H:%M") + timedelta(minutes=15)
     grace_end_str = grace_end_dt.strftime("%H:%M")
 
+    # A. 15-MINUTE ATTENDANCE LOGIC
     if is_inside:
-        # Clear any existing violation timers in Redis since they are back inside
-        if r:
-            r.delete(f"out_time:{email}")
-            
-        if not user.is_present and user.shift_start <= now_str <= grace_end_str:
-            user.is_present = True
-            db.commit()
+        if r: r.delete(f"out_time:{email}")
+        if not user.is_present and is_time_between(user.shift_start, grace_end_str, now_str):
+            user.is_present = True; db.commit()
             return {"is_inside": True, "status": "normal", "message": "Attendance Marked Present"}
-        
         return {"is_inside": True, "status": "inside", "message": "Inside Geofence"}
 
-    # B. 5-MINUTE (300s) OUT-OF-BOUNDS VIOLATION LOGIC
+    # B. 5-MINUTE OUT-OF-BOUNDS VIOLATION LOGIC
     else:
-        # Only track violations for users who have already checked in
         if user.is_present:
             out_since = r.get(f"out_time:{email}") if r else None
-            
             if not out_since:
-                # First time they are seen outside, start the clock
-                if r:
-                    r.set(f"out_time:{email}", datetime.utcnow().timestamp())
+                if r: r.set(f"out_time:{email}", datetime.utcnow().timestamp())
                 return {"is_inside": False, "status": "warning", "warning_seconds": 300}
             else:
-                # Calculate how long they've been out
                 elapsed = int(datetime.utcnow().timestamp() - float(out_since))
                 remaining = 300 - elapsed
-                
                 if remaining <= 0:
-                    # 5 minutes finished -> Mark Absent
-                    user.is_present = False
-                    db.commit()
-                    if r:
-                        r.delete(f"out_time:{email}")
+                    user.is_present = False; db.commit()
+                    if r: r.delete(f"out_time:{email}")
                     return {"is_inside": False, "status": "violation", "message": "Violation: Marked Absent"}
-                
                 return {"is_inside": False, "status": "warning", "warning_seconds": remaining}
     
     return {"is_inside": False, "status": "outside", "message": "Outside Geofence"}
-    
+
+# --- e-KYC EXTRACTION (Kept intact) ---
 @app.post("/api/manager/extract-ekyc")
-async def extract_ekyc(
-    file: UploadFile = File(...),
-    share_code: str = Form(...)
-):
+async def extract_ekyc(file: UploadFile = File(...), share_code: str = Form(...)):
     try:
-        # 1. Read the uploaded ZIP file into memory
         zip_bytes = await file.read()
-        
-        # 2. Extract using pyzipper to handle UIDAI's AES encryption
         with pyzipper.AESZipFile(io.BytesIO(zip_bytes)) as z:
-            # Set the 4-digit share code as the password
             z.setpassword(share_code.encode('utf-8'))
-            
-            # UIDAI zip contains exactly one XML file
             xml_filename = z.namelist()[0]
-            
-            with z.open(xml_filename) as xml_file:
-                xml_content = xml_file.read()
+            with z.open(xml_filename) as xml_file: xml_content = xml_file.read()
                 
-        # 3. Parse the XML
         root = ET.fromstring(xml_content)
-        
-        # Strip namespaces to make searching reliable across different UIDAI versions
         for elem in root.iter():
-            if '}' in elem.tag:
-                elem.tag = elem.tag.split('}', 1)[1]
+            if '}' in elem.tag: elem.tag = elem.tag.split('}', 1)[1]
                 
-        # 4. Locate Demographic data and Photo
-        poi = root.find('.//Poi')
-        pht = root.find('.//Pht')
-        
-        if poi is None:
-            raise HTTPException(400, "Invalid UIDAI XML format.")
+        poi, pht = root.find('.//Poi'), root.find('.//Pht')
+        if poi is None: raise HTTPException(400, "Invalid UIDAI XML format.")
             
-        # Extract attributes safely
         name = poi.attrib.get('name', '')
-        dob = poi.attrib.get('dob', '') # Usually DD-MM-YYYY
-        
-        # Convert UIDAI DOB to HTML Input format (YYYY-MM-DD)
-        try:
-            dob_obj = datetime.strptime(dob, "%d-%m-%Y")
-            dob_formatted = dob_obj.strftime("%Y-%m-%d")
-        except:
-            dob_formatted = dob
+        try: dob_formatted = datetime.strptime(poi.attrib.get('dob', ''), "%d-%m-%Y").strftime("%Y-%m-%d")
+        except: dob_formatted = poi.attrib.get('dob', '')
             
-        # Split name into first and last
         name_parts = name.split(' ', 1)
-        first_name = name_parts[0]
-        last_name = name_parts[1] if len(name_parts) > 1 else ''
+        photo_base64 = f"data:image/jpeg;base64,{pht.text}" if (pht is not None and pht.text) else ""
+        ref_id = root.attrib.get('referenceId', '')
         
-        # Extract photo (it is stored as Base64 text inside the <Pht> tag)
-        photo_base64 = pht.text if pht is not None else ""
-        if photo_base64:
-            photo_base64 = f"data:image/jpeg;base64,{photo_base64}"
-            
-        # UIDAI Offline XML purposefully does NOT contain the full ID number.
-        # It provides a reference ID where the first 4 digits usually match the last 4 of the ID.
-        reference_id = root.attrib.get('referenceId', '')
-        last_4 = reference_id[0:4] if reference_id else "XXXX"
-        
-        return {
-            "status": "success",
-            "data": {
-                "firstName": first_name,
-                "lastName": last_name,
-                "dob": dob_formatted,
-                "photo": photo_base64,
-                "aadhar_reference": f"XXXX-XXXX-{last_4}"
-            }
-        }
-        
+        return {"status": "success", "data": { "firstName": name_parts[0], "lastName": name_parts[1] if len(name_parts) > 1 else '', "dob": dob_formatted, "photo": photo_base64, "aadhar_reference": f"XXXX-XXXX-{ref_id[0:4] if ref_id else 'XXXX'}" }}
     except RuntimeError as e:
-        if 'Bad password' in str(e) or 'password required' in str(e):
-            raise HTTPException(400, "Incorrect 4-Digit Share Code.")
-        print(f"Extraction Error: {e}")
-        raise HTTPException(400, "Failed to unlock ZIP. Ensure it is a valid UIDAI file and the code is correct.")
+        if 'password' in str(e).lower(): raise HTTPException(400, "Incorrect 4-Digit Share Code.")
+        raise HTTPException(400, "Failed to unlock ZIP. Ensure it is a valid UIDAI file.")
     except Exception as e:
-        print(f"e-KYC Parsing Error: {e}")
         raise HTTPException(500, "Failed to process e-KYC XML data.")
