@@ -3,10 +3,11 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Container, Card, Row, Col, Badge, Form, Button, Alert, Spinner, Table } from 'react-bootstrap';
 import { MapPin, Camera, Navigation, UserPlus, CheckCircle, FileText, Map as MapIcon } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
-import { BackgroundGeolocation } from '@capacitor-community/background-geolocation';// Added for background tracking
+// Added for background tracking
 import EmployeeOnboardForm from './EmployeeOnboardForm'; 
 import L from 'leaflet';
-
+import { registerPlugin } from '@capacitor/core';
+const BackgroundGeolocation = registerPlugin('BackgroundGeolocation');
 const FieldOfficerDashboard = () => {
   const [locations, setLocations] = useState([]);
   const [myLoc, setMyLoc] = useState(null);
