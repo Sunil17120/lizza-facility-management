@@ -3,11 +3,12 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Container, Card, Row, Col, Badge, Form, Button, Alert, Spinner, Table } from 'react-bootstrap';
 import { MapPin, Camera, Navigation, UserPlus, CheckCircle, FileText, Map as MapIcon } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
-// Added for background tracking
 import EmployeeOnboardForm from './EmployeeOnboardForm'; 
-import L from 'leaflet';
+
+// CAPACITOR NATIVE IMPORT (Safe for Vercel Webpack)
 import { registerPlugin } from '@capacitor/core';
 const BackgroundGeolocation = registerPlugin('BackgroundGeolocation');
+
 const FieldOfficerDashboard = () => {
   const [locations, setLocations] = useState([]);
   const [myLoc, setMyLoc] = useState(null);
@@ -69,10 +70,12 @@ const FieldOfficerDashboard = () => {
     setActiveSite(insideSite);
     
     // Ping backend
-    fetch(`/api/user/update-location?email=${userEmail}&lat=${lat}&lon=${lon}`, { method: 'POST' });
+    if (userEmail) {
+      fetch(`/api/user/update-location?email=${userEmail}&lat=${lat}&lon=${lon}`, { method: 'POST' }).catch(e => console.error("Ping error", e));
+    }
   }, [locations, userEmail]);
 
-  // NATIVE BACKGROUND TRACKING (Pings every 5 minutes)
+  // 1. NATIVE BACKGROUND TRACKING (Runs on Android/iOS)
   useEffect(() => {
     if (!userEmail) return;
 
@@ -84,9 +87,7 @@ const FieldOfficerDashboard = () => {
             backgroundTitle: "Field Operations Active",
             requestPermissions: true,
             stale: false,
-            // 300,000ms = 5 minutes
             interval: 300000, 
-            // Ensures a ping even if stationary every 5 mins
             distanceFilter: 0 
           },
           (location, error) => {
@@ -100,16 +101,33 @@ const FieldOfficerDashboard = () => {
           }
         );
       } catch (err) {
-        console.error("Could not start background tracking", err);
+        console.warn("Native background tracking skipped (running on web).", err);
       }
     };
 
     startTracking();
 
     return () => {
-      BackgroundGeolocation.removeWatcher();
+      try {
+        BackgroundGeolocation.removeWatcher();
+      } catch (e) {}
     };
   }, [userEmail, processNewLocation]);
+
+  // 2. WEB GEOLOCATION FALLBACK (Runs instantly on Vercel)
+  useEffect(() => {
+    if ("geolocation" in navigator) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          processNewLocation(position.coords.latitude, position.coords.longitude);
+        },
+        (error) => {
+          console.error("Web GPS Error - Please enable browser location permissions:", error);
+        },
+        { enableHighAccuracy: true }
+      );
+    }
+  }, [processNewLocation]);
 
   const handleVisitSubmit = async (e) => {
     e.preventDefault();
@@ -260,7 +278,7 @@ const FieldOfficerDashboard = () => {
                               size="sm" 
                               className="rounded-pill px-3 fw-bold"
                               style={{fontSize: '0.8rem'}}
-                              onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=${site.lat},${site.lon}`, '_blank')}
+                              onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=$${site.lat},${site.lon}`, '_blank')}
                             >
                               Directions
                             </Button>
