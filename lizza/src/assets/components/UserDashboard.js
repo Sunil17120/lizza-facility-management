@@ -119,15 +119,41 @@ const UserDashboard = () => {
           }
         );
       } catch (err) {
-        console.error("Native tracking failed", err);
+        console.warn("Native tracking skipped (running on web).", err);
       }
     };
 
     startBackgroundTracking();
 
     return () => {
-      BackgroundGeolocation.removeWatcher();
+      try {
+        BackgroundGeolocation.removeWatcher();
+      } catch (e) {}
     };
+  }, [dbUser, syncLocation]);
+
+  // 6. WEB GEOLOCATION FALLBACK (Auto-tracks on Vercel/Web Browsers)
+  useEffect(() => {
+    if (!dbUser) return;
+
+    const pingLocation = () => {
+      if ("geolocation" in navigator) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => syncLocation(pos.coords.latitude, pos.coords.longitude),
+          (err) => console.error("Web GPS Error. Please allow location access:", err),
+          { enableHighAccuracy: true }
+        );
+      }
+    };
+
+    // Ping immediately when the dashboard loads
+    pingLocation();
+
+    // Automatically ping every 60 seconds to keep the admin map updated
+    // and prevent the 5-minute violation timer from falsely triggering
+    const intervalId = setInterval(pingLocation, 60000); 
+
+    return () => clearInterval(intervalId);
   }, [dbUser, syncLocation]);
 
   const handlePasswordSubmit = async (e) => {
