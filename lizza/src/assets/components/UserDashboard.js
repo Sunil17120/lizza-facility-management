@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { Container, Row, Col, Card, Spinner, Button, Alert, Badge, ProgressBar, Modal, Form } from 'react-bootstrap';
 import { ShieldCheck, MapPin, Map as MapIcon, Clock, AlertTriangle, KeyRound } from 'lucide-react';
 import { BackgroundGeolocation } from '@capacitor-community/background-geolocation';
+import { BackgroundGeolocation } from '@capacitor-community/background-geolocation';
 
 const UserDashboard = () => {
   const navigate = useNavigate(); 
