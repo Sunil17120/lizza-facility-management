@@ -7,3 +7,5 @@ python-multipart
 cryptography
 requests
 pyzipper
+pyzbar
+Pillow
