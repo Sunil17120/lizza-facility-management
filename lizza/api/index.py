@@ -12,7 +12,7 @@ import io
 import xml.etree.ElementTree as ET
 import cv2
 import numpy as np
-from PIL import Image
+
 try:
     from .database import SessionLocal, User, EmployeeLocation, OfficeLocation, SiteVisit,SiteStay, init_db, cipher
 except ImportError:
