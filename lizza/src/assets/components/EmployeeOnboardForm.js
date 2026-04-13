@@ -1,20 +1,48 @@
-import React, { useState } from 'react';
-import { Form, Row, Col, Button, Image, Alert, Card, Tab, Tabs } from 'react-bootstrap';
+import React, { useState, useRef } from 'react';
+import { Form, Row, Col, Button, Image, Alert, Card, Tab, Tabs, Modal } from 'react-bootstrap';
 import { Camera, CheckCircle, UploadCloud, QrCode, Fingerprint, Lock, Plus } from 'lucide-react';
+import ReactCrop from 'react-image-crop';
+import 'react-image-crop/dist/ReactCrop.css';
+
+// --- IMAGE COMPRESSOR ---
+const compressImage = (file) => {
+  return new Promise((resolve) => {
+    if (!file.type.startsWith('image/')) { resolve(file); return; }
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = (event) => {
+      const img = new window.Image();
+      img.src = event.target.result;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const MAX_WIDTH = 1800; const MAX_HEIGHT = 1800; 
+        let width = img.width; let height = img.height;
+
+        if (width > height) { if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; } } 
+        else { if (height > MAX_HEIGHT) { width *= MAX_HEIGHT / height; height = MAX_HEIGHT; } }
+
+        canvas.width = width; canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(img, 0, 0, width, height);
+
+        canvas.toBlob((blob) => {
+          resolve(new File([blob], file.name, { type: 'image/jpeg', lastModified: Date.now() }));
+        }, 'image/jpeg', 0.92); 
+      };
+    };
+  });
+};
 
 const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
-  // --- STATES ---
   const [kycMode, setKycMode] = useState('aadhaar_xml'); 
   const [kycStatus, setKycStatus] = useState('pending'); 
   
   const [formData, setFormData] = useState({
     firstName: '', lastName: '', fatherName: '', motherName: '', dob: '', 
-    gender: '', maritalStatus: '', identityMark: '',
-    height: '', bloodGroup: '', caste: '', category: '', religion: '', nationality: '', medicalRemarks: '',
-    permAddress: '', permState: '', permPin: '', permMobile: '', 
-    tempAddress: '', tempState: '', tempPin: '', tempMobile: '', email: '',
-    joiningDate: '', designation: '', locId: '', shiftStart: '09:00', shiftEnd: '18:00',
-    bankName: '', accountNumber: '', ifscCode: '', unitName: '',
+    gender: '', maritalStatus: '', identityMark: '', height: '', bloodGroup: '', caste: '', category: '', religion: '', nationality: '', medicalRemarks: '',
+    permAddress: '', permState: '', permPin: '', permMobile: '', tempAddress: '', tempState: '', tempPin: '', tempMobile: '', email: '',
+    joiningDate: '', designation: '', locId: '', shiftStart: '09:00', shiftEnd: '18:00', bankName: '', accountNumber: '', ifscCode: '', unitName: '',
     aadhar: '', panCard: '', voterId: '', drivingLicence: '', passportNo: ''
   });
   
@@ -36,19 +64,71 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
   const [error, setError] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
 
+  // E-KYC States
   const [ekycZip, setEkycZip] = useState(null);
   const [shareCode, setShareCode] = useState('');
   const [qrImage, setQrImage] = useState(null);
   const [qrPreview, setQrPreview] = useState(null);
 
-  // --- HANDLERS ---
-  const handleFileChange = (e, type) => {
+  // --- CROPPER STATES ---
+  const [showCropModal, setShowCropModal] = useState(false);
+  const [cropImageSrc, setCropImageSrc] = useState(null);
+  const [crop, setCrop] = useState({ unit: '%', width: 50, aspect: 1 });
+  const [completedCrop, setCompletedCrop] = useState(null);
+  const imgRef = useRef(null);
+
+  const handleFileChange = async (e, type) => {
     const file = e.target.files[0];
     if (file) {
-      if (file.size > 5 * 1024 * 1024) { alert("File too large. Max: 5MB"); e.target.value = ""; return; }
-      setFiles({ ...files, [type]: file });
-      if (type === 'profile') setPreviews({ profile: URL.createObjectURL(file) });
+      if (file.size > 15 * 1024 * 1024) { alert("File too large. Max 15MB"); e.target.value = ""; return; }
+      const compressedFile = await compressImage(file);
+      setFiles({ ...files, [type]: compressedFile });
+      if (type === 'profile') setPreviews({ profile: URL.createObjectURL(compressedFile) });
     }
+  };
+
+  // --- TRIGGER CROPPER WHEN QR PHOTO IS TAKEN ---
+  const handleQrCapture = (e) => {
+    if (e.target.files && e.target.files.length > 0) {
+        const reader = new FileReader();
+        reader.addEventListener('load', () => {
+            setCropImageSrc(reader.result);
+            setShowCropModal(true); // Open the cropper popup
+        });
+        reader.readAsDataURL(e.target.files[0]);
+        e.target.value = ''; // Reset input
+    }
+  };
+
+  // --- PROCESS AND SAVE THE CROPPED AREA ---
+  const processCrop = async () => {
+    if (!completedCrop || !imgRef.current || completedCrop.width === 0) return;
+    
+    const image = imgRef.current;
+    const canvas = document.createElement('canvas');
+    const scaleX = image.naturalWidth / image.width;
+    const scaleY = image.naturalHeight / image.height;
+    
+    canvas.width = completedCrop.width * scaleX;
+    canvas.height = completedCrop.height * scaleY;
+    const ctx = canvas.getContext('2d');
+    
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    
+    ctx.drawImage(
+        image,
+        completedCrop.x * scaleX, completedCrop.y * scaleY,
+        completedCrop.width * scaleX, completedCrop.height * scaleY,
+        0, 0, canvas.width, canvas.height
+    );
+    
+    canvas.toBlob(async (blob) => {
+        const croppedFile = new File([blob], "qr_cropped.jpg", { type: 'image/jpeg' });
+        setQrImage(croppedFile);
+        setQrPreview(URL.createObjectURL(croppedFile));
+        setShowCropModal(false);
+    }, 'image/jpeg', 1);
   };
 
   const handleKycVerification = async (mode) => {
@@ -88,7 +168,6 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault(); setError(null);
-    
     if (kycMode === 'without_aadhaar') {
         if (!files.fingerprintsLeft || !files.fingerprintsRight) { setError("Fingerprints are strictly required when skipping Aadhaar KYC."); return; }
         if (!formData.aadhar || !files.aadharPhoto) { setError("Aadhaar Number and Aadhaar Photo are strictly mandatory when skipping online KYC."); return; }
@@ -110,20 +189,20 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
         submitData.append('fingerprints_left', files.fingerprintsLeft);
         submitData.append('fingerprints_right', files.fingerprintsRight);
     }
-
     if (files.panPhoto) submitData.append('pan_photo', files.panPhoto);
     if (files.voterPhoto) submitData.append('voter_photo', files.voterPhoto);
     if (files.dlPhoto) submitData.append('dl_photo', files.dlPhoto);
     if (files.passportPhoto) submitData.append('passport_photo', files.passportPhoto);
 
+    setIsProcessing(true);
     try {
         const res = await fetch(`/api/manager/add-employee`, { method: 'POST', body: submitData });
         const data = await res.json();
         if (res.ok) { alert(`Registration Successful!`); onSuccess(); } else { setError(data.detail || "Submission failed."); }
     } catch (err) { setError("Network error."); }
+    setIsProcessing(false);
   };
 
-  // --- RENDER ---
   return (
     <Form onSubmit={handleSubmit} className="p-3 bg-white rounded shadow-sm">
       <div className="text-center mb-4">
@@ -133,6 +212,25 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
 
       {error && <Alert variant="danger">{error}</Alert>}
       
+      {/* --- CROPPER MODAL --- */}
+      <Modal show={showCropModal} onHide={() => setShowCropModal(false)} centered backdrop="static">
+        <Modal.Header closeButton>
+            <Modal.Title className="fw-bold">Crop QR Code</Modal.Title>
+        </Modal.Header>
+        <Modal.Body className="text-center">
+            <p className="small text-muted mb-3">Drag the box so it <b>ONLY</b> covers the QR code.</p>
+            {cropImageSrc && (
+                <ReactCrop crop={crop} onChange={(_, percentCrop) => setCrop(percentCrop)} onComplete={(c) => setCompletedCrop(c)} aspect={1}>
+                    <img ref={imgRef} src={cropImageSrc} alt="Crop me" style={{ maxHeight: '60vh', maxWidth: '100%' }} />
+                </ReactCrop>
+            )}
+        </Modal.Body>
+        <Modal.Footer>
+            <Button variant="light" onClick={() => setShowCropModal(false)}>Cancel</Button>
+            <Button variant="primary" onClick={processCrop}>Confirm Crop</Button>
+        </Modal.Footer>
+      </Modal>
+
       <Card className="mb-4 bg-light border-0">
         <Card.Body className="d-flex justify-content-center gap-4 flex-wrap">
             <Form.Check type="radio" label="Aadhaar Offline XML" checked={kycMode === 'aadhaar_xml'} onChange={() => { setKycMode('aadhaar_xml'); setKycStatus('pending'); }} className="fw-bold" />
@@ -158,11 +256,11 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
           <div className="d-flex justify-content-center gap-3 mb-3">
             <div className="position-relative">
               <Button variant="outline-primary"><UploadCloud size={18} className="me-2" /> Upload File</Button>
-              <input type="file" accept="image/*" className="position-absolute top-0 start-0 w-100 h-100 opacity-0" onChange={(e) => { if(e.target.files[0]) { setQrImage(e.target.files[0]); setQrPreview(URL.createObjectURL(e.target.files[0])); } }} />
+              <input type="file" accept="image/*" className="position-absolute top-0 start-0 w-100 h-100 opacity-0" onChange={handleQrCapture} />
             </div>
             <div className="position-relative">
               <Button variant="primary"><Camera size={18} className="me-2" /> Use Camera</Button>
-              <input type="file" accept="image/*" capture="environment" className="position-absolute top-0 start-0 w-100 h-100 opacity-0" onChange={(e) => { if(e.target.files[0]) { setQrImage(e.target.files[0]); setQrPreview(URL.createObjectURL(e.target.files[0])); } }} />
+              <input type="file" accept="image/*" capture="environment" className="position-absolute top-0 start-0 w-100 h-100 opacity-0" onChange={handleQrCapture} />
             </div>
           </div>
           {qrPreview && <div className="mb-3"><Image src={qrPreview} thumbnail style={{ maxHeight: '120px' }} /></div>}
@@ -184,7 +282,6 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
 
           <Tabs defaultActiveKey="personal" className="mb-4 border-bottom-0">
             
-            {/* TAB 1: Personal & Medical */}
             <Tab eventKey="personal" title="Personal & Medical">
               <h6 className="mt-3 fw-bold border-bottom pb-2 text-primary">Identity Details</h6>
               <Row>
@@ -209,7 +306,6 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
               </Row>
             </Tab>
 
-            {/* TAB 2: Address & Contact */}
             <Tab eventKey="address" title="Contact Info">
               <Row className="mt-3">
                 <Col md={6} className="mb-4">
@@ -230,7 +326,6 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
               </Row>
             </Tab>
 
-            {/* TAB 3: Edu, Exp & Languages */}
             <Tab eventKey="edu" title="Edu, Exp & Lang">
               <h6 className="mt-3 fw-bold border-bottom pb-2 text-primary">Language Proficiency</h6>
               {languages.map((lang, idx) => (
@@ -265,7 +360,6 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
               <Button size="sm" variant="outline-primary" onClick={() => setExperience([...experience, { company: '', period: '', designation: '' }])}><Plus size={14} className="me-1"/> Add Experience</Button>
             </Tab>
 
-            {/* TAB 4: Family & Refs */}
             <Tab eventKey="family" title="Family & Refs">
               <h6 className="mt-3 fw-bold border-bottom pb-2 text-primary">Family Details</h6>
               {family.map((fam, idx) => (
@@ -306,7 +400,6 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
               </Row>
             </Tab>
 
-            {/* TAB 5: Bank, IDs & Work */}
             <Tab eventKey="bank" title="Work & IDs">
               <h6 className="mt-3 fw-bold border-bottom pb-2 text-primary">Work Allocation</h6>
               <Row className="mb-3">
