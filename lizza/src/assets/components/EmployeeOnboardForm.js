@@ -1,176 +1,126 @@
 import React, { useState } from 'react';
 import { Form, Row, Col, Button, Image, Alert, Card, Tab, Tabs } from 'react-bootstrap';
-import { Camera, CheckCircle, UploadCloud, QrCode, Fingerprint, Lock } from 'lucide-react';
+import { Camera, CheckCircle, UploadCloud, QrCode, Fingerprint, Lock, Plus } from 'lucide-react';
 
 const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
   // --- STATES ---
-  const [kycMode, setKycMode] = useState('aadhaar_xml'); // 'aadhaar_xml', 'aadhaar_qr', 'without_aadhaar'
-  const [kycStatus, setKycStatus] = useState('pending'); // 'pending', 'verified'
+  const [kycMode, setKycMode] = useState('aadhaar_xml'); 
+  const [kycStatus, setKycStatus] = useState('pending'); 
   
   const [formData, setFormData] = useState({
     firstName: '', lastName: '', fatherName: '', motherName: '', dob: '', 
     gender: '', maritalStatus: '', identityMark: '',
-    mobile: '', email: '', personalEmail: '', permanentAddress: '', tempAddress: '',
-    height: '', bloodGroup: '', caste: '', category: '', religion: '', nationality: '',
+    height: '', bloodGroup: '', caste: '', category: '', religion: '', nationality: '', medicalRemarks: '',
+    permAddress: '', permState: '', permPin: '', permMobile: '', 
+    tempAddress: '', tempState: '', tempPin: '', tempMobile: '', email: '',
     joiningDate: '', designation: '', locId: '', shiftStart: '09:00', shiftEnd: '18:00',
-    bankName: '', accountNumber: '', ifscCode: '',
+    bankName: '', accountNumber: '', ifscCode: '', unitName: '',
     aadhar: '', panCard: '', voterId: '', drivingLicence: '', passportNo: ''
   });
   
-  const [files, setFiles] = useState({ 
-    profile: null, idProof: null, fingerprintsLeft: null, fingerprintsRight: null 
+  const [languages, setLanguages] = useState([{ name: '', read: false, write: false, speak: false }]);
+  const [education, setEducation] = useState([{ qualification: '', year: '', institute: '', marks: '' }]);
+  const [experience, setExperience] = useState([{ company: '', period: '', designation: '' }]);
+  const [family, setFamily] = useState([{ name: '', dob: '', relation: '' }]);
+  const [references, setReferences] = useState({
+      local1: { name: '', contact: '', relation: '' }, local2: { name: '', contact: '', relation: '' },
+      native1: { name: '', contact: '', relation: '' }, native2: { name: '', contact: '', relation: '' }
   });
+
+  const [files, setFiles] = useState({ 
+    profile: null, aadharPhoto: null, fingerprintsLeft: null, fingerprintsRight: null,
+    panPhoto: null, voterPhoto: null, dlPhoto: null, passportPhoto: null
+  });
+  
   const [previews, setPreviews] = useState({ profile: null });
   const [error, setError] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // E-KYC Specific Upload States
   const [ekycZip, setEkycZip] = useState(null);
   const [shareCode, setShareCode] = useState('');
   const [qrImage, setQrImage] = useState(null);
+  const [qrPreview, setQrPreview] = useState(null);
 
   // --- HANDLERS ---
   const handleFileChange = (e, type) => {
     const file = e.target.files[0];
     if (file) {
-      if (file.size > 5 * 1024 * 1024) {
-        alert("File too large. Max: 5MB");
-        e.target.value = ""; return;
-      }
+      if (file.size > 5 * 1024 * 1024) { alert("File too large. Max: 5MB"); e.target.value = ""; return; }
       setFiles({ ...files, [type]: file });
       if (type === 'profile') setPreviews({ profile: URL.createObjectURL(file) });
     }
   };
 
   const handleKycVerification = async (mode) => {
-    setIsProcessing(true);
-    setError(null);
-    
+    setIsProcessing(true); setError(null);
     try {
-      let res;
-      let data;
-      const kycFormData = new FormData();
-
+      let res; let data; const kycFormData = new FormData();
       if (mode === 'xml') {
-        if (!ekycZip || shareCode.length !== 4) {
-           setError("Please upload the ZIP and enter the 4-digit share code.");
-           setIsProcessing(false);
-           return;
-        }
-        kycFormData.append('file', ekycZip);
-        kycFormData.append('share_code', shareCode);
-        
-        // Call the XML endpoint
+        if (!ekycZip || shareCode.length !== 4) { setError("Upload ZIP and enter 4-digit code."); setIsProcessing(false); return; }
+        kycFormData.append('file', ekycZip); kycFormData.append('share_code', shareCode);
         res = await fetch('/api/manager/extract-ekyc', { method: 'POST', body: kycFormData });
-      } 
-      else if (mode === 'qr') {
-        if (!qrImage) {
-           setError("Please upload a QR Code image to scan.");
-           setIsProcessing(false);
-           return;
-        }
+      } else if (mode === 'qr') {
+        if (!qrImage) { setError("Upload/capture a QR Code."); setIsProcessing(false); return; }
         kycFormData.append('file', qrImage);
-        
-        // Call the QR endpoint
         res = await fetch('/api/manager/extract-qr', { method: 'POST', body: kycFormData });
       }
 
       data = await res.json();
-
       if (res.ok && data.status === "success") {
-        // Auto-fill form with extracted data
         setFormData(prev => ({
-          ...prev,
-          firstName: data.data.firstName || prev.firstName,
-          lastName: data.data.lastName || prev.lastName,
-          dob: data.data.dob || prev.dob,
-          fatherName: data.data.fatherName || prev.fatherName,
+          ...prev, firstName: data.data.firstName || prev.firstName, lastName: data.data.lastName || prev.lastName,
+          dob: data.data.dob || prev.dob, fatherName: data.data.fatherName || prev.fatherName,
           gender: data.data.gender === 'M' ? 'Male' : data.data.gender === 'F' ? 'Female' : prev.gender,
           aadhar: data.data.aadhar_reference || prev.aadhar
         }));
         
-        // Extract and set photo if available
         if (data.data.photo) {
           setPreviews(prev => ({ ...prev, profile: data.data.photo }));
           fetch(data.data.photo).then(r => r.blob()).then(blob => {
-            const file = new File([blob], "kyc_photo.jpg", { type: "image/jpeg" });
-            setFiles(prev => ({ ...prev, profile: file }));
+            setFiles(prev => ({ ...prev, profile: new File([blob], "kyc_photo.jpg", { type: "image/jpeg" }) }));
           });
         }
-        
         setKycStatus('verified');
-      } else {
-        setError(data.detail || "Verification failed. Ensure the file is valid.");
-      }
-    } catch (err) {
-      setError("Network error while contacting the server to process KYC.");
-    }
-    
+      } else { setError(data.detail || "Verification failed. Ensure the file is valid."); }
+    } catch (err) { setError("Network error processing KYC."); }
     setIsProcessing(false);
   };
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
-    setError(null);
+    e.preventDefault(); setError(null);
     
-    if (kycMode === 'without_aadhaar' && (!files.fingerprintsLeft || !files.fingerprintsRight)) {
-        setError("Fingerprint impressions for both hands are required when registering without Aadhaar.");
-        return;
+    if (kycMode === 'without_aadhaar') {
+        if (!files.fingerprintsLeft || !files.fingerprintsRight) { setError("Fingerprints are strictly required when skipping Aadhaar KYC."); return; }
+        if (!formData.aadhar || !files.aadharPhoto) { setError("Aadhaar Number and Aadhaar Photo are strictly mandatory when skipping online KYC."); return; }
     }
 
     const submitData = new FormData();
-    
-    // Core Mandatory Fields
-    submitData.append('first_name', formData.firstName);
-    submitData.append('last_name', formData.lastName);
-    submitData.append('phone_number', formData.mobile);
-    submitData.append('dob', formData.dob);
-    submitData.append('designation', formData.designation);
+    Object.keys(formData).forEach(key => submitData.append(key, formData[key]));
     submitData.append('kyc_mode', kycMode);
+    
+    submitData.append('languages_json', JSON.stringify(languages));
+    submitData.append('education_json', JSON.stringify(education));
+    submitData.append('experience_json', JSON.stringify(experience));
+    submitData.append('family_json', JSON.stringify(family));
+    submitData.append('references_json', JSON.stringify(references));
 
-    // Optional Details
-    if (formData.personalEmail) submitData.append('personal_email', formData.personalEmail);
-    if (formData.gender) submitData.append('gender', formData.gender);
-    if (formData.maritalStatus) submitData.append('marital_status', formData.maritalStatus);
-    if (formData.identityMark) submitData.append('identity_mark', formData.identityMark);
-    if (formData.fatherName) submitData.append('father_name', formData.fatherName);
-    if (formData.motherName) submitData.append('mother_name', formData.motherName);
-    if (formData.bloodGroup) submitData.append('blood_group', formData.bloodGroup);
-    if (formData.locId) submitData.append('location_id', formData.locId);
-    if (formData.shiftStart) submitData.append('shift_start', formData.shiftStart);
-    if (formData.shiftEnd) submitData.append('shift_end', formData.shiftEnd);
-
-    // Optional Financial & ID Details
-    if (formData.bankName) submitData.append('bank_name', formData.bankName);
-    if (formData.accountNumber) submitData.append('account_number', formData.accountNumber);
-    if (formData.ifscCode) submitData.append('ifsc_code', formData.ifscCode);
-    if (kycMode !== 'without_aadhaar' && formData.aadhar) submitData.append('aadhar_number', formData.aadhar);
-    if (formData.panCard) submitData.append('pan_number', formData.panCard);
-    if (formData.voterId) submitData.append('voter_id', formData.voterId);
-    if (formData.drivingLicence) submitData.append('driving_licence', formData.drivingLicence);
-    if (formData.passportNo) submitData.append('passport_no', formData.passportNo);
-
-    // File Attachments
     if (files.profile) submitData.append('profile_photo', files.profile);
-    if (files.idProof) submitData.append('id_proof', files.idProof);
     if (kycMode === 'without_aadhaar') {
-        if (files.fingerprintsLeft) submitData.append('fingerprints_left', files.fingerprintsLeft);
-        if (files.fingerprintsRight) submitData.append('fingerprints_right', files.fingerprintsRight);
+        submitData.append('aadhar_photo', files.aadharPhoto);
+        submitData.append('fingerprints_left', files.fingerprintsLeft);
+        submitData.append('fingerprints_right', files.fingerprintsRight);
     }
+
+    if (files.panPhoto) submitData.append('pan_photo', files.panPhoto);
+    if (files.voterPhoto) submitData.append('voter_photo', files.voterPhoto);
+    if (files.dlPhoto) submitData.append('dl_photo', files.dlPhoto);
+    if (files.passportPhoto) submitData.append('passport_photo', files.passportPhoto);
 
     try {
         const res = await fetch(`/api/manager/add-employee`, { method: 'POST', body: submitData });
         const data = await res.json();
-        
-        if (res.ok) {
-            alert(`Registration Successful! ${data.message}`);
-            onSuccess();
-        } else {
-            setError(data.detail || "Submission failed. Please check your fields.");
-        }
-    } catch (err) { 
-        setError("Network error. Please check your connection."); 
-    }
+        if (res.ok) { alert(`Registration Successful!`); onSuccess(); } else { setError(data.detail || "Submission failed."); }
+    } catch (err) { setError("Network error."); }
   };
 
   // --- RENDER ---
@@ -178,55 +128,50 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
     <Form onSubmit={handleSubmit} className="p-3 bg-white rounded shadow-sm">
       <div className="text-center mb-4">
         <h4 className="fw-bold text-uppercase text-primary">Lizza Facility Management</h4>
-        <h6 className="text-muted">Standard Employee Onboarding</h6>
+        <h6 className="text-muted">Complete Employee Joining Form</h6>
       </div>
 
       {error && <Alert variant="danger">{error}</Alert>}
       
-      {/* 1. KYC Mode Selection */}
       <Card className="mb-4 bg-light border-0">
         <Card.Body className="d-flex justify-content-center gap-4 flex-wrap">
             <Form.Check type="radio" label="Aadhaar Offline XML" checked={kycMode === 'aadhaar_xml'} onChange={() => { setKycMode('aadhaar_xml'); setKycStatus('pending'); }} className="fw-bold" />
-            <Form.Check type="radio" label="Aadhaar QR Scan" checked={kycMode === 'aadhaar_qr'} onChange={() => { setKycMode('aadhaar_qr'); setKycStatus('pending'); }} className="fw-bold" />
+            <Form.Check type="radio" label="Aadhaar QR Scan" checked={kycMode === 'aadhaar_qr'} onChange={() => { setKycMode('aadhaar_qr'); setKycStatus('pending'); setQrImage(null); setQrPreview(null); }} className="fw-bold" />
             <Form.Check type="radio" label="Without Aadhaar (Manual)" checked={kycMode === 'without_aadhaar'} onChange={() => { setKycMode('without_aadhaar'); setKycStatus('pending'); }} className="fw-bold text-danger" />
         </Card.Body>
       </Card>
 
-      {/* 2. KYC Validation Gate */}
       {kycStatus === 'pending' && kycMode === 'aadhaar_xml' && (
         <Alert variant="info" className="p-4 shadow-sm text-center">
-          <UploadCloud size={32} className="mb-2 text-primary"/>
-          <h6 className="fw-bold">Upload Paperless XML/ZIP</h6>
+          <UploadCloud size={32} className="mb-2 text-primary"/><h6 className="fw-bold">Upload Paperless XML/ZIP</h6>
           <Form.Group className="mb-3 mx-auto" style={{maxWidth: '300px'}}>
             <Form.Control type="file" accept=".zip,.xml" onChange={(e) => setEkycZip(e.target.files[0])} />
             <Form.Control type="password" placeholder="4-Digit Share Code" className="mt-2" value={shareCode} onChange={(e) => setShareCode(e.target.value)} />
           </Form.Group>
-          <Button onClick={() => handleKycVerification('xml')} disabled={isProcessing}>
-             {isProcessing ? 'Verifying...' : 'Extract & Verify'}
-          </Button>
+          <Button onClick={() => handleKycVerification('xml')} disabled={isProcessing}>{isProcessing ? 'Verifying...' : 'Extract & Verify'}</Button>
         </Alert>
       )}
 
       {kycStatus === 'pending' && kycMode === 'aadhaar_qr' && (
         <Alert variant="info" className="p-4 shadow-sm text-center">
-          <QrCode size={32} className="mb-2 text-primary"/>
-          <h6 className="fw-bold">Scan or Upload QR Code</h6>
-          <Form.Group className="mb-3 mx-auto" style={{maxWidth: '300px'}}>
-            <Form.Control type="file" accept="image/*" onChange={(e) => setQrImage(e.target.files[0])} />
-          </Form.Group>
-          <Button onClick={() => handleKycVerification('qr')} disabled={isProcessing}>
-             {isProcessing ? 'Scanning...' : 'Verify QR'}
-          </Button>
+          <QrCode size={32} className="mb-2 text-primary"/><h6 className="fw-bold">Scan QR Code</h6>
+          <div className="d-flex justify-content-center gap-3 mb-3">
+            <div className="position-relative">
+              <Button variant="outline-primary"><UploadCloud size={18} className="me-2" /> Upload File</Button>
+              <input type="file" accept="image/*" className="position-absolute top-0 start-0 w-100 h-100 opacity-0" onChange={(e) => { if(e.target.files[0]) { setQrImage(e.target.files[0]); setQrPreview(URL.createObjectURL(e.target.files[0])); } }} />
+            </div>
+            <div className="position-relative">
+              <Button variant="primary"><Camera size={18} className="me-2" /> Use Camera</Button>
+              <input type="file" accept="image/*" capture="environment" className="position-absolute top-0 start-0 w-100 h-100 opacity-0" onChange={(e) => { if(e.target.files[0]) { setQrImage(e.target.files[0]); setQrPreview(URL.createObjectURL(e.target.files[0])); } }} />
+            </div>
+          </div>
+          {qrPreview && <div className="mb-3"><Image src={qrPreview} thumbnail style={{ maxHeight: '120px' }} /></div>}
+          <Button onClick={() => handleKycVerification('qr')} disabled={!qrImage || isProcessing} className="w-100 fw-bold" style={{maxWidth: '300px'}}>{isProcessing ? 'Scanning...' : 'Verify QR'}</Button>
         </Alert>
       )}
 
-      {kycStatus === 'verified' && kycMode !== 'without_aadhaar' && (
-         <Alert variant="success" className="fw-bold d-flex align-items-center justify-content-center">
-             <CheckCircle className="me-2"/> KYC Verified Successfully. Form Unlocked.
-         </Alert>
-      )}
+      {kycStatus === 'verified' && kycMode !== 'without_aadhaar' && (<Alert variant="success" className="fw-bold text-center"><CheckCircle className="me-2"/> KYC Verified Successfully. Form Unlocked.</Alert>)}
 
-      {/* 3. Main Form (Unlocks after KYC) */}
       {(kycStatus === 'verified' || kycMode === 'without_aadhaar') && (
         <>
           <div className="text-center mb-4 mt-4">
@@ -234,98 +179,220 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
               <Image src={previews.profile || "https://via.placeholder.com/120"} roundedCircle style={{ width: '120px', height: '120px', objectFit: 'cover', border: '3px solid #0d6efd' }} />
               <label htmlFor="prof-up" className="position-absolute bottom-0 end-0 bg-primary text-white rounded-circle p-2" style={{ cursor: 'pointer' }}><Camera size={18} /></label>
              <input id="prof-up" type="file" hidden accept="image/*" onChange={(e) => handleFileChange(e, 'profile')} />
-            </div>
-            <p className="small text-muted mt-2">Applicant Photo <span className="text-danger">*</span></p>
+            </div><p className="small text-muted mt-2">Applicant Photo *</p>
           </div>
 
-          <Tabs defaultActiveKey="personal" className="mb-4">
-            <Tab eventKey="personal" title="1. Personal Info">
-              <Row className="mt-3">
+          <Tabs defaultActiveKey="personal" className="mb-4 border-bottom-0">
+            
+            {/* TAB 1: Personal & Medical */}
+            <Tab eventKey="personal" title="Personal & Medical">
+              <h6 className="mt-3 fw-bold border-bottom pb-2 text-primary">Identity Details</h6>
+              <Row>
                 <Col md={4} className="mb-3"><Form.Label className="small fw-bold">First Name *</Form.Label><Form.Control required value={formData.firstName} onChange={e => setFormData({...formData, firstName: e.target.value})} /></Col>
                 <Col md={4} className="mb-3"><Form.Label className="small fw-bold">Last Name *</Form.Label><Form.Control required value={formData.lastName} onChange={e => setFormData({...formData, lastName: e.target.value})} /></Col>
                 <Col md={4} className="mb-3"><Form.Label className="small fw-bold">DOB *</Form.Label><Form.Control type="date" required value={formData.dob} onChange={e => setFormData({...formData, dob: e.target.value})} /></Col>
-                
-                <Col md={4} className="mb-3"><Form.Label className="small fw-bold">Gender</Form.Label><Form.Select value={formData.gender} onChange={e => setFormData({...formData, gender: e.target.value})}><option value="">Select...</option><option value="Male">Male</option><option value="Female">Female</option><option value="Other">Other</option></Form.Select></Col>
-                <Col md={4} className="mb-3"><Form.Label className="small fw-bold">Marital Status</Form.Label><Form.Select value={formData.maritalStatus} onChange={e => setFormData({...formData, maritalStatus: e.target.value})}><option value="">Select...</option><option value="Single">Single</option><option value="Married">Married</option></Form.Select></Col>
-                <Col md={4} className="mb-3"><Form.Label className="small fw-bold">Blood Group</Form.Label><Form.Control value={formData.bloodGroup} onChange={e => setFormData({...formData, bloodGroup: e.target.value})} /></Col>
-                
+                <Col md={4} className="mb-3"><Form.Label className="small fw-bold">Gender</Form.Label><Form.Select value={formData.gender} onChange={e => setFormData({...formData, gender: e.target.value})}><option value="">Select</option><option value="Male">Male</option><option value="Female">Female</option><option value="Other">Other</option></Form.Select></Col>
+                <Col md={4} className="mb-3"><Form.Label className="small fw-bold">Marital Status</Form.Label><Form.Select value={formData.maritalStatus} onChange={e => setFormData({...formData, maritalStatus: e.target.value})}><option value="">Select</option><option value="Single">Single</option><option value="Married">Married</option></Form.Select></Col>
+                <Col md={4} className="mb-3"><Form.Label className="small fw-bold">Identity Mark</Form.Label><Form.Control value={formData.identityMark} onChange={e => setFormData({...formData, identityMark: e.target.value})} /></Col>
                 <Col md={6} className="mb-3"><Form.Label className="small fw-bold">Father's Name</Form.Label><Form.Control value={formData.fatherName} onChange={e => setFormData({...formData, fatherName: e.target.value})} /></Col>
                 <Col md={6} className="mb-3"><Form.Label className="small fw-bold">Mother's Name</Form.Label><Form.Control value={formData.motherName} onChange={e => setFormData({...formData, motherName: e.target.value})} /></Col>
               </Row>
-            </Tab>
-
-            <Tab eventKey="work" title="2. Work & Role">
-              <Row className="mt-3">
-                <Col md={12} className="mb-4">
-                    <Card className="bg-light border-0">
-                        <Card.Body className="d-flex align-items-center">
-                            <Lock className="text-muted me-3" size={24}/>
-                            <div>
-                                <h6 className="mb-0 fw-bold text-muted">LFM ID NO</h6>
-                                <small className="text-primary fw-bold">Generated automatically post Admin Verification.</small>
-                            </div>
-                        </Card.Body>
-                    </Card>
-                </Col>
-                <Col md={6} className="mb-3"><Form.Label className="small fw-bold">Designation *</Form.Label><Form.Control required value={formData.designation} onChange={e => setFormData({...formData, designation: e.target.value})} /></Col>
-                <Col md={6} className="mb-3"><Form.Label className="small fw-bold">Assign Branch</Form.Label><Form.Select value={formData.locId} onChange={e => setFormData({...formData, locId: e.target.value})}><option value="">Select...</option>{locations?.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</Form.Select></Col>
-                
-                <Col md={6} className="mb-3"><Form.Label className="small fw-bold">Mobile Number *</Form.Label><Form.Control required value={formData.mobile} onChange={e => setFormData({...formData, mobile: e.target.value})} /></Col>
-                <Col md={6} className="mb-3"><Form.Label className="small fw-bold">Personal Email</Form.Label><Form.Control type="email" value={formData.personalEmail} onChange={e => setFormData({...formData, personalEmail: e.target.value})} /></Col>
-                
-                <Col md={6} className="mb-3"><Form.Label className="small fw-bold">Shift Start</Form.Label><Form.Control type="time" value={formData.shiftStart} onChange={e => setFormData({...formData, shiftStart: e.target.value})} /></Col>
-                <Col md={6} className="mb-3"><Form.Label className="small fw-bold">Shift End</Form.Label><Form.Control type="time" value={formData.shiftEnd} onChange={e => setFormData({...formData, shiftEnd: e.target.value})} /></Col>
+              <h6 className="mt-4 fw-bold border-bottom pb-2 text-primary">Medical Fitness</h6>
+              <Row>
+                <Col md={2} className="mb-3"><Form.Label className="small fw-bold">Height (cm)</Form.Label><Form.Control value={formData.height} onChange={e => setFormData({...formData, height: e.target.value})} /></Col>
+                <Col md={2} className="mb-3"><Form.Label className="small fw-bold">Blood Group</Form.Label><Form.Control value={formData.bloodGroup} onChange={e => setFormData({...formData, bloodGroup: e.target.value})} /></Col>
+                <Col md={2} className="mb-3"><Form.Label className="small fw-bold">Caste</Form.Label><Form.Control value={formData.caste} onChange={e => setFormData({...formData, caste: e.target.value})} /></Col>
+                <Col md={2} className="mb-3"><Form.Label className="small fw-bold">Category</Form.Label><Form.Control value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})} /></Col>
+                <Col md={2} className="mb-3"><Form.Label className="small fw-bold">Religion</Form.Label><Form.Control value={formData.religion} onChange={e => setFormData({...formData, religion: e.target.value})} /></Col>
+                <Col md={2} className="mb-3"><Form.Label className="small fw-bold">Nationality</Form.Label><Form.Control value={formData.nationality} onChange={e => setFormData({...formData, nationality: e.target.value})} /></Col>
+                <Col md={12} className="mb-3"><Form.Label className="small fw-bold">Remarks (If any)</Form.Label><Form.Control as="textarea" rows={1} value={formData.medicalRemarks} onChange={e => setFormData({...formData, medicalRemarks: e.target.value})} /></Col>
               </Row>
             </Tab>
 
-            <Tab eventKey="proofs" title="3. Bank & Secure ID">
-              <Alert variant="warning" className="small mt-3">Information entered here is highly sensitive and will be encrypted via AES-256 before storing.</Alert>
+            {/* TAB 2: Address & Contact */}
+            <Tab eventKey="address" title="Contact Info">
+              <Row className="mt-3">
+                <Col md={6} className="mb-4">
+                  <h6 className="fw-bold border-bottom pb-2 text-primary">Permanent Address</h6>
+                  <Form.Group className="mb-2"><Form.Label className="small fw-bold">Address</Form.Label><Form.Control as="textarea" rows={2} value={formData.permAddress} onChange={e => setFormData({...formData, permAddress: e.target.value})} /></Form.Group>
+                  <Form.Group className="mb-2"><Form.Label className="small fw-bold">State</Form.Label><Form.Control value={formData.permState} onChange={e => setFormData({...formData, permState: e.target.value})} /></Form.Group>
+                  <Form.Group className="mb-2"><Form.Label className="small fw-bold">PIN</Form.Label><Form.Control value={formData.permPin} onChange={e => setFormData({...formData, permPin: e.target.value})} /></Form.Group>
+                  <Form.Group className="mb-2"><Form.Label className="small fw-bold">Mobile No *</Form.Label><Form.Control required value={formData.permMobile} onChange={e => setFormData({...formData, permMobile: e.target.value})} /></Form.Group>
+                </Col>
+                <Col md={6} className="mb-4">
+                  <h6 className="fw-bold border-bottom pb-2 text-primary">Temporary Address</h6>
+                  <Form.Group className="mb-2"><Form.Label className="small fw-bold">Address</Form.Label><Form.Control as="textarea" rows={2} value={formData.tempAddress} onChange={e => setFormData({...formData, tempAddress: e.target.value})} /></Form.Group>
+                  <Form.Group className="mb-2"><Form.Label className="small fw-bold">State</Form.Label><Form.Control value={formData.tempState} onChange={e => setFormData({...formData, tempState: e.target.value})} /></Form.Group>
+                  <Form.Group className="mb-2"><Form.Label className="small fw-bold">PIN</Form.Label><Form.Control value={formData.tempPin} onChange={e => setFormData({...formData, tempPin: e.target.value})} /></Form.Group>
+                  <Form.Group className="mb-2"><Form.Label className="small fw-bold">Mobile No</Form.Label><Form.Control value={formData.tempMobile} onChange={e => setFormData({...formData, tempMobile: e.target.value})} /></Form.Group>
+                </Col>
+                <Col md={12} className="mb-3"><Form.Label className="small fw-bold">Email Id</Form.Label><Form.Control type="email" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} /></Col>
+              </Row>
+            </Tab>
+
+            {/* TAB 3: Edu, Exp & Languages */}
+            <Tab eventKey="edu" title="Edu, Exp & Lang">
+              <h6 className="mt-3 fw-bold border-bottom pb-2 text-primary">Language Proficiency</h6>
+              {languages.map((lang, idx) => (
+                <Row key={idx} className="mb-2 align-items-center">
+                    <Col md={4}><Form.Control size="sm" placeholder="Language" value={lang.name} onChange={e => { const newLang = [...languages]; newLang[idx].name = e.target.value; setLanguages(newLang); }} /></Col>
+                    <Col md={2}><Form.Check type="checkbox" label="Read" checked={lang.read} onChange={e => { const newLang = [...languages]; newLang[idx].read = e.target.checked; setLanguages(newLang); }} /></Col>
+                    <Col md={2}><Form.Check type="checkbox" label="Write" checked={lang.write} onChange={e => { const newLang = [...languages]; newLang[idx].write = e.target.checked; setLanguages(newLang); }} /></Col>
+                    <Col md={2}><Form.Check type="checkbox" label="Speak" checked={lang.speak} onChange={e => { const newLang = [...languages]; newLang[idx].speak = e.target.checked; setLanguages(newLang); }} /></Col>
+                </Row>
+              ))}
+              <Button size="sm" variant="outline-primary" onClick={() => setLanguages([...languages, { name: '', read: false, write: false, speak: false }])}><Plus size={14} className="me-1"/> Add Language</Button>
+
+              <h6 className="mt-4 fw-bold border-bottom pb-2 text-primary">Educational Qualification</h6>
+              {education.map((edu, idx) => (
+                <Row key={idx} className="mb-2">
+                    <Col><Form.Control size="sm" placeholder="Qualification" value={edu.qualification} onChange={e => { const newEdu = [...education]; newEdu[idx].qualification = e.target.value; setEducation(newEdu); }} /></Col>
+                    <Col><Form.Control size="sm" placeholder="Year" value={edu.year} onChange={e => { const newEdu = [...education]; newEdu[idx].year = e.target.value; setEducation(newEdu); }} /></Col>
+                    <Col><Form.Control size="sm" placeholder="Institute/University" value={edu.institute} onChange={e => { const newEdu = [...education]; newEdu[idx].institute = e.target.value; setEducation(newEdu); }} /></Col>
+                    <Col><Form.Control size="sm" placeholder="Marks %" value={edu.marks} onChange={e => { const newEdu = [...education]; newEdu[idx].marks = e.target.value; setEducation(newEdu); }} /></Col>
+                </Row>
+              ))}
+              <Button size="sm" variant="outline-primary" onClick={() => setEducation([...education, { qualification: '', year: '', institute: '', marks: '' }])}><Plus size={14} className="me-1"/> Add Education</Button>
+
+              <h6 className="mt-4 fw-bold border-bottom pb-2 text-primary">Work Experience</h6>
+              {experience.map((exp, idx) => (
+                <Row key={idx} className="mb-2">
+                    <Col><Form.Control size="sm" placeholder="Company Name" value={exp.company} onChange={e => { const newExp = [...experience]; newExp[idx].company = e.target.value; setExperience(newExp); }} /></Col>
+                    <Col><Form.Control size="sm" placeholder="Period" value={exp.period} onChange={e => { const newExp = [...experience]; newExp[idx].period = e.target.value; setExperience(newExp); }} /></Col>
+                    <Col><Form.Control size="sm" placeholder="Designation" value={exp.designation} onChange={e => { const newExp = [...experience]; newExp[idx].designation = e.target.value; setExperience(newExp); }} /></Col>
+                </Row>
+              ))}
+              <Button size="sm" variant="outline-primary" onClick={() => setExperience([...experience, { company: '', period: '', designation: '' }])}><Plus size={14} className="me-1"/> Add Experience</Button>
+            </Tab>
+
+            {/* TAB 4: Family & Refs */}
+            <Tab eventKey="family" title="Family & Refs">
+              <h6 className="mt-3 fw-bold border-bottom pb-2 text-primary">Family Details</h6>
+              {family.map((fam, idx) => (
+                <Row key={idx} className="mb-2">
+                    <Col><Form.Control size="sm" placeholder="Name" value={fam.name} onChange={e => { const newFam = [...family]; newFam[idx].name = e.target.value; setFamily(newFam); }} /></Col>
+                    <Col><Form.Control size="sm" type="date" placeholder="DOB" value={fam.dob} onChange={e => { const newFam = [...family]; newFam[idx].dob = e.target.value; setFamily(newFam); }} /></Col>
+                    <Col><Form.Control size="sm" placeholder="Relation" value={fam.relation} onChange={e => { const newFam = [...family]; newFam[idx].relation = e.target.value; setFamily(newFam); }} /></Col>
+                </Row>
+              ))}
+              <Button size="sm" variant="outline-primary" onClick={() => setFamily([...family, { name: '', dob: '', relation: '' }])}><Plus size={14} className="me-1"/> Add Family Member</Button>
+
+              <h6 className="mt-4 fw-bold border-bottom pb-2 text-primary">Verification References</h6>
               <Row>
-                <Col md={4} className="mb-3"><Form.Label className="small fw-bold">Bank Name <span className="text-muted fw-normal">(Optional)</span></Form.Label><Form.Control value={formData.bankName} onChange={e => setFormData({...formData, bankName: e.target.value})} /></Col>
-                <Col md={4} className="mb-3"><Form.Label className="small fw-bold">Account Number <span className="text-muted fw-normal">(Optional)</span></Form.Label><Form.Control type="password" placeholder="Encrypted on submit" value={formData.accountNumber} onChange={e => setFormData({...formData, accountNumber: e.target.value})} /></Col>
-                <Col md={4} className="mb-3"><Form.Label className="small fw-bold">IFSC Code <span className="text-muted fw-normal">(Optional)</span></Form.Label><Form.Control value={formData.ifscCode} onChange={e => setFormData({...formData, ifscCode: e.target.value})} /></Col>
-                
-                {/* Aadhaar logic: Locked if using XML/QR, open if 'Without Aadhaar' */}
+                <Col md={6} className="mb-3">
+                    <Form.Label className="small fw-bold">Local Reference 1</Form.Label>
+                    <Form.Control size="sm" placeholder="Name" className="mb-1" value={references.local1.name} onChange={e => setReferences({...references, local1: {...references.local1, name: e.target.value}})} />
+                    <Form.Control size="sm" placeholder="Contact No" className="mb-1" value={references.local1.contact} onChange={e => setReferences({...references, local1: {...references.local1, contact: e.target.value}})} />
+                    <Form.Control size="sm" placeholder="Relationship" value={references.local1.relation} onChange={e => setReferences({...references, local1: {...references.local1, relation: e.target.value}})} />
+                </Col>
+                <Col md={6} className="mb-3">
+                    <Form.Label className="small fw-bold">Local Reference 2</Form.Label>
+                    <Form.Control size="sm" placeholder="Name" className="mb-1" value={references.local2.name} onChange={e => setReferences({...references, local2: {...references.local2, name: e.target.value}})} />
+                    <Form.Control size="sm" placeholder="Contact No" className="mb-1" value={references.local2.contact} onChange={e => setReferences({...references, local2: {...references.local2, contact: e.target.value}})} />
+                    <Form.Control size="sm" placeholder="Relationship" value={references.local2.relation} onChange={e => setReferences({...references, local2: {...references.local2, relation: e.target.value}})} />
+                </Col>
+                <Col md={6} className="mb-3">
+                    <Form.Label className="small fw-bold">Native Reference 1</Form.Label>
+                    <Form.Control size="sm" placeholder="Name" className="mb-1" value={references.native1.name} onChange={e => setReferences({...references, native1: {...references.native1, name: e.target.value}})} />
+                    <Form.Control size="sm" placeholder="Contact No" className="mb-1" value={references.native1.contact} onChange={e => setReferences({...references, native1: {...references.native1, contact: e.target.value}})} />
+                    <Form.Control size="sm" placeholder="Relationship" value={references.native1.relation} onChange={e => setReferences({...references, native1: {...references.native1, relation: e.target.value}})} />
+                </Col>
+                <Col md={6} className="mb-3">
+                    <Form.Label className="small fw-bold">Native Reference 2</Form.Label>
+                    <Form.Control size="sm" placeholder="Name" className="mb-1" value={references.native2.name} onChange={e => setReferences({...references, native2: {...references.native2, name: e.target.value}})} />
+                    <Form.Control size="sm" placeholder="Contact No" className="mb-1" value={references.native2.contact} onChange={e => setReferences({...references, native2: {...references.native2, contact: e.target.value}})} />
+                    <Form.Control size="sm" placeholder="Relationship" value={references.native2.relation} onChange={e => setReferences({...references, native2: {...references.native2, relation: e.target.value}})} />
+                </Col>
+              </Row>
+            </Tab>
+
+            {/* TAB 5: Bank, IDs & Work */}
+            <Tab eventKey="bank" title="Work & IDs">
+              <h6 className="mt-3 fw-bold border-bottom pb-2 text-primary">Work Allocation</h6>
+              <Row className="mb-3">
+                <Col md={3} className="mb-2"><Form.Label className="small fw-bold">Joining Date *</Form.Label><Form.Control type="date" required value={formData.joiningDate} onChange={e => setFormData({...formData, joiningDate: e.target.value})} /></Col>
+                <Col md={3} className="mb-2"><Form.Label className="small fw-bold">Designation *</Form.Label><Form.Control required value={formData.designation} onChange={e => setFormData({...formData, designation: e.target.value})} /></Col>
+                <Col md={3} className="mb-2"><Form.Label className="small fw-bold">LFM ID NO <Lock size={12}/></Form.Label><Form.Control disabled placeholder="Generated by Admin" /></Col>
+                <Col md={3} className="mb-2"><Form.Label className="small fw-bold">Unit Name</Form.Label><Form.Control value={formData.unitName} onChange={e => setFormData({...formData, unitName: e.target.value})} /></Col>
+              </Row>
+
+              <h6 className="mt-3 fw-bold border-bottom pb-2 text-primary">Bank Details</h6>
+              <Row className="mb-3">
+                <Col md={4}><Form.Label className="small fw-bold">Bank Name</Form.Label><Form.Control value={formData.bankName} onChange={e => setFormData({...formData, bankName: e.target.value})} /></Col>
+                <Col md={4}><Form.Label className="small fw-bold">Account Number</Form.Label><Form.Control type="password" value={formData.accountNumber} onChange={e => setFormData({...formData, accountNumber: e.target.value})} /></Col>
+                <Col md={4}><Form.Label className="small fw-bold">IFSC Code</Form.Label><Form.Control value={formData.ifscCode} onChange={e => setFormData({...formData, ifscCode: e.target.value})} /></Col>
+              </Row>
+
+              <h6 className="mt-3 fw-bold border-bottom pb-2 text-primary">Identity & Address Proof</h6>
+              <Row>
                 <Col md={12} className="mb-3 mt-2">
-                  <Form.Label className="small fw-bold d-flex align-items-center">
-                    Aadhaar Number 
-                    {kycMode !== 'without_aadhaar' && <Lock size={14} className="ms-2 text-primary" />}
-                  </Form.Label>
-                  <Form.Control 
-                    value={formData.aadhar} 
-                    onChange={e => setFormData({...formData, aadhar: e.target.value})} 
-                    placeholder={
-                        kycMode === 'aadhaar_xml' ? "[Fetched automatically from XML file]" : 
-                        kycMode === 'aadhaar_qr' ? "[Fetched automatically from QR Scan]" : 
-                        "Enter Aadhaar Number (Optional)"
-                    } 
-                    disabled={kycMode !== 'without_aadhaar'} 
-                    className={kycMode !== 'without_aadhaar' ? 'bg-light text-success fw-bold' : ''}
-                  />
+                  <Form.Label className="small fw-bold d-flex align-items-center">UID (AADHAAR) {kycMode === 'without_aadhaar' ? <span className="text-danger ms-1">*</span> : <Lock size={14} className="ms-2 text-primary" />}</Form.Label>
+                  <Form.Control required={kycMode === 'without_aadhaar'} value={formData.aadhar} onChange={e => setFormData({...formData, aadhar: e.target.value})} placeholder={kycMode !== 'without_aadhaar' ? "[Fetched automatically from e-KYC]" : "Enter 12-digit Aadhaar Number"} disabled={kycMode !== 'without_aadhaar'} className={kycMode !== 'without_aadhaar' ? 'bg-light text-success fw-bold' : ''}/>
+                </Col>
+                {kycMode === 'without_aadhaar' && (
+                    <Col md={12} className="mb-4">
+                       <Card className="border-warning bg-light"><Card.Body className="py-2">
+                               <Form.Label className="small fw-bold">Upload Aadhaar Copy (Front & Back) <span className="text-danger">*</span></Form.Label>
+                               <Form.Control type="file" required accept="image/*,.pdf" onChange={(e) => handleFileChange(e, 'aadharPhoto')} />
+                       </Card.Body></Card>
+                    </Col>
+                )}
+
+                <Col md={6} className="mb-4">
+                    <Form.Label className="small fw-bold">PAN Card Number</Form.Label>
+                    <Form.Control value={formData.panCard} onChange={e => setFormData({...formData, panCard: e.target.value})} />
+                    {formData.panCard && (
+                        <div className="mt-2 p-2 bg-light rounded border border-secondary border-opacity-25">
+                            <Form.Label className="small text-muted mb-1"><UploadCloud size={14} className="me-1"/>Upload PAN Photo</Form.Label>
+                            <Form.Control type="file" size="sm" accept="image/*,.pdf" onChange={e => handleFileChange(e, 'panPhoto')} />
+                        </div>
+                    )}
                 </Col>
 
-                <Col md={6} className="mb-3"><Form.Label className="small fw-bold">PAN Card Number <span className="text-muted fw-normal">(Optional)</span></Form.Label><Form.Control value={formData.panCard} onChange={e => setFormData({...formData, panCard: e.target.value})} /></Col>
-                <Col md={6} className="mb-3"><Form.Label className="small fw-bold">Voter ID <span className="text-muted fw-normal">(Optional)</span></Form.Label><Form.Control value={formData.voterId} onChange={e => setFormData({...formData, voterId: e.target.value})} /></Col>
-                <Col md={6} className="mb-3"><Form.Label className="small fw-bold">Driving Licence <span className="text-muted fw-normal">(Optional)</span></Form.Label><Form.Control value={formData.drivingLicence} onChange={e => setFormData({...formData, drivingLicence: e.target.value})} /></Col>
-                <Col md={6} className="mb-3"><Form.Label className="small fw-bold">Passport No <span className="text-muted fw-normal">(Optional)</span></Form.Label><Form.Control value={formData.passportNo} onChange={e => setFormData({...formData, passportNo: e.target.value})} /></Col>
+                <Col md={6} className="mb-4">
+                    <Form.Label className="small fw-bold">Voter ID</Form.Label>
+                    <Form.Control value={formData.voterId} onChange={e => setFormData({...formData, voterId: e.target.value})} />
+                    {formData.voterId && (
+                        <div className="mt-2 p-2 bg-light rounded border border-secondary border-opacity-25">
+                            <Form.Label className="small text-muted mb-1"><UploadCloud size={14} className="me-1"/>Upload Voter ID Photo</Form.Label>
+                            <Form.Control type="file" size="sm" accept="image/*,.pdf" onChange={e => handleFileChange(e, 'voterPhoto')} />
+                        </div>
+                    )}
+                </Col>
+
+                <Col md={6} className="mb-4">
+                    <Form.Label className="small fw-bold">Driving Licence</Form.Label>
+                    <Form.Control value={formData.drivingLicence} onChange={e => setFormData({...formData, drivingLicence: e.target.value})} />
+                    {formData.drivingLicence && (
+                        <div className="mt-2 p-2 bg-light rounded border border-secondary border-opacity-25">
+                            <Form.Label className="small text-muted mb-1"><UploadCloud size={14} className="me-1"/>Upload DL Photo</Form.Label>
+                            <Form.Control type="file" size="sm" accept="image/*,.pdf" onChange={e => handleFileChange(e, 'dlPhoto')} />
+                        </div>
+                    )}
+                </Col>
+
+                <Col md={6} className="mb-4">
+                    <Form.Label className="small fw-bold">Passport No</Form.Label>
+                    <Form.Control value={formData.passportNo} onChange={e => setFormData({...formData, passportNo: e.target.value})} />
+                    {formData.passportNo && (
+                        <div className="mt-2 p-2 bg-light rounded border border-secondary border-opacity-25">
+                            <Form.Label className="small text-muted mb-1"><UploadCloud size={14} className="me-1"/>Upload Passport Photo</Form.Label>
+                            <Form.Control type="file" size="sm" accept="image/*,.pdf" onChange={e => handleFileChange(e, 'passportPhoto')} />
+                        </div>
+                    )}
+                </Col>
               </Row>
             </Tab>
           </Tabs>
 
-          {/* Conditional Fingerprint Uploads */}
           {kycMode === 'without_aadhaar' && (
              <Card className="border-danger mb-4">
-                <Card.Header className="bg-danger text-white fw-bold d-flex align-items-center"><Fingerprint className="me-2" /> Mandatory Fingerprints</Card.Header>
+                <Card.Header className="bg-danger text-white fw-bold d-flex align-items-center"><Fingerprint className="me-2" /> Mandatory Fingerprint Impressions</Card.Header>
                 <Card.Body>
+                   <p className="small text-muted mb-3">Upload documents containing all 5 finger impressions (Thumb, Index, Middle, Ring, Small) for both hands.</p>
                    <Row>
-                     <Col md={6} className="mb-3">
-                        <Form.Label className="fw-bold small">Upload Left Hand Impressions *</Form.Label>
-                        <Form.Control type="file" accept="image/*,.pdf" required onChange={(e) => handleFileChange(e, 'fingerprintsLeft')} />
-                     </Col>
-                     <Col md={6} className="mb-3">
-                        <Form.Label className="fw-bold small">Upload Right Hand Impressions *</Form.Label>
-                        <Form.Control type="file" accept="image/*,.pdf" required onChange={(e) => handleFileChange(e, 'fingerprintsRight')} />
-                     </Col>
+                     <Col md={6} className="mb-3"><Form.Label className="fw-bold small">LEFT Hand Impressions *</Form.Label><Form.Control type="file" accept="image/*,.pdf" required onChange={(e) => handleFileChange(e, 'fingerprintsLeft')} /></Col>
+                     <Col md={6} className="mb-3"><Form.Label className="fw-bold small">RIGHT Hand Impressions *</Form.Label><Form.Control type="file" accept="image/*,.pdf" required onChange={(e) => handleFileChange(e, 'fingerprintsRight')} /></Col>
                    </Row>
                 </Card.Body>
              </Card>

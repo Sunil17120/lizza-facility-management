@@ -149,28 +149,41 @@ def change_password(data: PasswordChange, db: Session = Depends(get_db)):
 # --- MANAGER & ONBOARDING ---
 @app.post("/api/manager/add-employee")
 async def add_employee(
-    # Mandatory Core Fields
+    # Core
     first_name: str = Form(...), last_name: str = Form(...), phone_number: str = Form(...), 
     dob: str = Form(...), designation: str = Form(...), kyc_mode: str = Form(...),
     
-    # Optional Personal Fields
+    # Optional Details & Med
     personal_email: str = Form(None), gender: str = Form(None), marital_status: str = Form(None), 
     identity_mark: str = Form(None), father_name: str = Form(None), mother_name: str = Form(None), 
-    blood_group: str = Form(None), department: str = Form("Operations"), manager_id: int = Form(1), 
-    location_id: Optional[int] = Form(None), shift_start: Optional[str] = Form(None), 
-    shift_end: Optional[str] = Form(None),
+    blood_group: str = Form(None), height: str = Form(None), caste: str = Form(None), 
+    category: str = Form(None), religion: str = Form(None), nationality: str = Form(None), 
+    medical_remarks: str = Form(None), unit_name: str = Form(None),
     
-    # Optional Financial & ID Fields (Sent as Form(None) if blank)
+    # Addresses
+    perm_address: str = Form(None), perm_state: str = Form(None), perm_pin: str = Form(None), perm_mobile: str = Form(None),
+    temp_address: str = Form(None), temp_state: str = Form(None), temp_pin: str = Form(None), temp_mobile: str = Form(None),
+    
+    # JSON Arrays
+    languages_json: str = Form(None), education_json: str = Form(None), experience_json: str = Form(None), 
+    family_json: str = Form(None), references_json: str = Form(None),
+    
+    # Financial & ID
     bank_name: str = Form(None), account_number: str = Form(None), ifsc_code: str = Form(None),
     aadhar_number: str = Form(None), pan_number: str = Form(None), voter_id: str = Form(None), 
     driving_licence: str = Form(None), passport_no: str = Form(None),
     
-    # File Uploads
-    profile_photo: UploadFile = File(None), id_proof: UploadFile = File(None),
+    # Work settings
+    department: str = Form("Operations"), manager_id: int = Form(1), 
+    location_id: Optional[int] = Form(None), shift_start: Optional[str] = Form(None), shift_end: Optional[str] = Form(None),
+    
+    # Files
+    profile_photo: UploadFile = File(None), aadhar_photo: UploadFile = File(None),
+    pan_photo: UploadFile = File(None), voter_photo: UploadFile = File(None),
+    dl_photo: UploadFile = File(None), passport_photo: UploadFile = File(None),
     fingerprints_left: UploadFile = File(None), fingerprints_right: UploadFile = File(None),
     db: Session = Depends(get_db)
 ):
-    # 1. Generate official email and initial password
     base_email = f"{first_name.strip().replace(' ', '').lower()}.{last_name.strip().replace(' ', '').lower()}@lizza.com"
     try:
         dt_obj = datetime.strptime(dob, "%Y-%m-%d")
@@ -180,15 +193,16 @@ async def add_employee(
 
     salt = hashlib.sha256(base_email.encode()).hexdigest()[:16]
 
-    # 2. Process File Uploads to Cloud
+    # Upload files to Cloud
     profile_url = upload_to_cloud(profile_photo)
-    id_proof_url = upload_to_cloud(id_proof)
-    
-    # Only process fingerprints if Without Aadhaar mode is selected
+    aadhar_url = upload_to_cloud(aadhar_photo) if kyc_mode == 'without_aadhaar' else None
+    pan_url = upload_to_cloud(pan_photo)
+    voter_url = upload_to_cloud(voter_photo)
+    dl_url = upload_to_cloud(dl_photo)
+    passport_url = upload_to_cloud(passport_photo)
     left_fp_url = upload_to_cloud(fingerprints_left) if kyc_mode == 'without_aadhaar' else None
     right_fp_url = upload_to_cloud(fingerprints_right) if kyc_mode == 'without_aadhaar' else None
 
-    # 3. Create User and Encrypt Sensitive Data
     new_user = User(
         first_name=first_name, last_name=last_name, full_name=f"{first_name} {last_name}",
         email=base_email, personal_email=personal_email, phone_number=phone_number,
@@ -196,29 +210,31 @@ async def add_employee(
         manager_id=manager_id, location_id=location_id, is_verified=False, dob=dob,
         gender=gender, marital_status=marital_status, identity_mark=identity_mark,
         father_name=father_name, mother_name=mother_name, blood_group=blood_group,
-        designation=designation, department=department, kyc_mode=kyc_mode,
+        height=height, caste=caste, category=category, religion=religion, nationality=nationality, 
+        medical_remarks=medical_remarks, unit_name=unit_name, designation=designation, department=department, kyc_mode=kyc_mode,
         
-        # --- APPLY ENCRYPTION TO OPTIONAL FIELDS ---
-        aadhar_enc=safe_encrypt(aadhar_number),
-        pan_enc=safe_encrypt(pan_number),
-        account_number_enc=safe_encrypt(account_number),
-        voter_id_enc=safe_encrypt(voter_id),
-        driving_licence_enc=safe_encrypt(driving_licence),
-        passport_no_enc=safe_encrypt(passport_no),
+        # Addresses
+        perm_address=perm_address, perm_state=perm_state, perm_pin=perm_pin, perm_mobile=perm_mobile,
+        temp_address=temp_address, temp_state=temp_state, temp_pin=temp_pin, temp_mobile=temp_mobile,
         
-        # (Bank name and IFSC are usually safe as plain text, but account number is encrypted)
-        bank_name=bank_name,
-        ifsc_code=ifsc_code,
+        # JSON Data
+        languages_json=languages_json, education_json=education_json, experience_json=experience_json, 
+        family_json=family_json, references_json=references_json,
         
-        # --- STORE UPLOAD URLS ---
-        profile_photo_path=profile_url,
-        id_proof_path=id_proof_url,
-        fingerprints_left_path=left_fp_url,
-        fingerprints_right_path=right_fp_url,
+        # Encrypted Data
+        aadhar_enc=safe_encrypt(aadhar_number), pan_enc=safe_encrypt(pan_number),
+        account_number_enc=safe_encrypt(account_number), voter_id_enc=safe_encrypt(voter_id),
+        driving_licence_enc=safe_encrypt(driving_licence), passport_no_enc=safe_encrypt(passport_no),
+        bank_name=bank_name, ifsc_code=ifsc_code,
         
-        shift_start=shift_start if shift_start else None, 
-        shift_end=shift_end if shift_end else None
+        # Photo Paths
+        profile_photo_path=profile_url, aadhar_photo_path=aadhar_url,
+        pan_photo_path=pan_url, voter_photo_path=voter_url, dl_photo_path=dl_url, passport_photo_path=passport_url,
+        fingerprints_left_path=left_fp_url, fingerprints_right_path=right_fp_url,
+        
+        shift_start=shift_start if shift_start else None, shift_end=shift_end if shift_end else None
     )
+    
     db.add(new_user)
     db.commit()
     
