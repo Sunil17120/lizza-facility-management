@@ -10,7 +10,8 @@ from sqlalchemy.exc import IntegrityError
 import pyzipper
 import io
 import xml.etree.ElementTree as ET
-from pyzbar.pyzbar import decode
+import cv2
+import numpy as np
 from PIL import Image
 try:
     from .database import SessionLocal, User, EmployeeLocation, OfficeLocation, SiteVisit,SiteStay, init_db, cipher
@@ -491,25 +492,25 @@ async def extract_ekyc(file: UploadFile = File(...), share_code: str = Form(...)
 @app.post("/api/manager/extract-qr")
 async def extract_qr(file: UploadFile = File(...)):
     try:
-        # 1. Read the uploaded image
+        # 1. Read the uploaded image into OpenCV
         image_bytes = await file.read()
-        image = Image.open(io.BytesIO(image_bytes))
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         
-        # 2. Decode the QR Code
-        decoded_objects = decode(image)
-        if not decoded_objects:
-            raise HTTPException(status_code=400, detail="No QR code found in the uploaded image.")
+        if img is None:
+            raise HTTPException(status_code=400, detail="Invalid image file.")
+        
+        # 2. Decode the QR Code using OpenCV
+        detector = cv2.QRCodeDetector()
+        qr_data, bbox, _ = detector.detectAndDecode(img)
+        
+        if not qr_data:
+            raise HTTPException(status_code=400, detail="No QR code found or image is too blurry.")
             
-        qr_data = decoded_objects[0].data
-        
-        # 3. Parse the QR Data
-        # Older Aadhaar QR codes and standard e-Aadhaar PDFs use raw XML.
-        # Note: Modern "Secure QR" codes from physical cards use a highly compressed binary format 
-        # that requires specific UIDAI decompression. This handles the standard XML format.
-        
+        # 3. Parse the QR Data (XML format)
         try:
-            xml_str = qr_data.decode('utf-8')
-            root = ET.fromstring(xml_str)
+            # OpenCV returns a string, so we don't need to decode bytes
+            root = ET.fromstring(qr_data)
             
             # Extract data mapping UIDAI XML attributes
             attribs = root.attrib
@@ -539,8 +540,7 @@ async def extract_qr(file: UploadFile = File(...)):
             }
             
         except ET.ParseError:
-            # Fallback if the QR contains raw text instead of XML
-            raise HTTPException(status_code=400, detail="QR Code is a modern compressed 'Secure QR' or invalid format. Please use the XML ZIP option instead.")
+            raise HTTPException(status_code=400, detail="QR Code format is not standard XML. Please use the ZIP option.")
             
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to process QR image: {str(e)}")
