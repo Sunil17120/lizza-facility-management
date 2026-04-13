@@ -10,7 +10,8 @@ from sqlalchemy.exc import IntegrityError
 import pyzipper
 import io
 import xml.etree.ElementTree as ET
-
+from pyzbar.pyzbar import decode
+from PIL import Image
 try:
     from .database import SessionLocal, User, EmployeeLocation, OfficeLocation, SiteVisit,SiteStay, init_db, cipher
 except ImportError:
@@ -36,7 +37,6 @@ def is_time_between(start_str, end_str, check_str):
     else: # Shift crosses midnight (e.g., 22:00 to 06:00)
         return start_str <= check_str or check_str <= end_str
 
-# --- SCHEMAS ---
 class AuthRequest(BaseModel): 
     email: str
     password: str
@@ -109,7 +109,11 @@ def get_distance(lat1, lon1, lat2, lon2):
     dphi, dlambda = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
     a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
-
+def safe_encrypt(data: str) -> str:
+    """Safely encrypts data if it exists, otherwise returns None."""
+    if not data or str(data).strip() == "" or data == "null" or data == "undefined":
+        return None
+    return cipher.encrypt(str(data).encode()).decode()
 # --- AUTH & PROFILE ---
 @app.post("/api/login")
 def login(data: AuthRequest, db: Session = Depends(get_db)):
@@ -144,52 +148,80 @@ def change_password(data: PasswordChange, db: Session = Depends(get_db)):
 # --- MANAGER & ONBOARDING ---
 @app.post("/api/manager/add-employee")
 async def add_employee(
-    first_name: str = Form(...), last_name: str = Form(...), personal_email: str = Form(...),
-    phone_number: str = Form(...), dob: str = Form(...), father_name: str = Form(None),
-    mother_name: str = Form(None), blood_group: str = Form(None), emergency_contact: str = Form(None),
-    designation: str = Form(...), department: str = Form(...), experience_years: float = Form(0.0),
-    prev_company: str = Form(None), prev_role: str = Form(None), aadhar_number: str = Form(...),
-    pan_number: str = Form(...), manager_id: int = Form(...), user_type: str = Form("employee"),
-    location_id: Optional[int] = Form(None), shift_start: Optional[str] = Form(None),
-    shift_end: Optional[str] = Form(None), profile_photo: UploadFile = File(None), 
-    aadhar_photo: UploadFile = File(None), pan_photo: UploadFile = File(None), 
-    filled_form: UploadFile = File(None), db: Session = Depends(get_db)
+    # Mandatory Core Fields
+    first_name: str = Form(...), last_name: str = Form(...), phone_number: str = Form(...), 
+    dob: str = Form(...), designation: str = Form(...), kyc_mode: str = Form(...),
+    
+    # Optional Personal Fields
+    personal_email: str = Form(None), gender: str = Form(None), marital_status: str = Form(None), 
+    identity_mark: str = Form(None), father_name: str = Form(None), mother_name: str = Form(None), 
+    blood_group: str = Form(None), department: str = Form("Operations"), manager_id: int = Form(1), 
+    location_id: Optional[int] = Form(None), shift_start: Optional[str] = Form(None), 
+    shift_end: Optional[str] = Form(None),
+    
+    # Optional Financial & ID Fields (Sent as Form(None) if blank)
+    bank_name: str = Form(None), account_number: str = Form(None), ifsc_code: str = Form(None),
+    aadhar_number: str = Form(None), pan_number: str = Form(None), voter_id: str = Form(None), 
+    driving_licence: str = Form(None), passport_no: str = Form(None),
+    
+    # File Uploads
+    profile_photo: UploadFile = File(None), id_proof: UploadFile = File(None),
+    fingerprints_left: UploadFile = File(None), fingerprints_right: UploadFile = File(None),
+    db: Session = Depends(get_db)
 ):
+    # 1. Generate official email and initial password
     base_email = f"{first_name.strip().replace(' ', '').lower()}.{last_name.strip().replace(' ', '').lower()}@lizza.com"
     try:
         dt_obj = datetime.strptime(dob, "%Y-%m-%d")
         initial_pw = dt_obj.strftime("%d%m%Y") 
     except ValueError:
-        try:
-            dt_obj = datetime.strptime(dob, "%d-%m-%Y")
-            initial_pw = dt_obj.strftime("%d%m%Y")
-        except:
-            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
 
     salt = hashlib.sha256(base_email.encode()).hexdigest()[:16]
-    
-    if user_type == 'field_officer': shift_start, shift_end, location_id = None, None, None
-    if not shift_start: shift_start = None
-    if not shift_end: shift_end = None
 
+    # 2. Process File Uploads to Cloud
+    profile_url = upload_to_cloud(profile_photo)
+    id_proof_url = upload_to_cloud(id_proof)
+    
+    # Only process fingerprints if Without Aadhaar mode is selected
+    left_fp_url = upload_to_cloud(fingerprints_left) if kyc_mode == 'without_aadhaar' else None
+    right_fp_url = upload_to_cloud(fingerprints_right) if kyc_mode == 'without_aadhaar' else None
+
+    # 3. Create User and Encrypt Sensitive Data
     new_user = User(
         first_name=first_name, last_name=last_name, full_name=f"{first_name} {last_name}",
         email=base_email, personal_email=personal_email, phone_number=phone_number,
-        password=get_secure_hash(initial_pw, salt), salt=salt, user_type=user_type, 
+        password=get_secure_hash(initial_pw, salt), salt=salt, user_type="employee", 
         manager_id=manager_id, location_id=location_id, is_verified=False, dob=dob,
+        gender=gender, marital_status=marital_status, identity_mark=identity_mark,
         father_name=father_name, mother_name=mother_name, blood_group=blood_group,
-        emergency_contact=emergency_contact, designation=designation, department=department,
-        experience_years=experience_years, prev_company=prev_company, prev_role=prev_role,
-        aadhar_enc=cipher.encrypt(aadhar_number.encode()).decode(),
-        pan_enc=cipher.encrypt(pan_number.encode()).decode(),
-        profile_photo_path=upload_to_cloud(profile_photo),
-        aadhar_photo_path=upload_to_cloud(aadhar_photo),
-        pan_photo_path=upload_to_cloud(pan_photo),
-        filled_form_path=process_upload_base64(filled_form, 2),
-        shift_start=shift_start, shift_end=shift_end
+        designation=designation, department=department, kyc_mode=kyc_mode,
+        
+        # --- APPLY ENCRYPTION TO OPTIONAL FIELDS ---
+        aadhar_enc=safe_encrypt(aadhar_number),
+        pan_enc=safe_encrypt(pan_number),
+        account_number_enc=safe_encrypt(account_number),
+        voter_id_enc=safe_encrypt(voter_id),
+        driving_licence_enc=safe_encrypt(driving_licence),
+        passport_no_enc=safe_encrypt(passport_no),
+        
+        # (Bank name and IFSC are usually safe as plain text, but account number is encrypted)
+        bank_name=bank_name,
+        ifsc_code=ifsc_code,
+        
+        # --- STORE UPLOAD URLS ---
+        profile_photo_path=profile_url,
+        id_proof_path=id_proof_url,
+        fingerprints_left_path=left_fp_url,
+        fingerprints_right_path=right_fp_url,
+        
+        shift_start=shift_start if shift_start else None, 
+        shift_end=shift_end if shift_end else None
     )
-    db.add(new_user); db.commit()
-    return {"status": "success", "official_email": base_email}
+    db.add(new_user)
+    db.commit()
+    
+    return {"status": "success", "official_email": base_email, "message": "Employee registered successfully."}
 
 @app.get("/api/manager/my-employees")
 def get_my_employees(manager_id: int, db: Session = Depends(get_db)):
@@ -456,3 +488,59 @@ async def extract_ekyc(file: UploadFile = File(...), share_code: str = Form(...)
         raise HTTPException(400, "Failed to unlock ZIP. Ensure it is a valid UIDAI file.")
     except Exception as e:
         raise HTTPException(500, "Failed to process e-KYC XML data.")
+@app.post("/api/manager/extract-qr")
+async def extract_qr(file: UploadFile = File(...)):
+    try:
+        # 1. Read the uploaded image
+        image_bytes = await file.read()
+        image = Image.open(io.BytesIO(image_bytes))
+        
+        # 2. Decode the QR Code
+        decoded_objects = decode(image)
+        if not decoded_objects:
+            raise HTTPException(status_code=400, detail="No QR code found in the uploaded image.")
+            
+        qr_data = decoded_objects[0].data
+        
+        # 3. Parse the QR Data
+        # Older Aadhaar QR codes and standard e-Aadhaar PDFs use raw XML.
+        # Note: Modern "Secure QR" codes from physical cards use a highly compressed binary format 
+        # that requires specific UIDAI decompression. This handles the standard XML format.
+        
+        try:
+            xml_str = qr_data.decode('utf-8')
+            root = ET.fromstring(xml_str)
+            
+            # Extract data mapping UIDAI XML attributes
+            attribs = root.attrib
+            name_parts = attribs.get('name', '').split(' ', 1)
+            
+            # Format DOB standard
+            try: 
+                dob_formatted = datetime.strptime(attribs.get('dob', ''), "%d/%m/%Y").strftime("%Y-%m-%d")
+            except: 
+                try: dob_formatted = datetime.strptime(attribs.get('dob', ''), "%Y-%m-%d").strftime("%Y-%m-%d")
+                except: dob_formatted = attribs.get('dob', '')
+
+            # Masked Aadhaar from the uid attribute
+            uid = attribs.get('uid', '')
+            masked_aadhar = f"XXXX-XXXX-{uid[-4:]}" if len(uid) >= 4 else "XXXX"
+
+            return {
+                "status": "success", 
+                "data": { 
+                    "firstName": name_parts[0], 
+                    "lastName": name_parts[1] if len(name_parts) > 1 else '', 
+                    "dob": dob_formatted, 
+                    "gender": attribs.get('gender', ''),
+                    "fatherName": attribs.get('co', '').replace('S/O', '').replace('D/O', '').strip(),
+                    "aadhar_reference": masked_aadhar 
+                }
+            }
+            
+        except ET.ParseError:
+            # Fallback if the QR contains raw text instead of XML
+            raise HTTPException(status_code=400, detail="QR Code is a modern compressed 'Secure QR' or invalid format. Please use the XML ZIP option instead.")
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to process QR image: {str(e)}")
