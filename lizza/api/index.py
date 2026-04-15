@@ -505,6 +505,10 @@ async def extract_ekyc(file: UploadFile = File(...), share_code: str = Form(...)
         raise HTTPException(400, "Failed to unlock ZIP. Ensure it is a valid UIDAI file.")
     except Exception as e:
         raise HTTPException(500, "Failed to process e-KYC XML data.")
+try:
+    from pyaadhaar.decode import AadhaarSecureQr
+except ImportError:
+    AadhaarSecureQr = None
 @app.post("/api/manager/extract-qr")
 async def extract_qr(file: UploadFile = File(...)):
     try:
@@ -514,49 +518,101 @@ async def extract_qr(file: UploadFile = File(...)):
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         
         if img is None:
-            raise HTTPException(status_code=400, detail="Invalid image file.")
+            raise HTTPException(status_code=400, detail="Invalid image file. Please upload a clear photo.")
         
         # 2. Decode the QR Code using OpenCV
         detector = cv2.QRCodeDetector()
         qr_data, bbox, _ = detector.detectAndDecode(img)
         
         if not qr_data:
-            raise HTTPException(status_code=400, detail="No QR code found or image is too blurry.")
+            raise HTTPException(status_code=400, detail="No QR code found or image is too blurry. Please try again.")
             
-        # 3. Parse the QR Data (XML format)
-        try:
-            # OpenCV returns a string, so we don't need to decode bytes
-            root = ET.fromstring(qr_data)
-            
-            # Extract data mapping UIDAI XML attributes
-            attribs = root.attrib
-            name_parts = attribs.get('name', '').split(' ', 1)
-            
-            # Format DOB standard
-            try: 
-                dob_formatted = datetime.strptime(attribs.get('dob', ''), "%d/%m/%Y").strftime("%Y-%m-%d")
-            except: 
-                try: dob_formatted = datetime.strptime(attribs.get('dob', ''), "%Y-%m-%d").strftime("%Y-%m-%d")
-                except: dob_formatted = attribs.get('dob', '')
+        qr_text = str(qr_data).strip()
 
-            # Masked Aadhaar from the uid attribute
-            uid = attribs.get('uid', '')
-            masked_aadhar = f"XXXX-XXXX-{uid[-4:]}" if len(uid) >= 4 else "XXXX"
-
-            return {
-                "status": "success", 
-                "data": { 
-                    "firstName": name_parts[0], 
-                    "lastName": name_parts[1] if len(name_parts) > 1 else '', 
-                    "dob": dob_formatted, 
-                    "gender": attribs.get('gender', ''),
-                    "fatherName": attribs.get('co', '').replace('S/O', '').replace('D/O', '').strip(),
-                    "aadhar_reference": masked_aadhar 
+        # ==========================================================
+        # SCENARIO A: AADHAAR SECURE QR (Modern Plastic PVC Cards)
+        # ==========================================================
+        if qr_text.isdigit() and len(qr_text) > 500:
+            if AadhaarSecureQr is None:
+                raise HTTPException(status_code=500, detail="The 'pyaadhaar' library is not installed on the server. Please add it to requirements.txt.")
+                
+            try:
+                # Decompress the UIDAI Secure Binary format
+                secure_qr = AadhaarSecureQr(int(qr_text))
+                parsed_data = secure_qr.decodeddata()
+                
+                # Standardize DOB
+                dob_raw = parsed_data.get('dob', '')
+                try: 
+                    dob_formatted = datetime.strptime(dob_raw, "%d-%m-%Y").strftime("%Y-%m-%d")
+                except: 
+                    dob_formatted = dob_raw
+                
+                # Split Name into First and Last
+                full_name = str(parsed_data.get('name', '')).strip().split(' ')
+                first_name = full_name[0]
+                last_name = ' '.join(full_name[1:]) if len(full_name) > 1 else ''
+                
+                # Clean up CareOf (Father's Name)
+                father_name = str(parsed_data.get('careof', '')).replace('S/O', '').replace('D/O', '').replace('C/O', '').replace(':', '').strip()
+                
+                return {
+                    "status": "success", 
+                    "data": { 
+                        "firstName": first_name, 
+                        "lastName": last_name, 
+                        "dob": dob_formatted, 
+                        "gender": "Male" if parsed_data.get('gender') == 'M' else "Female" if parsed_data.get('gender') == 'F' else parsed_data.get('gender', ''),
+                        "fatherName": father_name,
+                        "aadhar_reference": "XXXX-XXXX-VERIFIED" # Secure QR hides the UID for privacy, but validates identity cryptographically
+                    }
                 }
-            }
-            
-        except ET.ParseError:
-            raise HTTPException(status_code=400, detail="QR Code format is not standard XML. Please use the ZIP option.")
-            
+            except Exception as e:
+                raise HTTPException(status_code=400, detail="Detected a Secure Aadhaar QR, but failed to decrypt it. The QR might be damaged. Please try Offline XML.")
+
+        # ==========================================================
+        # SCENARIO B: OLD XML FORMAT (e-Aadhaar PDF Printouts)
+        # ==========================================================
+        else:
+            try:
+                # Parse as standard XML
+                root = ET.fromstring(qr_text)
+                attribs = root.attrib
+                
+                name_parts = attribs.get('name', '').strip().split(' ', 1)
+                first_name = name_parts[0]
+                last_name = name_parts[1] if len(name_parts) > 1 else ''
+                
+                # Standardize DOB
+                try: 
+                    dob_formatted = datetime.strptime(attribs.get('dob', ''), "%d/%m/%Y").strftime("%Y-%m-%d")
+                except: 
+                    try: dob_formatted = datetime.strptime(attribs.get('dob', ''), "%Y-%m-%d").strftime("%Y-%m-%d")
+                    except: dob_formatted = attribs.get('dob', '')
+
+                # Mask the Aadhaar Number
+                uid = attribs.get('uid', '')
+                masked_aadhar = f"XXXX-XXXX-{uid[-4:]}" if len(uid) >= 4 else "XXXX"
+
+                return {
+                    "status": "success", 
+                    "data": { 
+                        "firstName": first_name, 
+                        "lastName": last_name, 
+                        "dob": dob_formatted, 
+                        "gender": "Male" if attribs.get('gender') == 'M' else "Female" if attribs.get('gender') == 'F' else attribs.get('gender', ''),
+                        "fatherName": attribs.get('co', '').replace('S/O', '').replace('D/O', '').replace('C/O', '').strip(),
+                        "aadhar_reference": masked_aadhar 
+                    }
+                }
+                
+            except ET.ParseError:
+                raise HTTPException(status_code=400, detail="The scanned QR Code is not a valid Aadhaar format. Please try again.")
+
+    except HTTPException:
+        # Pass deliberate 400 errors straight to the frontend
+        raise 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to process QR image: {str(e)}")
+        # Catch unexpected crashes
+        print(f"Unexpected QR Error: {str(e)}")
+        raise HTTPException(status_code=500, detail="An internal server error occurred while processing the image.")

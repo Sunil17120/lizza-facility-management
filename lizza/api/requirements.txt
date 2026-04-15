@@ -9,3 +9,4 @@ requests
 pyzipper
 opencv-python-headless
 numpy
+pyaadhaar
