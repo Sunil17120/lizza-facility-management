@@ -13,6 +13,7 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
+
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
@@ -92,11 +93,17 @@ class User(Base):
     passport_photo_path = Column(Text, nullable=True)
     fingerprints_left_path = Column(Text, nullable=True)
     fingerprints_right_path = Column(Text, nullable=True)
+    bank_passbook_path = Column(Text, nullable=True)  # <-- NEW PASSBOOK UPLOAD
+    filled_form_path = Column(Text, nullable=True)
     
     # 9. Status
     is_present = Column(Boolean, default=False)
     shift_start = Column(String, nullable=True) 
     shift_end = Column(String, nullable=True)   
+    experience_years = Column(Float, nullable=True)
+    prev_company = Column(String, nullable=True)
+    prev_role = Column(String, nullable=True)
+    emergency_contact = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 class EmployeeLocation(Base):
@@ -115,7 +122,6 @@ class OfficeLocation(Base):
     lon = Column(Float)
     radius = Column(Integer, default=200)
 
-# NEW: Site Visit model for Field Officers
 class SiteVisit(Base):
     __tablename__ = "site_visits"
     id = Column(Integer, primary_key=True, index=True)
@@ -123,8 +129,9 @@ class SiteVisit(Base):
     location_id = Column(Integer, ForeignKey("office_locations.id"))
     purpose = Column(String)
     remarks = Column(Text, nullable=True)
-    photo_path = Column(Text) # Will store the Base64 image
+    photo_path = Column(Text) 
     visit_time = Column(DateTime, default=datetime.utcnow)
+
 class SiteStay(Base):
     __tablename__ = "site_stays"
     id = Column(Integer, primary_key=True, index=True)
@@ -135,25 +142,60 @@ class SiteStay(Base):
 
 def init_db():
     Base.metadata.create_all(bind=engine)
+    
+    # Fully comprehensive list of all columns to auto-migrate
     columns_to_add = [
+        # Identity
         ("first_name", "VARCHAR"), ("last_name", "VARCHAR"), ("personal_email", "VARCHAR"),
-        ("phone_number", "VARCHAR"), ("dob", "VARCHAR"), ("father_name", "VARCHAR"),
-        ("mother_name", "VARCHAR"), ("blood_group", "VARCHAR"), ("emergency_contact", "VARCHAR"),
-        ("designation", "VARCHAR"), ("department", "VARCHAR"), ("experience_years", "FLOAT"),
-        ("prev_company", "VARCHAR"), ("prev_role", "VARCHAR"), ("aadhar_enc", "VARCHAR"), ("pan_enc", "VARCHAR"),
+        ("phone_number", "VARCHAR"), ("dob", "VARCHAR"), ("gender", "VARCHAR"),
+        ("marital_status", "VARCHAR"), ("identity_mark", "VARCHAR"),
+        
+        # Medical & Family
+        ("father_name", "VARCHAR"), ("mother_name", "VARCHAR"), ("blood_group", "VARCHAR"), 
+        ("height", "VARCHAR"), ("caste", "VARCHAR"), ("category", "VARCHAR"), 
+        ("religion", "VARCHAR"), ("nationality", "VARCHAR"), ("medical_remarks", "TEXT"),
+        
+        # Address
+        ("perm_address", "TEXT"), ("perm_state", "VARCHAR"), ("perm_pin", "VARCHAR"), ("perm_mobile", "VARCHAR"),
+        ("temp_address", "TEXT"), ("temp_state", "VARCHAR"), ("temp_pin", "VARCHAR"), ("temp_mobile", "VARCHAR"),
+        
+        # JSON Arrays
+        ("languages_json", "TEXT"), ("education_json", "TEXT"), ("experience_json", "TEXT"),
+        ("family_json", "TEXT"), ("references_json", "TEXT"),
+        
+        # Work
+        ("emergency_contact", "VARCHAR"), ("designation", "VARCHAR"), ("department", "VARCHAR"), 
+        ("experience_years", "FLOAT"), ("prev_company", "VARCHAR"), ("prev_role", "VARCHAR"),
+        ("unit_name", "VARCHAR"), ("location_id", "INTEGER"), ("blockchain_id", "VARCHAR"),
+        
+        # Security & Auth
+        ("kyc_mode", "VARCHAR"), ("is_verified", "BOOLEAN DEFAULT FALSE"), ("is_password_changed", "BOOLEAN DEFAULT FALSE"),
+        
+        # Encrypted Data
+        ("aadhar_enc", "VARCHAR"), ("pan_enc", "VARCHAR"), ("account_number_enc", "VARCHAR"),
+        ("voter_id_enc", "VARCHAR"), ("driving_licence_enc", "VARCHAR"), ("passport_no_enc", "VARCHAR"),
+        ("bank_name", "VARCHAR"), ("ifsc_code", "VARCHAR"),
+        
+        # Uploads
         ("profile_photo_path", "TEXT"), ("aadhar_photo_path", "TEXT"), ("pan_photo_path", "TEXT"),
-        ("filled_form_path", "TEXT"), ("is_verified", "BOOLEAN DEFAULT FALSE"),
-        ("is_password_changed", "BOOLEAN DEFAULT FALSE"), ("location_id", "INTEGER")
+        ("voter_photo_path", "TEXT"), ("dl_photo_path", "TEXT"), ("passport_photo_path", "TEXT"),
+        ("fingerprints_left_path", "TEXT"), ("fingerprints_right_path", "TEXT"), 
+        ("bank_passbook_path", "TEXT"), ("filled_form_path", "TEXT")
     ]
+    
     with engine.connect() as conn:
+        # 1. Update Admin status safely
+        try:
+            conn.execute(text("UPDATE users SET is_verified = True WHERE email = 'admin@lizza.com'"))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            
+        # 2. Add any missing columns to the table safely
         for col_name, col_type in columns_to_add:
             try:
-                conn.execute(text(f"UPDATE users SET is_verified = True WHERE email = 'admin@lizza.com'"))
+                conn.execute(text(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}"))
                 conn.commit()
-            except Exception:
+            except Exception: 
+                # Column already exists, rollback the failed transaction and continue
                 conn.rollback()
-                try:
-                    conn.execute(text(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}"))
-                    conn.commit()
-                except Exception:
-                    conn.rollback()

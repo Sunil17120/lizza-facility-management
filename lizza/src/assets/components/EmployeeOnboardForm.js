@@ -57,7 +57,7 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
 
   const [files, setFiles] = useState({ 
     profile: null, aadharPhoto: null, fingerprintsLeft: null, fingerprintsRight: null,
-    panPhoto: null, voterPhoto: null, dlPhoto: null, passportPhoto: null
+    panPhoto: null, voterPhoto: null, dlPhoto: null, passportPhoto: null, bankPassbook: null
   });
   
   const [previews, setPreviews] = useState({ profile: null });
@@ -87,20 +87,18 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
     }
   };
 
-  // --- TRIGGER CROPPER WHEN QR PHOTO IS TAKEN ---
   const handleQrCapture = (e) => {
     if (e.target.files && e.target.files.length > 0) {
         const reader = new FileReader();
         reader.addEventListener('load', () => {
             setCropImageSrc(reader.result);
-            setShowCropModal(true); // Open the cropper popup
+            setShowCropModal(true); 
         });
         reader.readAsDataURL(e.target.files[0]);
-        e.target.value = ''; // Reset input
+        e.target.value = ''; 
     }
   };
 
-  // --- PROCESS AND SAVE THE CROPPED AREA ---
   const processCrop = async () => {
     if (!completedCrop || !imgRef.current || completedCrop.width === 0) return;
     
@@ -168,9 +166,13 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault(); setError(null);
+    
+    // Aadhaar photo is now mandatory for ALL users
+    if (!files.aadharPhoto) { setError("Aadhaar Photo (Front & Back) is strictly mandatory for all onboarding employees."); return; }
+
     if (kycMode === 'without_aadhaar') {
         if (!files.fingerprintsLeft || !files.fingerprintsRight) { setError("Fingerprints are strictly required when skipping Aadhaar KYC."); return; }
-        if (!formData.aadhar || !files.aadharPhoto) { setError("Aadhaar Number and Aadhaar Photo are strictly mandatory when skipping online KYC."); return; }
+        if (!formData.aadhar) { setError("Aadhaar Number is strictly mandatory when skipping online KYC."); return; }
     }
 
     const submitData = new FormData();
@@ -183,12 +185,16 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
     submitData.append('family_json', JSON.stringify(family));
     submitData.append('references_json', JSON.stringify(references));
 
+    // Append Files
     if (files.profile) submitData.append('profile_photo', files.profile);
+    if (files.aadharPhoto) submitData.append('aadhar_photo', files.aadharPhoto); // Now appended unconditionally
+    if (files.bankPassbook) submitData.append('bank_passbook', files.bankPassbook); // New Bank Passbook upload
+
     if (kycMode === 'without_aadhaar') {
-        submitData.append('aadhar_photo', files.aadharPhoto);
         submitData.append('fingerprints_left', files.fingerprintsLeft);
         submitData.append('fingerprints_right', files.fingerprintsRight);
     }
+    
     if (files.panPhoto) submitData.append('pan_photo', files.panPhoto);
     if (files.voterPhoto) submitData.append('voter_photo', files.voterPhoto);
     if (files.dlPhoto) submitData.append('dl_photo', files.dlPhoto);
@@ -411,9 +417,17 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
 
               <h6 className="mt-3 fw-bold border-bottom pb-2 text-primary">Bank Details</h6>
               <Row className="mb-3">
-                <Col md={4}><Form.Label className="small fw-bold">Bank Name</Form.Label><Form.Control value={formData.bankName} onChange={e => setFormData({...formData, bankName: e.target.value})} /></Col>
-                <Col md={4}><Form.Label className="small fw-bold">Account Number</Form.Label><Form.Control type="password" value={formData.accountNumber} onChange={e => setFormData({...formData, accountNumber: e.target.value})} /></Col>
-                <Col md={4}><Form.Label className="small fw-bold">IFSC Code</Form.Label><Form.Control value={formData.ifscCode} onChange={e => setFormData({...formData, ifscCode: e.target.value})} /></Col>
+                <Col md={4} className="mb-3"><Form.Label className="small fw-bold">Bank Name</Form.Label><Form.Control value={formData.bankName} onChange={e => setFormData({...formData, bankName: e.target.value})} /></Col>
+                <Col md={4} className="mb-3"><Form.Label className="small fw-bold">Account Number</Form.Label><Form.Control type="password" value={formData.accountNumber} onChange={e => setFormData({...formData, accountNumber: e.target.value})} /></Col>
+                <Col md={4} className="mb-3"><Form.Label className="small fw-bold">IFSC Code</Form.Label><Form.Control value={formData.ifscCode} onChange={e => setFormData({...formData, ifscCode: e.target.value})} /></Col>
+                
+                {/* --- NEW BANK PASSBOOK UPLOAD --- */}
+                <Col md={12}>
+                    <div className="p-2 bg-light rounded border border-secondary border-opacity-25">
+                        <Form.Label className="small text-muted mb-1"><UploadCloud size={14} className="me-1"/>Upload Bank Passbook / Cancelled Cheque</Form.Label>
+                        <Form.Control type="file" size="sm" accept="image/*,.pdf" onChange={e => handleFileChange(e, 'bankPassbook')} />
+                    </div>
+                </Col>
               </Row>
 
               <h6 className="mt-3 fw-bold border-bottom pb-2 text-primary">Identity & Address Proof</h6>
@@ -422,14 +436,17 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
                   <Form.Label className="small fw-bold d-flex align-items-center">UID (AADHAAR) {kycMode === 'without_aadhaar' ? <span className="text-danger ms-1">*</span> : <Lock size={14} className="ms-2 text-primary" />}</Form.Label>
                   <Form.Control required={kycMode === 'without_aadhaar'} value={formData.aadhar} onChange={e => setFormData({...formData, aadhar: e.target.value})} placeholder={kycMode !== 'without_aadhaar' ? "[Fetched automatically from e-KYC]" : "Enter 12-digit Aadhaar Number"} disabled={kycMode !== 'without_aadhaar'} className={kycMode !== 'without_aadhaar' ? 'bg-light text-success fw-bold' : ''}/>
                 </Col>
-                {kycMode === 'without_aadhaar' && (
-                    <Col md={12} className="mb-4">
-                       <Card className="border-warning bg-light"><Card.Body className="py-2">
-                               <Form.Label className="small fw-bold">Upload Aadhaar Copy (Front & Back) <span className="text-danger">*</span></Form.Label>
-                               <Form.Control type="file" required accept="image/*,.pdf" onChange={(e) => handleFileChange(e, 'aadharPhoto')} />
-                       </Card.Body></Card>
-                    </Col>
-                )}
+                
+                {/* --- AADHAAR PHOTO NOW GLOBALLY VISIBLE & MANDATORY --- */}
+                <Col md={12} className="mb-4">
+                   <Card className="border-warning bg-light">
+                     <Card.Body className="py-2">
+                       <Form.Label className="small fw-bold">Upload Aadhaar Copy (Front & Back) <span className="text-danger">*</span></Form.Label>
+                       <Form.Control type="file" required accept="image/*,.pdf" onChange={(e) => handleFileChange(e, 'aadharPhoto')} />
+                       {kycMode !== 'without_aadhaar' && <small className="text-muted d-block mt-1">Required for physical record keeping, even when e-KYC is verified.</small>}
+                     </Card.Body>
+                   </Card>
+                </Col>
 
                 <Col md={6} className="mb-4">
                     <Form.Label className="small fw-bold">PAN Card Number</Form.Label>
