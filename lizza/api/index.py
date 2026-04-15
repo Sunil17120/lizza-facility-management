@@ -12,6 +12,7 @@ import io
 import xml.etree.ElementTree as ET
 import cv2
 import numpy as np
+import zlib
 
 try:
     from .database import SessionLocal, User, EmployeeLocation, OfficeLocation, SiteVisit,SiteStay, init_db, cipher
@@ -505,10 +506,6 @@ async def extract_ekyc(file: UploadFile = File(...), share_code: str = Form(...)
         raise HTTPException(400, "Failed to unlock ZIP. Ensure it is a valid UIDAI file.")
     except Exception as e:
         raise HTTPException(500, "Failed to process e-KYC XML data.")
-try:
-    from pyaadhaar.decode import AadhaarSecureQr
-except ImportError:
-    AadhaarSecureQr = None
 @app.post("/api/manager/extract-qr")
 async def extract_qr(file: UploadFile = File(...)):
     try:
@@ -533,28 +530,41 @@ async def extract_qr(file: UploadFile = File(...)):
         # SCENARIO A: AADHAAR SECURE QR (Modern Plastic PVC Cards)
         # ==========================================================
         if qr_text.isdigit() and len(qr_text) > 500:
-            if AadhaarSecureQr is None:
-                raise HTTPException(status_code=500, detail="The 'pyaadhaar' library is not installed on the server. Please add it to requirements.txt.")
-                
             try:
-                # Decompress the UIDAI Secure Binary format
-                secure_qr = AadhaarSecureQr(int(qr_text))
-                parsed_data = secure_qr.decodeddata()
+                # 1. Convert the massive number into bytes
+                qr_int = int(qr_text)
+                qr_bytes = qr_int.to_bytes((qr_int.bit_length() + 7) // 8, byteorder='big')
                 
-                # Standardize DOB
-                dob_raw = parsed_data.get('dob', '')
+                # 2. Find the GZIP compressed data header (0x1f 0x8b 0x08)
+                # This safely skips the 256-byte cryptographic signature
+                start_idx = qr_bytes.find(b'\x1f\x8b\x08')
+                if start_idx == -1:
+                    raise ValueError("Invalid Aadhaar signature format")
+                    
+                # 3. Decompress the data using pure Python
+                compressed_data = qr_bytes[start_idx:]
+                decompressed = zlib.decompress(compressed_data, zlib.MAX_WBITS | 32)
+                
+                # 4. The data is delimited by 0xFF (255)
+                parts = decompressed.split(b'\xff')
+                
+                # Extract fields safely
+                name = parts[2].decode('utf-8', errors='ignore') if len(parts) > 2 else ""
+                dob_raw = parts[3].decode('utf-8', errors='ignore') if len(parts) > 3 else ""
+                gender_raw = parts[4].decode('utf-8', errors='ignore') if len(parts) > 4 else ""
+                care_of = parts[5].decode('utf-8', errors='ignore') if len(parts) > 5 else ""
+
+                # Standardize Data
                 try: 
                     dob_formatted = datetime.strptime(dob_raw, "%d-%m-%Y").strftime("%Y-%m-%d")
                 except: 
                     dob_formatted = dob_raw
+
+                name_parts = name.strip().split(' ')
+                first_name = name_parts[0]
+                last_name = ' '.join(name_parts[1:]) if len(name_parts) > 1 else ''
                 
-                # Split Name into First and Last
-                full_name = str(parsed_data.get('name', '')).strip().split(' ')
-                first_name = full_name[0]
-                last_name = ' '.join(full_name[1:]) if len(full_name) > 1 else ''
-                
-                # Clean up CareOf (Father's Name)
-                father_name = str(parsed_data.get('careof', '')).replace('S/O', '').replace('D/O', '').replace('C/O', '').replace(':', '').strip()
+                father_name = care_of.replace('S/O', '').replace('D/O', '').replace('C/O', '').replace(':', '').strip()
                 
                 return {
                     "status": "success", 
@@ -562,12 +572,13 @@ async def extract_qr(file: UploadFile = File(...)):
                         "firstName": first_name, 
                         "lastName": last_name, 
                         "dob": dob_formatted, 
-                        "gender": "Male" if parsed_data.get('gender') == 'M' else "Female" if parsed_data.get('gender') == 'F' else parsed_data.get('gender', ''),
+                        "gender": "Male" if gender_raw == 'M' else "Female" if gender_raw == 'F' else gender_raw,
                         "fatherName": father_name,
-                        "aadhar_reference": "XXXX-XXXX-VERIFIED" # Secure QR hides the UID for privacy, but validates identity cryptographically
+                        "aadhar_reference": "XXXX-XXXX-VERIFIED"
                     }
                 }
             except Exception as e:
+                print(f"Secure QR Decompression Error: {e}")
                 raise HTTPException(status_code=400, detail="Detected a Secure Aadhaar QR, but failed to decrypt it. The QR might be damaged. Please try Offline XML.")
 
         # ==========================================================
@@ -575,7 +586,6 @@ async def extract_qr(file: UploadFile = File(...)):
         # ==========================================================
         else:
             try:
-                # Parse as standard XML
                 root = ET.fromstring(qr_text)
                 attribs = root.attrib
                 
@@ -583,14 +593,12 @@ async def extract_qr(file: UploadFile = File(...)):
                 first_name = name_parts[0]
                 last_name = name_parts[1] if len(name_parts) > 1 else ''
                 
-                # Standardize DOB
                 try: 
                     dob_formatted = datetime.strptime(attribs.get('dob', ''), "%d/%m/%Y").strftime("%Y-%m-%d")
                 except: 
                     try: dob_formatted = datetime.strptime(attribs.get('dob', ''), "%Y-%m-%d").strftime("%Y-%m-%d")
                     except: dob_formatted = attribs.get('dob', '')
 
-                # Mask the Aadhaar Number
                 uid = attribs.get('uid', '')
                 masked_aadhar = f"XXXX-XXXX-{uid[-4:]}" if len(uid) >= 4 else "XXXX"
 
@@ -610,9 +618,7 @@ async def extract_qr(file: UploadFile = File(...)):
                 raise HTTPException(status_code=400, detail="The scanned QR Code is not a valid Aadhaar format. Please try again.")
 
     except HTTPException:
-        # Pass deliberate 400 errors straight to the frontend
         raise 
     except Exception as e:
-        # Catch unexpected crashes
         print(f"Unexpected QR Error: {str(e)}")
         raise HTTPException(status_code=500, detail="An internal server error occurred while processing the image.")
