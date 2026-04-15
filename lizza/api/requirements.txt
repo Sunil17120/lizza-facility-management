@@ -9,4 +9,4 @@ requests
 pyzipper
 opencv-python-headless
 numpy
-zxingcpp
+zxing-cpp
