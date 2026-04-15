@@ -518,13 +518,12 @@ async def extract_qr(file: UploadFile = File(...)):
         if img is None:
             raise HTTPException(status_code=400, detail="Invalid image file. Please upload a clear photo.")
         
-        # 2. Decode using industrial-grade ZXing instead of OpenCV
+        # 2. Decode using industrial-grade ZXing
         barcodes = zxingcpp.read_barcodes(img)
         
         if len(barcodes) == 0:
             raise HTTPException(status_code=400, detail="No QR code found. Ensure the QR is well-lit without glare and fills the box.")
             
-        # Extract the text from the first barcode found
         qr_text = barcodes[0].text.strip()
 
         # ==========================================================
@@ -543,28 +542,52 @@ async def extract_qr(file: UploadFile = File(...)):
                 decompressed = zlib.decompress(compressed_data, zlib.MAX_WBITS | 32)
                 
                 parts = decompressed.split(b'\xff')
-                
-                name = parts[2].decode('utf-8', errors='ignore') if len(parts) > 2 else ""
-                dob_raw = parts[3].decode('utf-8', errors='ignore') if len(parts) > 3 else ""
-                gender_raw = parts[4].decode('utf-8', errors='ignore') if len(parts) > 4 else ""
-                care_of = parts[5].decode('utf-8', errors='ignore') if len(parts) > 5 else ""
+                str_parts = [p.decode('utf-8', errors='ignore').strip() for p in parts]
 
+                # --- DYNAMIC ANCHORING (Fixes the Number-as-Name bug) ---
+                gender_idx = -1
+                for idx, val in enumerate(str_parts):
+                    if val in ['M', 'F', 'T'] and idx >= 2:
+                        gender_idx = idx
+                        break
+                
+                if gender_idx != -1:
+                    # We found the Gender! Everything else is perfectly relative to this.
+                    name_raw = str_parts[gender_idx - 2]
+                    dob_raw = str_parts[gender_idx - 1]
+                    gender_raw = str_parts[gender_idx]
+                    care_of = str_parts[gender_idx + 1] if len(str_parts) > gender_idx + 1 else ""
+                else:
+                    # Fallback just in case
+                    name_raw = str_parts[2] if len(str_parts) > 2 else ""
+                    dob_raw = str_parts[3] if len(str_parts) > 3 else ""
+                    gender_raw = str_parts[4] if len(str_parts) > 4 else ""
+                    care_of = str_parts[5] if len(str_parts) > 5 else ""
+
+                # Standardize Name
+                name_parts = name_raw.strip().split(' ')
+                first_name = name_parts[0]
+                last_name = ' '.join(name_parts[1:]) if len(name_parts) > 1 else ''
+                
+                # Standardize DOB
                 try: 
                     dob_formatted = datetime.strptime(dob_raw, "%d-%m-%Y").strftime("%Y-%m-%d")
                 except: 
-                    dob_formatted = dob_raw
+                    try: dob_formatted = datetime.strptime(dob_raw, "%Y-%m-%d").strftime("%Y-%m-%d")
+                    except: dob_formatted = dob_raw
 
-                name_parts = name.strip().split(' ')
-                first_name = name_parts[0]
-                last_name = ' '.join(name_parts[1:]) if len(name_parts) > 1 else ''
+                # Clean up Father's Name
                 father_name = care_of.replace('S/O', '').replace('D/O', '').replace('C/O', '').replace(':', '').strip()
                 
                 return {
                     "status": "success", 
                     "data": { 
-                        "firstName": first_name, "lastName": last_name, "dob": dob_formatted, 
+                        "firstName": first_name, 
+                        "lastName": last_name, 
+                        "dob": dob_formatted, 
                         "gender": "Male" if gender_raw == 'M' else "Female" if gender_raw == 'F' else gender_raw,
-                        "fatherName": father_name, "aadhar_reference": "XXXX-XXXX-VERIFIED"
+                        "fatherName": father_name, 
+                        "aadhar_reference": "XXXX-XXXX-VERIFIED"
                     }
                 }
             except Exception as e:
@@ -594,7 +617,9 @@ async def extract_qr(file: UploadFile = File(...)):
                 return {
                     "status": "success", 
                     "data": { 
-                        "firstName": first_name, "lastName": last_name, "dob": dob_formatted, 
+                        "firstName": first_name, 
+                        "lastName": last_name, 
+                        "dob": dob_formatted, 
                         "gender": "Male" if attribs.get('gender') == 'M' else "Female" if attribs.get('gender') == 'F' else attribs.get('gender', ''),
                         "fatherName": attribs.get('co', '').replace('S/O', '').replace('D/O', '').replace('C/O', '').strip(),
                         "aadhar_reference": masked_aadhar 
