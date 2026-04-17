@@ -175,7 +175,7 @@ async def add_employee(
     pan_number: Optional[str] = Form(None), voter_id: Optional[str] = Form(None), 
     driving_licence: Optional[str] = Form(None), passport_no: Optional[str] = Form(None),
     
-    department: Optional[str] = Form("Operations"), manager_id: Optional[int] = Form(1), 
+    department: Optional[str] = Form("Operations"), manager_id: Optional[int] = Form(None), # Default to None to prevent FK crash
     location_id: Optional[int] = Form(None), shift_start: Optional[str] = Form(None), shift_end: Optional[str] = Form(None),
     
     profile_photo: Optional[UploadFile] = File(None), aadhar_photo: Optional[UploadFile] = File(None),
@@ -340,7 +340,6 @@ def delete_employee(user_id: int, db: Session = Depends(get_db)):
         db.query(SiteVisit).filter(SiteVisit.officer_id == user_id).delete()
         db.query(SiteStay).filter(SiteStay.officer_id == user_id).delete()
         
-        # Ghost table constraint fix
         db.execute(text("DELETE FROM field_visit_logs WHERE officer_id = :uid"), {"uid": user_id})
 
         db.delete(user)
