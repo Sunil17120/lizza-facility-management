@@ -6,11 +6,13 @@ import EmployeeOnboardForm from './EmployeeOnboardForm';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
+// Fix Leaflet marker icons for production builds
 import markerIcon from 'leaflet/dist/images/marker-icon.png';
 import markerShadow from 'leaflet/dist/images/marker-shadow.png';
 let DefaultIcon = L.icon({ iconUrl: markerIcon, shadowUrl: markerShadow, iconSize: [25, 41], iconAnchor: [12, 41] });
 L.Marker.prototype.options.icon = DefaultIcon;
 
+// Helper to create color-coded live tracking icons
 const getStatusIcon = (isPresent) => {
   return L.divIcon({
     html: `<div style="
@@ -27,7 +29,7 @@ const getStatusIcon = (isPresent) => {
   });
 };
 
-// Safe JSON parser for the dynamic arrays
+// Safe JSON parser for the dynamic background arrays (Education, Experience, etc.)
 const safeParseJSON = (jsonStr) => {
     try {
         const parsed = JSON.parse(jsonStr);
@@ -38,20 +40,24 @@ const safeParseJSON = (jsonStr) => {
 };
 
 const AdminDashboard = () => {
+  // --- CORE STATES ---
   const [mainTab, setMainTab] = useState('overview');
   const [employees, setEmployees] = useState([]);
   const [locations, setLocations] = useState([]);
   const [liveLocations, setLiveLocations] = useState([]);
   const [loading, setLoading] = useState(true);
   
+  // --- VERIFICATION STATES ---
   const [showNotif, setShowNotif] = useState(false);
   const [selectedStaff, setSelectedStaff] = useState(null);
 
+  // --- UI STATES ---
   const [showAddEmp, setShowAddEmp] = useState(false);
   const [newLoc, setNewLoc] = useState({ name: '', lat: '', lon: '', radius: 200 });
   const [editLocModal, setEditLocModal] = useState(false);
   const [editingLoc, setEditingLoc] = useState(null);
   
+  // --- REPORTS STATES ---
   const [reportMonth, setReportMonth] = useState(new Date().getMonth() + 1);
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
   const [filterOfficer, setFilterOfficer] = useState('');
@@ -63,6 +69,7 @@ const AdminDashboard = () => {
   
   const adminEmail = localStorage.getItem('userEmail');
 
+  // --- 1. CORE DATA FETCHING ---
   const fetchBaseData = useCallback(async () => {
     try {
       const [empRes, locRes, liveRes] = await Promise.all([
@@ -81,6 +88,7 @@ const AdminDashboard = () => {
 
   useEffect(() => { fetchBaseData(); }, [fetchBaseData]);
 
+  // --- 2. REPORTS DATA FETCHING ---
   const fetchReportsData = useCallback(async () => {
     if (mainTab !== 'reports') return;
     setReportsLoading(true);
@@ -97,6 +105,7 @@ const AdminDashboard = () => {
 
   useEffect(() => { fetchReportsData(); }, [fetchReportsData]);
 
+  // --- ACTIONS: EMPLOYEES ---
   const handleVerify = async (email) => {
       const res = await fetch(`/api/admin/verify-employee?target_email=${email}&admin_email=${adminEmail}`, { method: 'POST' });
       if (res.ok) { alert("Verified!"); setSelectedStaff(null); fetchBaseData(); }
@@ -118,6 +127,7 @@ const AdminDashboard = () => {
     }
   };
 
+  // --- ACTIONS: BRANCHES ---
   const handleAddBranch = async (e) => {
     e.preventDefault();
     await fetch('/api/admin/add-location', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newLoc) });
@@ -141,6 +151,7 @@ const AdminDashboard = () => {
     }
   };
 
+  // --- EXCEL DOWNLOADER ---
   const downloadExcelWithPhotos = () => {
     let tableHtml = `
       <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
@@ -187,7 +198,7 @@ const AdminDashboard = () => {
     document.body.removeChild(link);
   };
 
-  // --- NEW: DYNAMIC PDF GENERATOR FOR EMPLOYEE DOSSIER ---
+  // --- FULL COMPREHENSIVE PDF GENERATOR ---
   const handlePrintProfile = () => {
     const printWindow = window.open('', '_blank');
     
@@ -209,50 +220,111 @@ const AdminDashboard = () => {
         ? '<span style="color: #198754; font-weight: bold;">✅ Aadhaar Verified (Digital e-KYC)</span>' 
         : '<span style="color: #dc3545; font-weight: bold;">⚠️ Manual Verification (No e-KYC)</span>';
 
+    const eduData = safeParseJSON(selectedStaff?.education_json);
+    let eduHtml = eduData.length > 0 && eduData[0].qualification !== '' 
+        ? `<table><tr><th>Qualification</th><th>Institute</th><th>Year</th><th>Marks</th></tr>` + eduData.map(e => `<tr><td>${e.qualification||'-'}</td><td>${e.institute||'-'}</td><td>${e.year||'-'}</td><td>${e.marks||'-'}</td></tr>`).join('') + `</table>` 
+        : '<p class="text-muted">No education history provided.</p>';
+
+    const expData = safeParseJSON(selectedStaff?.experience_json);
+    let expHtml = expData.length > 0 && expData[0].company !== ''
+        ? `<table><tr><th>Company Name</th><th>Designation</th><th>Period</th></tr>` + expData.map(e => `<tr><td>${e.company||'-'}</td><td>${e.designation||'-'}</td><td>${e.period||'-'}</td></tr>`).join('') + `</table>`
+        : '<p class="text-muted">No prior work experience provided.</p>';
+
+    const famData = safeParseJSON(selectedStaff?.family_json);
+    let famHtml = famData.length > 0 && famData[0].name !== ''
+        ? `<table><tr><th>Name</th><th>Relationship</th><th>DOB</th></tr>` + famData.map(f => `<tr><td>${f.name||'-'}</td><td>${f.relation||'-'}</td><td>${f.dob||'-'}</td></tr>`).join('') + `</table>`
+        : '<p class="text-muted">No family details provided.</p>';
+
     printWindow.document.write(`
-        <html><head><title>Profile_${selectedStaff?.full_name}</title>
+        <html><head><title>Dossier_${selectedStaff?.full_name}</title>
           <style>
-            body { font-family: Arial, sans-serif; padding: 40px; color: #333; max-width: 900px; margin: auto; }
-            h2 { text-align: center; border-bottom: 2px solid #dc3545; padding-bottom: 10px; margin-bottom: 30px; }
+            body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; padding: 30px; color: #333; max-width: 900px; margin: auto; font-size: 14px; }
+            h2 { text-align: center; border-bottom: 3px solid #0d6efd; padding-bottom: 10px; margin-bottom: 20px; color: #0d6efd; text-transform: uppercase;}
             .flex-row { display: flex; justify-content: space-between; align-items: flex-start; }
-            .photo { width: 150px; height: 150px; border-radius: 8px; object-fit: cover; border: 2px solid #ccc; }
-            .details { flex-grow: 1; padding-left: 30px; }
-            table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-            td, th { padding: 10px; border: 1px solid #ddd; text-align: left; }
-            th { background-color: #f8f9fa; width: 35%; }
-            .section-header { margin-top: 40px; border-bottom: 1px solid #ccc; padding-bottom: 5px; color: #0d6efd; }
+            .photo { width: 140px; height: 140px; border-radius: 8px; object-fit: cover; border: 2px solid #0d6efd; }
+            .details { flex-grow: 1; padding-left: 25px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 5px; margin-bottom: 15px; }
+            td, th { padding: 8px 12px; border: 1px solid #dee2e6; text-align: left; }
+            th { background-color: #f8f9fa; color: #495057; font-weight: bold; width: 25%; }
+            .section-header { margin-top: 30px; border-bottom: 2px solid #ccc; padding-bottom: 5px; color: #333; font-size: 16px; text-transform: uppercase; }
             .doc-section { margin-top: 30px; text-align: center; page-break-inside: avoid; }
-            .doc-title { font-size: 16px; color: #555; margin-bottom: 10px; text-transform: uppercase; border-bottom: 1px dashed #eee; padding-bottom: 5px; }
+            .doc-title { font-size: 14px; color: #555; margin-bottom: 10px; text-transform: uppercase; border-bottom: 1px dashed #eee; padding-bottom: 5px; }
             .doc-img { max-width: 100%; max-height: 450px; border: 1px solid #ccc; border-radius: 4px; padding: 5px; object-fit: contain; }
+            .text-muted { color: #6c757d; font-style: italic; }
             @media print {
-                .doc-section { page-break-inside: avoid; }
+                .doc-section, table { page-break-inside: avoid; }
                 body { padding: 0; }
+                .no-print { display: none; }
             }
           </style>
         </head><body>
-          <h2>Lizza - Employee Dossier</h2>
+          <h2>LFM Official Employee Dossier</h2>
           
+          <h3 class="section-header" style="margin-top:0;">1. Identity & Employment Status</h3>
           <div class="flex-row">
             <div><img src="${selectedStaff?.profile_photo_path || 'https://via.placeholder.com/150'}" class="photo" alt="Profile" /></div>
             <div class="details">
               <table>
-                <tr><th>Full Name</th><td>${selectedStaff?.full_name}</td></tr>
-                <tr><th>System Role</th><td style="text-transform: uppercase;">${selectedStaff?.user_type}</td></tr>
-                <tr><th>Email</th><td>${selectedStaff?.personal_email}</td></tr>
-                <tr><th>Mobile</th><td>${selectedStaff?.phone_number}</td></tr>
-                <tr><th>Date of Birth</th><td>${selectedStaff?.dob}</td></tr>
+                <tr><th>Full Name</th><td style="font-weight: bold; font-size: 16px;">${selectedStaff?.full_name}</td></tr>
+                <tr><th>System Role</th><td style="text-transform: uppercase; font-weight:bold;">${selectedStaff?.user_type}</td></tr>
+                <tr><th>Assigned Dept/Site</th><td>${selectedStaff?.department || 'N/A'} - ${selectedStaff?.unit_name || 'Dynamic'}</td></tr>
                 <tr><th>Designation</th><td>${selectedStaff?.designation}</td></tr>
-                <tr><th>Department</th><td>${selectedStaff?.department}</td></tr>
+                <tr><th>Primary Mobile</th><td>${selectedStaff?.phone_number}</td></tr>
+                <tr><th>Personal Email</th><td>${selectedStaff?.personal_email}</td></tr>
                 <tr><th>KYC Authenticity</th><td>${kycStatusHtml}</td></tr>
               </table>
             </div>
           </div>
 
-          <h3 class="section-header">Uploaded Documents & Evidence</h3>
-          ${docsHtml || '<p style="text-align: center; color: #777;">No documents uploaded.</p>'}
+          <h3 class="section-header">2. Demographics & Medical</h3>
+          <table>
+            <tr><th>Date of Birth</th><td>${selectedStaff?.dob || 'N/A'}</td><th>Blood Group</th><td style="color:#dc3545; font-weight:bold;">${selectedStaff?.blood_group || 'N/A'}</td></tr>
+            <tr><th>Gender</th><td>${selectedStaff?.gender || 'N/A'}</td><th>Height (cm)</th><td>${selectedStaff?.height || 'N/A'}</td></tr>
+            <tr><th>Marital Status</th><td>${selectedStaff?.marital_status || 'N/A'}</td><th>Nationality</th><td>${selectedStaff?.nationality || 'N/A'}</td></tr>
+            <tr><th>Father's Name</th><td>${selectedStaff?.father_name || 'N/A'}</td><th>Religion</th><td>${selectedStaff?.religion || 'N/A'}</td></tr>
+            <tr><th>Mother's Name</th><td>${selectedStaff?.mother_name || 'N/A'}</td><th>Category/Caste</th><td>${selectedStaff?.category || '-'} / ${selectedStaff?.caste || '-'}</td></tr>
+            <tr><th>Identity Mark</th><td colspan="3">${selectedStaff?.identity_mark || 'None'}</td></tr>
+            <tr><th>Medical Remarks</th><td colspan="3">${selectedStaff?.medical_remarks || 'None'}</td></tr>
+          </table>
+
+          <h3 class="section-header">3. Address Information</h3>
+          <table>
+            <tr><th colspan="2" style="text-align:center; background-color:#e9ecef;">Permanent Address</th><th colspan="2" style="text-align:center; background-color:#e9ecef;">Temporary Address</th></tr>
+            <tr>
+                <th style="width:15%;">Address</th><td style="width:35%;">${selectedStaff?.perm_address || 'N/A'}</td>
+                <th style="width:15%;">Address</th><td style="width:35%;">${selectedStaff?.temp_address || 'N/A'}</td>
+            </tr>
+            <tr>
+                <th>State & PIN</th><td>${selectedStaff?.perm_state || 'N/A'} - ${selectedStaff?.perm_pin || ''}</td>
+                <th>State & PIN</th><td>${selectedStaff?.temp_state || 'N/A'} - ${selectedStaff?.temp_pin || ''}</td>
+            </tr>
+            <tr>
+                <th>Alt. Contact</th><td>${selectedStaff?.perm_mobile || 'N/A'}</td>
+                <th>Local Contact</th><td>${selectedStaff?.temp_mobile || 'N/A'}</td>
+            </tr>
+          </table>
+
+          <h3 class="section-header">4. Financial Details</h3>
+          <table>
+            <tr><th>Bank Name</th><td>${selectedStaff?.bank_name || 'N/A'}</td><th>IFSC Code</th><td>${selectedStaff?.ifsc_code || 'N/A'}</td></tr>
+            <tr><th>Account Number</th><td colspan="3" style="font-weight:bold;">${selectedStaff?.account_number_enc ? "[ENCRYPTED IN DATABASE - SEE PASSBOOK PHOTO]" : "N/A"}</td></tr>
+          </table>
+
+          <h3 class="section-header">5. Education History</h3>
+          ${eduHtml}
+
+          <h3 class="section-header">6. Prior Work Experience</h3>
+          ${expHtml}
+
+          <h3 class="section-header">7. Family Details</h3>
+          ${famHtml}
+
+          <div style="page-break-before: always;"></div>
+          <h3 class="section-header" style="text-align:center; background-color:#333; color:white; padding:10px;">APPENDIX: OFFICIAL DOCUMENTS & EVIDENCE</h3>
+          ${docsHtml || '<p style="text-align: center; color: #777;">No documents uploaded to this profile.</p>'}
           
           <script>
-            // We wait 1.5 seconds to ensure all large HD images load into the window before opening the print prompt
+            // We wait 1.5 seconds to ensure all images load before triggering print
             window.onload = function() {
                 setTimeout(() => { window.print(); window.close(); }, 1500);
             };
@@ -262,6 +334,7 @@ const AdminDashboard = () => {
     printWindow.document.close();
   };
 
+  // --- DATA PROCESSING ---
   const pending = employees.filter(e => !e.is_verified && e.user_type !== 'admin');
   const verified = employees.filter(e => e.is_verified);
   const fieldOfficers = verified.filter(e => e.user_type === 'field_officer');
@@ -294,12 +367,12 @@ const AdminDashboard = () => {
       </div>
 
       <Tabs activeKey={mainTab} onSelect={(k) => setMainTab(k)} className="mb-4 shadow-sm bg-white rounded">
+        
         {/* ========================================== */}
         {/* TAB 1: SYSTEM OVERVIEW                     */}
         {/* ========================================== */}
         <Tab eventKey="overview" title={<span className="fw-bold px-3">System Overview</span>}>
           
-          {/* STATS CARDS */}
           <Row className="mb-4 text-center">
             <Col md={3}><Card className="p-3 shadow-sm border-0"><div className="text-muted small">TOTAL STAFF</div><h4 className="fw-bold"><Users size={20} className="me-2"/>{employees.length}</h4></Card></Col>
             <Col md={3}><Card className="p-3 shadow-sm border-0"><div className="text-muted small text-primary">ASSIGNED SITES</div><h4 className="fw-bold text-primary"><MapPin size={20} className="me-2"/>{locations.length}</h4></Card></Col>
@@ -308,6 +381,7 @@ const AdminDashboard = () => {
           </Row>
 
           <Row>
+            {/* Branch Management Sidebar */}
             <Col md={4}>
               <Card className="border-0 shadow-sm p-3 mb-4">
                 <h6 className="fw-bold mb-3"><Building2 size={18} className="me-2 text-danger"/>Office Branches</h6>
@@ -333,6 +407,7 @@ const AdminDashboard = () => {
               </Card>
             </Col>
 
+            {/* Live Map */}
             <Col md={8}>
               <Card className="border-0 shadow-sm overflow-hidden mb-4" style={{ height: '380px' }}>
                 <MapContainer center={[22.5726, 88.3639]} zoom={5} style={{ height: '100%' }}>
@@ -365,6 +440,7 @@ const AdminDashboard = () => {
             </Col>
           </Row>
 
+          {/* Employee Directory */}
           <Card className="border-0 shadow-sm">
             <Table responsive hover className="align-middle mb-0 small">
               <thead className="table-light text-uppercase">
