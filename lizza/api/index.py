@@ -319,15 +319,50 @@ def update_employee_inline(data: dict, db: Session = Depends(get_db)):
     if "manager_id" in data: user.manager_id = data.get("manager_id")
     db.commit(); return {"status": "updated"}
 
-@app.delete("/api/admin/delete-employee/{user_id}")
-def delete_employee(user_id: int, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.id == user_id).first()
-    if user: db.delete(user); db.commit()
-    return {"status": "deleted"}
+
 
 @app.delete("/api/admin/delete-location/{loc_id}")
 def delete_location(loc_id: int, db: Session = Depends(get_db)):
-    loc = db.query(OfficeLocation).filter(OfficeLocation.id == loc_id).first()
+    loc = db.query(OfficeLocatio@app.delete("/api/admin/delete-employee/{user_id}")
+def delete_employee(user_id: int, db: Session = Depends(get_db)):
+    try:
+        # 1. Find the user
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="Employee not found.")
+
+        # 2. Safety Check: Prevent deleting the main admin
+        if user.user_type == 'admin' or user.email == 'admin@lizza.com':
+            raise HTTPException(status_code=403, detail="Security protocol prevents deleting the Super Admin account.")
+
+        # ---------------------------------------------------------
+        # 3. FIXING THE CRASH: CLEAR FOREIGN KEY CONSTRAINTS FIRST
+        # ---------------------------------------------------------
+        
+        # A. If this person was a manager, safely detach them from their team
+        db.query(User).filter(User.manager_id == user_id).update({"manager_id": None})
+        
+        # B. Delete their GPS location history
+        db.query(EmployeeLocation).filter(EmployeeLocation.user_id == user_id).delete()
+        
+        # C. Delete their Field Officer Site Visits & Stays
+        db.query(SiteVisit).filter(SiteVisit.officer_id == user_id).delete()
+        db.query(SiteStay).filter(SiteStay.officer_id == user_id).delete()
+
+        # 4. Finally, delete the actual employee record safely
+        db.delete(user)
+        db.commit()
+
+        return {"status": "success", "message": "Employee and all related records deleted."}
+
+    except HTTPException:
+        # Pass through our deliberate 404/403 errors
+        raise
+    except Exception as e:
+        # CRITICAL: Rollback if anything fails so the database doesn't corrupt
+        db.rollback() 
+        print(f"Delete Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete employee due to a database constraint. Error: {str(e)}")n).filter(OfficeLocation.id == loc_id).first()
     if loc: db.delete(loc); db.commit()
     return {"status": "deleted"}
 
