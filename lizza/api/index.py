@@ -14,6 +14,7 @@ import cv2
 import numpy as np
 import zlib
 import zxingcpp
+from sqlalchemy import text
 
 try:
     from .database import SessionLocal, User, EmployeeLocation, OfficeLocation, SiteVisit,SiteStay, init_db, cipher
@@ -341,9 +342,12 @@ def delete_employee(user_id: int, db: Session = Depends(get_db)):
         # B. Delete their GPS location history
         db.query(EmployeeLocation).filter(EmployeeLocation.user_id == user_id).delete()
         
-        # C. Delete their Field Officer Site Visits & Stays
+        # C. Delete their known Field Officer Site Visits & Stays
         db.query(SiteVisit).filter(SiteVisit.officer_id == user_id).delete()
         db.query(SiteStay).filter(SiteStay.officer_id == user_id).delete()
+
+        # D. FORCE DELETE THE ORPHANED LOGS (This fixes your specific 500 crash)
+        db.execute(text("DELETE FROM field_visit_logs WHERE officer_id = :uid"), {"uid": user_id})
 
         # 4. Finally, delete the actual employee record safely
         db.delete(user)
