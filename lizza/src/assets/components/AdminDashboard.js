@@ -187,6 +187,81 @@ const AdminDashboard = () => {
     document.body.removeChild(link);
   };
 
+  // --- NEW: DYNAMIC PDF GENERATOR FOR EMPLOYEE DOSSIER ---
+  const handlePrintProfile = () => {
+    const printWindow = window.open('', '_blank');
+    
+    let docsHtml = '';
+    const addDoc = (title, url) => {
+        if (url) docsHtml += `<div class="doc-section"><h3 class="doc-title">${title}</h3><img src="${url}" class="doc-img" alt="${title}" /></div>`;
+    };
+    
+    addDoc('Aadhaar / Gov ID', selectedStaff?.aadhar_photo_path);
+    addDoc('PAN Card', selectedStaff?.pan_photo_path);
+    addDoc('Voter ID', selectedStaff?.voter_photo_path);
+    addDoc('Driving Licence', selectedStaff?.dl_photo_path);
+    addDoc('Passport', selectedStaff?.passport_photo_path);
+    addDoc('Bank Passbook / Cancelled Cheque', selectedStaff?.bank_passbook_path);
+    addDoc('Left Hand Fingerprints', selectedStaff?.fingerprints_left_path);
+    addDoc('Right Hand Fingerprints', selectedStaff?.fingerprints_right_path);
+
+    const kycStatusHtml = selectedStaff?.kyc_mode !== 'without_aadhaar' 
+        ? '<span style="color: #198754; font-weight: bold;">✅ Aadhaar Verified (Digital e-KYC)</span>' 
+        : '<span style="color: #dc3545; font-weight: bold;">⚠️ Manual Verification (No e-KYC)</span>';
+
+    printWindow.document.write(`
+        <html><head><title>Profile_${selectedStaff?.full_name}</title>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 40px; color: #333; max-width: 900px; margin: auto; }
+            h2 { text-align: center; border-bottom: 2px solid #dc3545; padding-bottom: 10px; margin-bottom: 30px; }
+            .flex-row { display: flex; justify-content: space-between; align-items: flex-start; }
+            .photo { width: 150px; height: 150px; border-radius: 8px; object-fit: cover; border: 2px solid #ccc; }
+            .details { flex-grow: 1; padding-left: 30px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+            td, th { padding: 10px; border: 1px solid #ddd; text-align: left; }
+            th { background-color: #f8f9fa; width: 35%; }
+            .section-header { margin-top: 40px; border-bottom: 1px solid #ccc; padding-bottom: 5px; color: #0d6efd; }
+            .doc-section { margin-top: 30px; text-align: center; page-break-inside: avoid; }
+            .doc-title { font-size: 16px; color: #555; margin-bottom: 10px; text-transform: uppercase; border-bottom: 1px dashed #eee; padding-bottom: 5px; }
+            .doc-img { max-width: 100%; max-height: 450px; border: 1px solid #ccc; border-radius: 4px; padding: 5px; object-fit: contain; }
+            @media print {
+                .doc-section { page-break-inside: avoid; }
+                body { padding: 0; }
+            }
+          </style>
+        </head><body>
+          <h2>Lizza - Employee Dossier</h2>
+          
+          <div class="flex-row">
+            <div><img src="${selectedStaff?.profile_photo_path || 'https://via.placeholder.com/150'}" class="photo" alt="Profile" /></div>
+            <div class="details">
+              <table>
+                <tr><th>Full Name</th><td>${selectedStaff?.full_name}</td></tr>
+                <tr><th>System Role</th><td style="text-transform: uppercase;">${selectedStaff?.user_type}</td></tr>
+                <tr><th>Email</th><td>${selectedStaff?.personal_email}</td></tr>
+                <tr><th>Mobile</th><td>${selectedStaff?.phone_number}</td></tr>
+                <tr><th>Date of Birth</th><td>${selectedStaff?.dob}</td></tr>
+                <tr><th>Designation</th><td>${selectedStaff?.designation}</td></tr>
+                <tr><th>Department</th><td>${selectedStaff?.department}</td></tr>
+                <tr><th>KYC Authenticity</th><td>${kycStatusHtml}</td></tr>
+              </table>
+            </div>
+          </div>
+
+          <h3 class="section-header">Uploaded Documents & Evidence</h3>
+          ${docsHtml || '<p style="text-align: center; color: #777;">No documents uploaded.</p>'}
+          
+          <script>
+            // We wait 1.5 seconds to ensure all large HD images load into the window before opening the print prompt
+            window.onload = function() {
+                setTimeout(() => { window.print(); window.close(); }, 1500);
+            };
+          </script>
+        </body></html>
+    `);
+    printWindow.document.close();
+  };
+
   const pending = employees.filter(e => !e.is_verified && e.user_type !== 'admin');
   const verified = employees.filter(e => e.is_verified);
   const fieldOfficers = verified.filter(e => e.user_type === 'field_officer');
@@ -492,7 +567,11 @@ const AdminDashboard = () => {
           {pending.length === 0 ? <div className="p-4 text-center text-muted">No pending approvals.</div> : 
            pending.map(p => (
             <div key={p.id} className="p-3 border-bottom d-flex justify-content-between align-items-center bg-white">
-              <div><h6 className="mb-0 fw-bold">{p.full_name}</h6><small className="text-muted">{p.personal_email}</small></div>
+              <div>
+                <h6 className="mb-0 fw-bold">{p.full_name}</h6>
+                <small className="text-muted">{p.personal_email}</small>
+                {p.kyc_mode !== 'without_aadhaar' && <Badge bg="success" className="ms-2" style={{fontSize:'0.65rem'}}>Aadhaar Verified</Badge>}
+              </div>
               <Button variant="danger" size="sm" onClick={() => { setSelectedStaff(p); setShowNotif(false); }}>REVIEW</Button>
             </div>
           ))}
@@ -503,41 +582,8 @@ const AdminDashboard = () => {
       <Modal show={!!selectedStaff} onHide={() => setSelectedStaff(null)} size="xl" centered>
         <Modal.Header closeButton className="bg-dark text-white d-flex justify-content-between align-items-center w-100">
           <Modal.Title className="h6 mb-0">Employee Profile: {selectedStaff?.full_name}</Modal.Title>
-          <Button variant="outline-light" size="sm" className="fw-bold ms-auto me-3 d-flex align-items-center" onClick={() => {
-              const printWindow = window.open('', '_blank');
-              printWindow.document.write(`
-                <html><head><title>Profile_${selectedStaff?.full_name}</title>
-                  <style>
-                    body { font-family: Arial, sans-serif; padding: 40px; color: #333; }
-                    h2 { text-align: center; border-bottom: 2px solid #dc3545; padding-bottom: 10px; }
-                    .flex-row { display: flex; justify-content: space-between; margin-top: 30px; }
-                    .photo { width: 150px; height: 150px; border-radius: 8px; object-fit: cover; border: 2px solid #ccc; }
-                    .details { flex-grow: 1; padding-left: 30px; }
-                    table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-                    td, th { padding: 10px; border: 1px solid #ddd; text-align: left; }
-                    th { background-color: #f8f9fa; width: 30%; }
-                  </style>
-                </head><body>
-                  <h2>Lizza - Employee Profile Report</h2>
-                  <div class="flex-row">
-                    <div><img src="${selectedStaff?.profile_photo_path}" class="photo" alt="Profile" /></div>
-                    <div class="details">
-                      <table>
-                        <tr><th>Full Name</th><td>${selectedStaff?.full_name}</td></tr>
-                        <tr><th>Email</th><td>${selectedStaff?.personal_email}</td></tr>
-                        <tr><th>Mobile</th><td>${selectedStaff?.phone_number}</td></tr>
-                        <tr><th>Date of Birth</th><td>${selectedStaff?.dob}</td></tr>
-                        <tr><th>Designation</th><td>${selectedStaff?.designation}</td></tr>
-                        <tr><th>Department</th><td>${selectedStaff?.department}</td></tr>
-                      </table>
-                    </div>
-                  </div>
-                  <script>setTimeout(() => { window.print(); window.close(); }, 500);</script>
-                </body></html>
-              `);
-              printWindow.document.close();
-          }}>
-            <FileText size={16} className="me-2"/> Print Summary
+          <Button variant="outline-light" size="sm" className="fw-bold ms-auto me-3 d-flex align-items-center" onClick={handlePrintProfile}>
+            <FileText size={16} className="me-2"/> Download Complete Dossier (PDF)
           </Button>
         </Modal.Header>
         
@@ -557,7 +603,6 @@ const AdminDashboard = () => {
                     <p className="mb-1"><strong className="text-muted">Blood:</strong> <Badge bg="danger">{selectedStaff?.blood_group || 'N/A'}</Badge></p>
                 </div>
                 
-                {/* Conditionally render Action Button based on status */}
                 {!selectedStaff?.is_verified && (
                     <Button variant="success" className="w-100 fw-bold shadow-sm" onClick={() => handleVerify(selectedStaff.email)}>APPROVE & ACTIVATE</Button>
                 )}
@@ -669,13 +714,16 @@ const AdminDashboard = () => {
 
                     {/* TAB: DOCUMENTS & KYC */}
                     <Tab eventKey="documents" title="KYC Documents">
-                        <h6 className="fw-bold border-bottom pb-2 mb-3 text-primary mt-2">Government IDs</h6>
+                        <h6 className="fw-bold border-bottom pb-2 mb-3 text-primary mt-2">Government IDs & KYC</h6>
                         <Row className="mb-4">
                             <Col sm={6} className="mb-3">
                                 <small className="text-muted d-block text-uppercase fw-bold">Gov ID (UID)</small>
                                 <span className={selectedStaff?.aadhar_enc ? "text-danger fw-bold" : "text-muted"}>
                                     {selectedStaff?.aadhar_enc ? "[Aadhaar Redacted]" : "N/A"}
                                 </span>
+                                {selectedStaff?.kyc_mode !== 'without_aadhaar' && selectedStaff?.aadhar_enc && (
+                                    <Badge bg="success" className="ms-2"><CheckCircle size={12} className="me-1 mb-1"/> Aadhaar Verified (e-KYC)</Badge>
+                                )}
                             </Col>
                             <Col sm={6} className="mb-3">
                                 <small className="text-muted d-block text-uppercase fw-bold">PAN Card Number</small>
