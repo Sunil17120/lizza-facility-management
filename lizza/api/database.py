@@ -93,7 +93,7 @@ class User(Base):
     passport_photo_path = Column(Text, nullable=True)
     fingerprints_left_path = Column(Text, nullable=True)
     fingerprints_right_path = Column(Text, nullable=True)
-    bank_passbook_path = Column(Text, nullable=True)  # <-- NEW PASSBOOK UPLOAD
+    bank_passbook_path = Column(Text, nullable=True)  # <-- Passbook Upload
     filled_form_path = Column(Text, nullable=True)
     
     # 9. Status
@@ -145,38 +145,23 @@ def init_db():
     
     # Fully comprehensive list of all columns to auto-migrate
     columns_to_add = [
-        # Identity
         ("first_name", "VARCHAR"), ("last_name", "VARCHAR"), ("personal_email", "VARCHAR"),
         ("phone_number", "VARCHAR"), ("dob", "VARCHAR"), ("gender", "VARCHAR"),
         ("marital_status", "VARCHAR"), ("identity_mark", "VARCHAR"),
-        
-        # Medical & Family
         ("father_name", "VARCHAR"), ("mother_name", "VARCHAR"), ("blood_group", "VARCHAR"), 
         ("height", "VARCHAR"), ("caste", "VARCHAR"), ("category", "VARCHAR"), 
         ("religion", "VARCHAR"), ("nationality", "VARCHAR"), ("medical_remarks", "TEXT"),
-        
-        # Address
         ("perm_address", "TEXT"), ("perm_state", "VARCHAR"), ("perm_pin", "VARCHAR"), ("perm_mobile", "VARCHAR"),
         ("temp_address", "TEXT"), ("temp_state", "VARCHAR"), ("temp_pin", "VARCHAR"), ("temp_mobile", "VARCHAR"),
-        
-        # JSON Arrays
         ("languages_json", "TEXT"), ("education_json", "TEXT"), ("experience_json", "TEXT"),
         ("family_json", "TEXT"), ("references_json", "TEXT"),
-        
-        # Work
         ("emergency_contact", "VARCHAR"), ("designation", "VARCHAR"), ("department", "VARCHAR"), 
         ("experience_years", "FLOAT"), ("prev_company", "VARCHAR"), ("prev_role", "VARCHAR"),
         ("unit_name", "VARCHAR"), ("location_id", "INTEGER"), ("blockchain_id", "VARCHAR"),
-        
-        # Security & Auth
         ("kyc_mode", "VARCHAR"), ("is_verified", "BOOLEAN DEFAULT FALSE"), ("is_password_changed", "BOOLEAN DEFAULT FALSE"),
-        
-        # Encrypted Data
         ("aadhar_enc", "VARCHAR"), ("pan_enc", "VARCHAR"), ("account_number_enc", "VARCHAR"),
         ("voter_id_enc", "VARCHAR"), ("driving_licence_enc", "VARCHAR"), ("passport_no_enc", "VARCHAR"),
         ("bank_name", "VARCHAR"), ("ifsc_code", "VARCHAR"),
-        
-        # Uploads
         ("profile_photo_path", "TEXT"), ("aadhar_photo_path", "TEXT"), ("pan_photo_path", "TEXT"),
         ("voter_photo_path", "TEXT"), ("dl_photo_path", "TEXT"), ("passport_photo_path", "TEXT"),
         ("fingerprints_left_path", "TEXT"), ("fingerprints_right_path", "TEXT"), 
@@ -184,18 +169,15 @@ def init_db():
     ]
     
     with engine.connect() as conn:
-        # 1. Update Admin status safely
         try:
             conn.execute(text("UPDATE users SET is_verified = True WHERE email = 'admin@lizza.com'"))
             conn.commit()
         except Exception:
             conn.rollback()
             
-        # 2. Add any missing columns to the table safely
         for col_name, col_type in columns_to_add:
             try:
                 conn.execute(text(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}"))
                 conn.commit()
             except Exception: 
-                # Column already exists, rollback the failed transaction and continue
                 conn.rollback()

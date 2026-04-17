@@ -154,6 +154,7 @@ async def add_employee(
     # Core Identity
     first_name: str = Form(...), last_name: str = Form(...), phone_number: str = Form(...), 
     dob: str = Form(...), designation: str = Form(...), kyc_mode: str = Form(...),
+    userType: str = Form("employee"), # <--- Catches the system role
     
     # Personal & Medical
     personal_email: str = Form(None), gender: str = Form(None), marital_status: str = Form(None), 
@@ -184,7 +185,7 @@ async def add_employee(
     pan_photo: UploadFile = File(None), voter_photo: UploadFile = File(None),
     dl_photo: UploadFile = File(None), passport_photo: UploadFile = File(None),
     fingerprints_left: UploadFile = File(None), fingerprints_right: UploadFile = File(None),
-    bank_passbook: UploadFile = File(None), # <--- NEW BANK PASSBOOK UPLOAD
+    bank_passbook: UploadFile = File(None), # <--- Catches Bank Passbook
     db: Session = Depends(get_db)
 ):
     base_email = f"{first_name.strip().replace(' ', '').lower()}.{last_name.strip().replace(' ', '').lower()}@lizza.com"
@@ -205,38 +206,35 @@ async def add_employee(
     passport_url = upload_to_cloud(passport_photo)
     left_fp_url = upload_to_cloud(fingerprints_left) if kyc_mode == 'without_aadhaar' else None
     right_fp_url = upload_to_cloud(fingerprints_right) if kyc_mode == 'without_aadhaar' else None
-    passbook_url = upload_to_cloud(bank_passbook) # <--- Process Bank Passbook
+    passbook_url = upload_to_cloud(bank_passbook) 
 
     # Save everything securely to PostgreSQL
     new_user = User(
         first_name=first_name, last_name=last_name, full_name=f"{first_name} {last_name}",
         email=base_email, personal_email=personal_email, phone_number=phone_number,
-        password=get_secure_hash(initial_pw, salt), salt=salt, user_type="employee", 
+        password=get_secure_hash(initial_pw, salt), salt=salt, 
+        user_type=userType,  # <--- Saves dynamic system role
         manager_id=manager_id, location_id=location_id, is_verified=False, dob=dob,
         gender=gender, marital_status=marital_status, identity_mark=identity_mark,
         father_name=father_name, mother_name=mother_name, blood_group=blood_group,
         height=height, caste=caste, category=category, religion=religion, nationality=nationality, 
         medical_remarks=medical_remarks, unit_name=unit_name, designation=designation, department=department, kyc_mode=kyc_mode,
         
-        # Addresses
         perm_address=perm_address, perm_state=perm_state, perm_pin=perm_pin, perm_mobile=perm_mobile,
         temp_address=temp_address, temp_state=temp_state, temp_pin=temp_pin, temp_mobile=temp_mobile,
         
-        # JSON Arrays
         languages_json=languages_json, education_json=education_json, experience_json=experience_json, 
         family_json=family_json, references_json=references_json,
         
-        # Encrypted Sensitive Data
         aadhar_enc=safe_encrypt(aadhar_number), pan_enc=safe_encrypt(pan_number),
         account_number_enc=safe_encrypt(account_number), voter_id_enc=safe_encrypt(voter_id),
         driving_licence_enc=safe_encrypt(driving_licence), passport_no_enc=safe_encrypt(passport_no),
         bank_name=bank_name, ifsc_code=ifsc_code,
         
-        # Document Paths
         profile_photo_path=profile_url, aadhar_photo_path=aadhar_url,
         pan_photo_path=pan_url, voter_photo_path=voter_url, dl_photo_path=dl_url, passport_photo_path=passport_url,
         fingerprints_left_path=left_fp_url, fingerprints_right_path=right_fp_url,
-        bank_passbook_path=passbook_url, # <--- Save Path to DB
+        bank_passbook_path=passbook_url, 
         
         shift_start=shift_start if shift_start else None, shift_end=shift_end if shift_end else None
     )
@@ -245,6 +243,8 @@ async def add_employee(
     db.commit()
     
     return {"status": "success", "official_email": base_email, "message": "Employee registered successfully."}
+    
+    
 @app.get("/api/manager/my-employees")
 def get_my_employees(manager_id: int, db: Session = Depends(get_db)):
     return db.query(User).filter(User.manager_id == manager_id).all()
