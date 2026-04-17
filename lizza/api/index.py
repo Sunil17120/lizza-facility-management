@@ -319,11 +319,7 @@ def update_employee_inline(data: dict, db: Session = Depends(get_db)):
     if "manager_id" in data: user.manager_id = data.get("manager_id")
     db.commit(); return {"status": "updated"}
 
-
-
-@app.delete("/api/admin/delete-location/{loc_id}")
-def delete_location(loc_id: int, db: Session = Depends(get_db)):
-    loc = db.query(OfficeLocatio@app.delete("/api/admin/delete-employee/{user_id}")
+@app.delete("/api/admin/delete-employee/{user_id}")
 def delete_employee(user_id: int, db: Session = Depends(get_db)):
     try:
         # 1. Find the user
@@ -362,7 +358,11 @@ def delete_employee(user_id: int, db: Session = Depends(get_db)):
         # CRITICAL: Rollback if anything fails so the database doesn't corrupt
         db.rollback() 
         print(f"Delete Error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to delete employee due to a database constraint. Error: {str(e)}")n).filter(OfficeLocation.id == loc_id).first()
+        raise HTTPException(status_code=500, detail=f"Failed to delete employee due to a database constraint. Error: {str(e)}")
+
+@app.delete("/api/admin/delete-location/{loc_id}")
+def delete_location(loc_id: int, db: Session = Depends(get_db)):
+    loc = db.query(OfficeLocation).filter(OfficeLocation.id == loc_id).first()
     if loc: db.delete(loc); db.commit()
     return {"status": "deleted"}
 
