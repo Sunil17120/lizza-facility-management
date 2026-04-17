@@ -1,9 +1,9 @@
-import hashlib, os, redis, math, smtplib, base64, json, requests, calendar
+import hashlib, os, redis, math, smtplib, base64, json, requests, calendar, re
 from email.mime.text import MIMEText
 from typing import Optional 
 from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, Query, File, UploadFile, Form
 from sqlalchemy.orm import Session
-from sqlalchemy import extract 
+from sqlalchemy import extract, text
 from pydantic import BaseModel
 from datetime import datetime, timedelta
 from sqlalchemy.exc import IntegrityError
@@ -14,12 +14,11 @@ import cv2
 import numpy as np
 import zlib
 import zxingcpp
-from sqlalchemy import text
 
 try:
-    from .database import SessionLocal, User, EmployeeLocation, OfficeLocation, SiteVisit,SiteStay, init_db, cipher
+    from .database import SessionLocal, User, EmployeeLocation, OfficeLocation, SiteVisit, SiteStay, init_db, cipher
 except ImportError:
-    from database import SessionLocal, User, EmployeeLocation, OfficeLocation, SiteVisit, SiteStay,init_db, cipher
+    from database import SessionLocal, User, EmployeeLocation, OfficeLocation, SiteVisit, SiteStay, init_db, cipher
 
 app = FastAPI()
 redis_url = os.environ.get("REDIS_URL") or os.environ.get("KV_URL")
@@ -34,11 +33,10 @@ def convert_utc_to_ist(utc_dt):
     return utc_dt + timedelta(hours=5, minutes=30)
 
 def is_time_between(start_str, end_str, check_str):
-    """Handles time comparisons, including overnight shifts crossing midnight."""
     if not start_str or not end_str: return False
     if start_str <= end_str:
         return start_str <= check_str <= end_str
-    else: # Shift crosses midnight (e.g., 22:00 to 06:00)
+    else: 
         return start_str <= check_str or check_str <= end_str
 
 class AuthRequest(BaseModel): 
@@ -78,10 +76,8 @@ def upload_to_cloud(upload_file: UploadFile) -> str:
     try:
         image_bytes = upload_file.file.read()
         encoded_image = base64.b64encode(image_bytes).decode('utf-8')
-        
         url = "https://api.imgbb.com/1/upload"
         payload = {"key": os.environ.get("IMGBB_API_KEY"), "image": encoded_image}
-        
         response = requests.post(url, data=payload)
         res_data = response.json()
         if res_data.get("success"): return res_data["data"]["url"]
@@ -113,11 +109,12 @@ def get_distance(lat1, lon1, lat2, lon2):
     dphi, dlambda = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
     a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+
 def safe_encrypt(data: str) -> str:
-    """Safely encrypts data if it exists, otherwise returns None."""
     if not data or str(data).strip() == "" or data == "null" or data == "undefined":
         return None
     return cipher.encrypt(str(data).encode()).decode()
+
 # --- AUTH & PROFILE ---
 @app.post("/api/login")
 def login(data: AuthRequest, db: Session = Depends(get_db)):
@@ -152,43 +149,58 @@ def change_password(data: PasswordChange, db: Session = Depends(get_db)):
 # --- MANAGER & ONBOARDING ---
 @app.post("/api/manager/add-employee")
 async def add_employee(
-    # Core Identity
     first_name: str = Form(...), last_name: str = Form(...), phone_number: str = Form(...), 
-    dob: str = Form(...), designation: str = Form(...), kyc_mode: str = Form(...),
-    userType: str = Form("employee"), # <--- Catches the system role
+    personal_email: str = Form(...), dob: str = Form(...), designation: str = Form(...), 
+    kyc_mode: str = Form(...), userType: str = Form("employee"), 
     
-    # Personal & Medical
-    personal_email: str = Form(None), gender: str = Form(None), marital_status: str = Form(None), 
-    identity_mark: str = Form(None), father_name: str = Form(None), mother_name: str = Form(None), 
-    blood_group: str = Form(None), height: str = Form(None), caste: str = Form(None), 
-    category: str = Form(None), religion: str = Form(None), nationality: str = Form(None), 
-    medical_remarks: str = Form(None), unit_name: str = Form(None),
+    gender: Optional[str] = Form(None), marital_status: Optional[str] = Form(None), 
+    identity_mark: Optional[str] = Form(None), father_name: Optional[str] = Form(None), 
+    mother_name: Optional[str] = Form(None), blood_group: Optional[str] = Form(None), 
+    height: Optional[str] = Form(None), caste: Optional[str] = Form(None), 
+    category: Optional[str] = Form(None), religion: Optional[str] = Form(None), 
+    nationality: Optional[str] = Form(None), medical_remarks: Optional[str] = Form(None), 
+    unit_name: Optional[str] = Form(None),
     
-    # Addresses
-    perm_address: str = Form(None), perm_state: str = Form(None), perm_pin: str = Form(None), perm_mobile: str = Form(None),
-    temp_address: str = Form(None), temp_state: str = Form(None), temp_pin: str = Form(None), temp_mobile: str = Form(None),
+    perm_address: Optional[str] = Form(None), perm_state: Optional[str] = Form(None), 
+    perm_pin: Optional[str] = Form(None), perm_mobile: Optional[str] = Form(None),
+    temp_address: Optional[str] = Form(None), temp_state: Optional[str] = Form(None), 
+    temp_pin: Optional[str] = Form(None), temp_mobile: Optional[str] = Form(None),
     
-    # JSON Arrays
-    languages_json: str = Form(None), education_json: str = Form(None), experience_json: str = Form(None), 
-    family_json: str = Form(None), references_json: str = Form(None),
+    languages_json: Optional[str] = Form(None), education_json: Optional[str] = Form(None), 
+    experience_json: Optional[str] = Form(None), family_json: Optional[str] = Form(None), 
+    references_json: Optional[str] = Form(None),
     
-    # Financial & ID
-    bank_name: str = Form(None), account_number: str = Form(None), ifsc_code: str = Form(None),
-    aadhar_number: str = Form(None), pan_number: str = Form(None), voter_id: str = Form(None), 
-    driving_licence: str = Form(None), passport_no: str = Form(None),
+    bank_name: Optional[str] = Form(None), account_number: Optional[str] = Form(None), 
+    ifsc_code: Optional[str] = Form(None), aadhar_number: Optional[str] = Form(None), 
+    pan_number: Optional[str] = Form(None), voter_id: Optional[str] = Form(None), 
+    driving_licence: Optional[str] = Form(None), passport_no: Optional[str] = Form(None),
     
-    # Work settings
-    department: str = Form("Operations"), manager_id: int = Form(1), 
+    department: Optional[str] = Form("Operations"), manager_id: Optional[int] = Form(1), 
     location_id: Optional[int] = Form(None), shift_start: Optional[str] = Form(None), shift_end: Optional[str] = Form(None),
     
-    # Files & Uploads
-    profile_photo: UploadFile = File(None), aadhar_photo: UploadFile = File(None),
-    pan_photo: UploadFile = File(None), voter_photo: UploadFile = File(None),
-    dl_photo: UploadFile = File(None), passport_photo: UploadFile = File(None),
-    fingerprints_left: UploadFile = File(None), fingerprints_right: UploadFile = File(None),
-    bank_passbook: UploadFile = File(None), # <--- Catches Bank Passbook
+    profile_photo: Optional[UploadFile] = File(None), aadhar_photo: Optional[UploadFile] = File(None),
+    pan_photo: Optional[UploadFile] = File(None), voter_photo: Optional[UploadFile] = File(None),
+    dl_photo: Optional[UploadFile] = File(None), passport_photo: Optional[UploadFile] = File(None),
+    fingerprints_left: Optional[UploadFile] = File(None), fingerprints_right: Optional[UploadFile] = File(None),
+    bank_passbook: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db)
 ):
+    if not phone_number.isdigit() or len(phone_number) != 10:
+        raise HTTPException(status_code=422, detail="Primary Mobile Number must be exactly 10 digits.")
+        
+    email_regex = r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$"
+    if not re.match(email_regex, personal_email):
+        raise HTTPException(status_code=422, detail="Invalid Personal Email format.")
+
+    if kyc_mode == 'without_aadhaar' and aadhar_number:
+        if not aadhar_number.isdigit() or len(aadhar_number) != 12:
+            raise HTTPException(status_code=422, detail="Aadhaar Number must be exactly 12 digits.")
+
+    if pan_number:
+        pan_regex = r"^[A-Z]{5}[0-9]{4}[A-Z]{1}$"
+        if not re.match(pan_regex, pan_number.upper()):
+            raise HTTPException(status_code=422, detail="Invalid PAN Card format (e.g., ABCDE1234F).")
+
     base_email = f"{first_name.strip().replace(' ', '').lower()}.{last_name.strip().replace(' ', '').lower()}@lizza.com"
     try:
         dt_obj = datetime.strptime(dob, "%Y-%m-%d")
@@ -198,7 +210,6 @@ async def add_employee(
 
     salt = hashlib.sha256(base_email.encode()).hexdigest()[:16]
 
-    # Process Uploads securely to your cloud storage
     profile_url = upload_to_cloud(profile_photo)
     aadhar_url = upload_to_cloud(aadhar_photo)
     pan_url = upload_to_cloud(pan_photo)
@@ -209,13 +220,11 @@ async def add_employee(
     right_fp_url = upload_to_cloud(fingerprints_right) if kyc_mode == 'without_aadhaar' else None
     passbook_url = upload_to_cloud(bank_passbook) 
 
-    # Save everything securely to PostgreSQL
     new_user = User(
         first_name=first_name, last_name=last_name, full_name=f"{first_name} {last_name}",
         email=base_email, personal_email=personal_email, phone_number=phone_number,
         password=get_secure_hash(initial_pw, salt), salt=salt, 
-        user_type=userType,  # <--- Saves dynamic system role
-        manager_id=manager_id, location_id=location_id, is_verified=False, dob=dob,
+        user_type=userType, manager_id=manager_id, location_id=location_id, is_verified=False, dob=dob,
         gender=gender, marital_status=marital_status, identity_mark=identity_mark,
         father_name=father_name, mother_name=mother_name, blood_group=blood_group,
         height=height, caste=caste, category=category, religion=religion, nationality=nationality, 
@@ -242,9 +251,7 @@ async def add_employee(
     
     db.add(new_user)
     db.commit()
-    
     return {"status": "success", "official_email": base_email, "message": "Employee registered successfully."}
-    
     
 @app.get("/api/manager/my-employees")
 def get_my_employees(manager_id: int, db: Session = Depends(get_db)):
@@ -323,43 +330,25 @@ def update_employee_inline(data: dict, db: Session = Depends(get_db)):
 @app.delete("/api/admin/delete-employee/{user_id}")
 def delete_employee(user_id: int, db: Session = Depends(get_db)):
     try:
-        # 1. Find the user
         user = db.query(User).filter(User.id == user_id).first()
-        if not user:
-            raise HTTPException(status_code=404, detail="Employee not found.")
-
-        # 2. Safety Check: Prevent deleting the main admin
+        if not user: raise HTTPException(status_code=404, detail="Employee not found.")
         if user.user_type == 'admin' or user.email == 'admin@lizza.com':
             raise HTTPException(status_code=403, detail="Security protocol prevents deleting the Super Admin account.")
 
-        # ---------------------------------------------------------
-        # 3. FIXING THE CRASH: CLEAR FOREIGN KEY CONSTRAINTS FIRST
-        # ---------------------------------------------------------
-        
-        # A. If this person was a manager, safely detach them from their team
         db.query(User).filter(User.manager_id == user_id).update({"manager_id": None})
-        
-        # B. Delete their GPS location history
         db.query(EmployeeLocation).filter(EmployeeLocation.user_id == user_id).delete()
-        
-        # C. Delete their known Field Officer Site Visits & Stays
         db.query(SiteVisit).filter(SiteVisit.officer_id == user_id).delete()
         db.query(SiteStay).filter(SiteStay.officer_id == user_id).delete()
-
-        # D. FORCE DELETE THE ORPHANED LOGS (This fixes your specific 500 crash)
+        
+        # Ghost table constraint fix
         db.execute(text("DELETE FROM field_visit_logs WHERE officer_id = :uid"), {"uid": user_id})
 
-        # 4. Finally, delete the actual employee record safely
         db.delete(user)
         db.commit()
-
         return {"status": "success", "message": "Employee and all related records deleted."}
 
-    except HTTPException:
-        # Pass through our deliberate 404/403 errors
-        raise
+    except HTTPException: raise
     except Exception as e:
-        # CRITICAL: Rollback if anything fails so the database doesn't corrupt
         db.rollback() 
         print(f"Delete Error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to delete employee due to a database constraint. Error: {str(e)}")
@@ -449,24 +438,15 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
     now_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
     now_str = now_ist.strftime("%H:%M")
 
-    # ==========================================
-    # STRICT PRIVACY GATE: EMPLOYEES & MANAGERS
-    # ==========================================
     if user.user_type in ['employee', 'manager']:
-        # If they are completely outside their duty hours
         if not user.shift_start or not user.shift_end or not is_time_between(user.shift_start, user.shift_end, now_str):
-            # 1. Wipe their location from the Admin map to protect privacy
             if r: r.delete(f"loc:{email}")
-            
-            # 2. Return an off_duty status so the frontend dashboard pauses tracking
             return {"is_inside": False, "status": "off_duty", "message": "Off Duty - Location tracking paused."}
 
-    # 1. Update Live Location in Redis for Admin Map 
     if r:
-        if user.is_present: r.set(f"loc:{email}", f"{lat},{lon}", ex=43200) # 12 hours
-        else: r.set(f"loc:{email}", f"{lat},{lon}", ex=360)   # 6 minutes buffer
+        if user.is_present: r.set(f"loc:{email}", f"{lat},{lon}", ex=43200) 
+        else: r.set(f"loc:{email}", f"{lat},{lon}", ex=360) 
     
-    # --- FIELD OFFICER LOGIC ---
     if user.user_type == 'field_officer':
         now_utc = datetime.utcnow()
         offices = db.query(OfficeLocation).all()
@@ -483,7 +463,6 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
                 
         return {"is_inside": current_site is not None, "status": "normal", "message": "Location Updated"}
 
-    # --- REGULAR EMPLOYEE LOGIC ---
     if not user.location_id or not user.shift_start: return {"is_inside": True, "status": "normal", "message": "Location Updated"}
 
     office = db.query(OfficeLocation).filter(OfficeLocation.id == user.location_id).first()
@@ -492,7 +471,6 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
     grace_end_dt = datetime.strptime(user.shift_start, "%H:%M") + timedelta(minutes=15)
     grace_end_str = grace_end_dt.strftime("%H:%M")
 
-    # A. 15-MINUTE ATTENDANCE LOGIC
     if is_inside:
         if r: r.delete(f"out_time:{email}")
         if not user.is_present and is_time_between(user.shift_start, grace_end_str, now_str):
@@ -500,7 +478,6 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
             return {"is_inside": True, "status": "normal", "message": "Attendance Marked Present"}
         return {"is_inside": True, "status": "inside", "message": "Inside Geofence"}
 
-    # B. 5-MINUTE OUT-OF-BOUNDS VIOLATION LOGIC
     else:
         if user.is_present:
             out_since = r.get(f"out_time:{email}") if r else None
@@ -518,7 +495,7 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
     
     return {"is_inside": False, "status": "outside", "message": "Outside Geofence"}
 
-# --- e-KYC EXTRACTION (Kept intact) ---
+# --- e-KYC EXTRACTION ---
 @app.post("/api/manager/extract-ekyc")
 async def extract_ekyc(file: UploadFile = File(...), share_code: str = Form(...)):
     try:
@@ -549,10 +526,10 @@ async def extract_ekyc(file: UploadFile = File(...), share_code: str = Form(...)
         raise HTTPException(400, "Failed to unlock ZIP. Ensure it is a valid UIDAI file.")
     except Exception as e:
         raise HTTPException(500, "Failed to process e-KYC XML data.")
+
 @app.post("/api/manager/extract-qr")
 async def extract_qr(file: UploadFile = File(...)):
     try:
-        # 1. Read the uploaded image
         image_bytes = await file.read()
         nparr = np.frombuffer(image_bytes, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
@@ -560,25 +537,19 @@ async def extract_qr(file: UploadFile = File(...)):
         if img is None:
             raise HTTPException(status_code=400, detail="Invalid image file. Please upload a clear photo.")
         
-        # 2. Decode using industrial-grade ZXing
         barcodes = zxingcpp.read_barcodes(img)
-        
         if len(barcodes) == 0:
             raise HTTPException(status_code=400, detail="No QR code found. Ensure the QR is well-lit without glare and fills the box.")
             
         qr_text = barcodes[0].text.strip()
 
-        # ==========================================================
-        # SCENARIO A: AADHAAR SECURE QR (Modern Plastic PVC Cards)
-        # ==========================================================
         if qr_text.isdigit() and len(qr_text) > 500:
             try:
                 qr_int = int(qr_text)
                 qr_bytes = qr_int.to_bytes((qr_int.bit_length() + 7) // 8, byteorder='big')
                 
                 start_idx = qr_bytes.find(b'\x1f\x8b\x08')
-                if start_idx == -1:
-                    raise ValueError("Invalid Aadhaar signature format")
+                if start_idx == -1: raise ValueError("Invalid Aadhaar signature format")
                     
                 compressed_data = qr_bytes[start_idx:]
                 decompressed = zlib.decompress(compressed_data, zlib.MAX_WBITS | 32)
@@ -586,7 +557,6 @@ async def extract_qr(file: UploadFile = File(...)):
                 parts = decompressed.split(b'\xff')
                 str_parts = [p.decode('utf-8', errors='ignore').strip() for p in parts]
 
-                # --- DYNAMIC ANCHORING (Fixes the Number-as-Name bug) ---
                 gender_idx = -1
                 for idx, val in enumerate(str_parts):
                     if val in ['M', 'F', 'T'] and idx >= 2:
@@ -594,31 +564,25 @@ async def extract_qr(file: UploadFile = File(...)):
                         break
                 
                 if gender_idx != -1:
-                    # We found the Gender! Everything else is perfectly relative to this.
                     name_raw = str_parts[gender_idx - 2]
                     dob_raw = str_parts[gender_idx - 1]
                     gender_raw = str_parts[gender_idx]
                     care_of = str_parts[gender_idx + 1] if len(str_parts) > gender_idx + 1 else ""
                 else:
-                    # Fallback just in case
                     name_raw = str_parts[2] if len(str_parts) > 2 else ""
                     dob_raw = str_parts[3] if len(str_parts) > 3 else ""
                     gender_raw = str_parts[4] if len(str_parts) > 4 else ""
                     care_of = str_parts[5] if len(str_parts) > 5 else ""
 
-                # Standardize Name
                 name_parts = name_raw.strip().split(' ')
                 first_name = name_parts[0]
                 last_name = ' '.join(name_parts[1:]) if len(name_parts) > 1 else ''
                 
-                # Standardize DOB
-                try: 
-                    dob_formatted = datetime.strptime(dob_raw, "%d-%m-%Y").strftime("%Y-%m-%d")
+                try: dob_formatted = datetime.strptime(dob_raw, "%d-%m-%Y").strftime("%Y-%m-%d")
                 except: 
                     try: dob_formatted = datetime.strptime(dob_raw, "%Y-%m-%d").strftime("%Y-%m-%d")
                     except: dob_formatted = dob_raw
 
-                # Clean up Father's Name
                 father_name = care_of.replace('S/O', '').replace('D/O', '').replace('C/O', '').replace(':', '').strip()
                 
                 return {
@@ -636,14 +600,10 @@ async def extract_qr(file: UploadFile = File(...)):
                 print(f"Secure QR Error: {e}")
                 raise HTTPException(status_code=400, detail="Detected Aadhaar QR, but failed to decrypt it. The QR might be damaged.")
 
-        # ==========================================================
-        # SCENARIO B: OLD XML FORMAT (e-Aadhaar PDF Printouts)
-        # ==========================================================
         else:
             try:
                 root = ET.fromstring(qr_text)
                 attribs = root.attrib
-                
                 name_parts = attribs.get('name', '').strip().split(' ', 1)
                 first_name = name_parts[0]
                 last_name = name_parts[1] if len(name_parts) > 1 else ''
@@ -667,12 +627,9 @@ async def extract_qr(file: UploadFile = File(...)):
                         "aadhar_reference": masked_aadhar 
                     }
                 }
-                
             except ET.ParseError:
                 raise HTTPException(status_code=400, detail="The scanned QR Code is not a valid Aadhaar format.")
-
-    except HTTPException:
-        raise 
+    except HTTPException: raise 
     except Exception as e:
         print(f"Unexpected Error: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error while processing image.")
