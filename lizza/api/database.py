@@ -93,7 +93,7 @@ class User(Base):
     passport_photo_path = Column(Text, nullable=True)
     fingerprints_left_path = Column(Text, nullable=True)
     fingerprints_right_path = Column(Text, nullable=True)
-    bank_passbook_path = Column(Text, nullable=True)  # <-- Passbook Upload
+    bank_passbook_path = Column(Text, nullable=True) 
     filled_form_path = Column(Text, nullable=True)
     
     # 9. Status
@@ -143,7 +143,6 @@ class SiteStay(Base):
 def init_db():
     Base.metadata.create_all(bind=engine)
     
-    # Fully comprehensive list of all columns to auto-migrate
     columns_to_add = [
         ("first_name", "VARCHAR"), ("last_name", "VARCHAR"), ("personal_email", "VARCHAR"),
         ("phone_number", "VARCHAR"), ("dob", "VARCHAR"), ("gender", "VARCHAR"),
