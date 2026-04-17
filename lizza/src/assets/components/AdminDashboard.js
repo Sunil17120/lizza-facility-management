@@ -1,18 +1,16 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Table, Form, Container, Card, Spinner, Button, Row, Col, Modal, Badge, Tabs, Tab } from 'react-bootstrap';
-import { UserCog, Building2, MapPin, Trash2, Users, UserCheck, UserX, Save, Search, Plus, Bell, Edit2, Calendar, Download, Image as ImageIcon, FileText, Briefcase, Filter } from 'lucide-react';
+import { UserCog, Building2, MapPin, Trash2, Users, UserCheck, UserX, Save, Search, Plus, Bell, Edit2, Calendar, Download, Image as ImageIcon, FileText, Briefcase, Filter, Eye } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 import EmployeeOnboardForm from './EmployeeOnboardForm'; 
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
-// Fix Leaflet marker icons
 import markerIcon from 'leaflet/dist/images/marker-icon.png';
 import markerShadow from 'leaflet/dist/images/marker-shadow.png';
 let DefaultIcon = L.icon({ iconUrl: markerIcon, shadowUrl: markerShadow, iconSize: [25, 41], iconAnchor: [12, 41] });
 L.Marker.prototype.options.icon = DefaultIcon;
 
-// Helper to create color-coded live tracking icons
 const getStatusIcon = (isPresent) => {
   return L.divIcon({
     html: `<div style="
@@ -29,25 +27,31 @@ const getStatusIcon = (isPresent) => {
   });
 };
 
+// Safe JSON parser for the dynamic arrays
+const safeParseJSON = (jsonStr) => {
+    try {
+        const parsed = JSON.parse(jsonStr);
+        return Array.isArray(parsed) ? parsed : (typeof parsed === 'object' ? [parsed] : []);
+    } catch (e) {
+        return [];
+    }
+};
+
 const AdminDashboard = () => {
-  // --- CORE STATES ---
   const [mainTab, setMainTab] = useState('overview');
   const [employees, setEmployees] = useState([]);
   const [locations, setLocations] = useState([]);
   const [liveLocations, setLiveLocations] = useState([]);
   const [loading, setLoading] = useState(true);
   
-  // --- VERIFICATION STATES ---
   const [showNotif, setShowNotif] = useState(false);
   const [selectedStaff, setSelectedStaff] = useState(null);
 
-  // --- UI STATES ---
   const [showAddEmp, setShowAddEmp] = useState(false);
   const [newLoc, setNewLoc] = useState({ name: '', lat: '', lon: '', radius: 200 });
   const [editLocModal, setEditLocModal] = useState(false);
   const [editingLoc, setEditingLoc] = useState(null);
   
-  // --- REPORTS STATES ---
   const [reportMonth, setReportMonth] = useState(new Date().getMonth() + 1);
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
   const [filterOfficer, setFilterOfficer] = useState('');
@@ -59,7 +63,6 @@ const AdminDashboard = () => {
   
   const adminEmail = localStorage.getItem('userEmail');
 
-  // --- 1. CORE DATA FETCHING ---
   const fetchBaseData = useCallback(async () => {
     try {
       const [empRes, locRes, liveRes] = await Promise.all([
@@ -78,7 +81,6 @@ const AdminDashboard = () => {
 
   useEffect(() => { fetchBaseData(); }, [fetchBaseData]);
 
-  // --- 2. REPORTS DATA FETCHING ---
   const fetchReportsData = useCallback(async () => {
     if (mainTab !== 'reports') return;
     setReportsLoading(true);
@@ -95,7 +97,6 @@ const AdminDashboard = () => {
 
   useEffect(() => { fetchReportsData(); }, [fetchReportsData]);
 
-  // --- ACTIONS: EMPLOYEES ---
   const handleVerify = async (email) => {
       const res = await fetch(`/api/admin/verify-employee?target_email=${email}&admin_email=${adminEmail}`, { method: 'POST' });
       if (res.ok) { alert("Verified!"); setSelectedStaff(null); fetchBaseData(); }
@@ -117,7 +118,6 @@ const AdminDashboard = () => {
     }
   };
 
-  // --- ACTIONS: BRANCHES ---
   const handleAddBranch = async (e) => {
     e.preventDefault();
     await fetch('/api/admin/add-location', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newLoc) });
@@ -141,7 +141,6 @@ const AdminDashboard = () => {
     }
   };
 
-  // --- EXCEL WITH PHOTOS DOWNLOADER ---
   const downloadExcelWithPhotos = () => {
     let tableHtml = `
       <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
@@ -188,19 +187,16 @@ const AdminDashboard = () => {
     document.body.removeChild(link);
   };
 
-  // --- DATA PROCESSING ---
   const pending = employees.filter(e => !e.is_verified && e.user_type !== 'admin');
   const verified = employees.filter(e => e.is_verified);
   const fieldOfficers = verified.filter(e => e.user_type === 'field_officer');
   
-  // Group Field Reports by Date for UI
   const groupedReports = fieldReports.reduce((acc, visit) => {
     if (!acc[visit.date]) acc[visit.date] = [];
     acc[visit.date].push(visit);
     return acc;
   }, {});
 
-  // Calculate Manager Headcounts
   const managerStats = verified.filter(e => e.user_type === 'manager').map(mgr => {
     const teamSize = verified.filter(emp => emp.manager_id === mgr.id).length;
     return { ...mgr, teamSize };
@@ -237,7 +233,6 @@ const AdminDashboard = () => {
           </Row>
 
           <Row>
-            {/* BRANCH MANAGEMENT SIDEBAR */}
             <Col md={4}>
               <Card className="border-0 shadow-sm p-3 mb-4">
                 <h6 className="fw-bold mb-3"><Building2 size={18} className="me-2 text-danger"/>Office Branches</h6>
@@ -263,13 +258,11 @@ const AdminDashboard = () => {
               </Card>
             </Col>
 
-            {/* LIVE MAP */}
             <Col md={8}>
               <Card className="border-0 shadow-sm overflow-hidden mb-4" style={{ height: '380px' }}>
                 <MapContainer center={[22.5726, 88.3639]} zoom={5} style={{ height: '100%' }}>
                   <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
                   
-                  {/* Live Tracking Markers: green for present, red for outside */}
                   {liveLocations.map(loc => (loc.lat && loc.lon) && (
                     <Marker 
                         key={loc.email} 
@@ -297,7 +290,6 @@ const AdminDashboard = () => {
             </Col>
           </Row>
 
-          {/* INLINE EMPLOYEE EDITOR TABLE */}
           <Card className="border-0 shadow-sm">
             <Table responsive hover className="align-middle mb-0 small">
               <thead className="table-light text-uppercase">
@@ -309,11 +301,9 @@ const AdminDashboard = () => {
                     <td><div className="fw-bold">{emp.full_name}</div><Badge bg="light" text="dark">{emp.blockchain_id || 'Pending'}</Badge></td>
                     <td className="text-muted">{emp.email}</td>
                     
-                    {/* Location Select */}
                     <td>
                       <Form.Select size="sm" value={emp.location_id || ''} onChange={e => {
-                          const updated = [...employees];
-                          const target = updated.find(u => u.id === emp.id);
+                          const updated = [...employees]; const target = updated.find(u => u.id === emp.id);
                           if (target) { target.location_id = parseInt(e.target.value); setEmployees(updated); }
                       }}>
                         <option value="">Select Site...</option>
@@ -321,11 +311,9 @@ const AdminDashboard = () => {
                       </Form.Select>
                     </td>
 
-                    {/* Manager Select */}
                     <td>
                       <Form.Select size="sm" value={emp.manager_id || ''} onChange={e => {
-                          const updated = [...employees];
-                          const target = updated.find(u => u.id === emp.id);
+                          const updated = [...employees]; const target = updated.find(u => u.id === emp.id);
                           if (target) { target.manager_id = e.target.value ? parseInt(e.target.value) : null; setEmployees(updated); }
                       }}>
                         <option value="">No Manager</option>
@@ -335,7 +323,6 @@ const AdminDashboard = () => {
                       </Form.Select>
                     </td>
 
-                    {/* Shift & Role Select */}
                     <td>
                         <div className="d-flex gap-1 mb-1">
                             <Form.Control size="sm" type="time" value={emp.shift_start || ''} onChange={e => {
@@ -361,6 +348,7 @@ const AdminDashboard = () => {
                     <td><Badge bg={emp.is_present ? "success" : "secondary"}>{emp.is_present ? "Present" : "Absent"}</Badge></td>
                     <td>
                         <div className="d-flex gap-1">
+                            <Button variant="info" size="sm" onClick={() => setSelectedStaff(emp)} title="View Full Profile"><Eye size={14}/></Button>
                             <Button variant="danger" size="sm" onClick={() => handleInlineSave(emp)} title="Save Updates"><Save size={14}/></Button>
                             <Button variant="outline-dark" size="sm" onClick={() => handleDeleteEmp(emp.id)}><Trash2 size={14}/></Button>
                         </div>
@@ -377,7 +365,6 @@ const AdminDashboard = () => {
         {/* ========================================== */}
         <Tab eventKey="reports" title={<span className="fw-bold px-3">Reports & Field Operations</span>}>
             
-            {/* Top Filter Bar */}
             <div className="p-3 bg-light border-bottom d-flex flex-wrap gap-4 align-items-center">
               <h5 className="mb-0 fw-bold d-flex align-items-center text-primary"><Filter className="me-2" /> Report Filters</h5>
               
@@ -409,7 +396,6 @@ const AdminDashboard = () => {
 
             <div className="p-4">
                 <Row className="mb-4">
-                  {/* MANAGER HEADCOUNT SUMMARY */}
                   <Col md={12}>
                     <Card className="border-0 shadow-sm">
                       <Card.Header className="bg-white py-3"><h6 className="m-0 fw-bold d-flex align-items-center"><Briefcase size={18} className="me-2 text-warning"/> Manager Team Summaries</h6></Card.Header>
@@ -431,7 +417,6 @@ const AdminDashboard = () => {
                   </Col>
                 </Row>
 
-                {/* FIELD OFFICER VISITS */}
                 <Card className="border-0 shadow-sm mb-4">
                   <Card.Header className="bg-dark text-white p-3 d-flex justify-content-between align-items-center">
                     <h6 className="mb-0 fw-bold d-flex align-items-center"><MapPin className="me-2 text-danger" size={18}/> Field Officer Site Visits</h6>
@@ -460,15 +445,8 @@ const AdminDashboard = () => {
                                 <Table hover responsive className="mb-0 align-middle small">
                                   <thead className="table-secondary">
                                     <tr>
-                                      <th>Photo Time</th>
-                                      <th>Officer</th>
-                                      <th>Site</th>
-                                      <th>Entry</th>
-                                      <th>Exit</th>
-                                      <th>Duration</th>
-                                      <th>Purpose</th>
-                                      <th>Remarks</th>
-                                      <th>Evidence</th>
+                                      <th>Photo Time</th><th>Officer</th><th>Site</th><th>Entry</th><th>Exit</th>
+                                      <th>Duration</th><th>Purpose</th><th>Remarks</th><th>Evidence</th>
                                     </tr>
                                   </thead>
                                   <tbody>
@@ -477,16 +455,11 @@ const AdminDashboard = () => {
                                         <td className="fw-bold text-nowrap">{visit.time}</td>
                                         <td><span className="text-muted d-block" style={{fontSize:'0.7rem'}}>{visit.officer_id}</span>{visit.officer_name}</td>
                                         <td><MapPin size={12} className="me-1 text-danger"/>{visit.site_name}</td>
-                                        
-                                        {/* Merged Automated Tracking Columns */}
                                         <td className="text-success fw-bold text-nowrap">{visit.entry_time}</td>
                                         <td className={visit.exit_time === 'Active' ? 'text-primary fw-bold text-nowrap' : 'text-danger fw-bold text-nowrap'}>{visit.exit_time}</td>
                                         <td>
-                                          <Badge bg={visit.duration === 'In Progress' ? 'primary' : 'secondary'} className="text-nowrap">
-                                            {visit.duration}
-                                          </Badge>
+                                          <Badge bg={visit.duration === 'In Progress' ? 'primary' : 'secondary'} className="text-nowrap">{visit.duration}</Badge>
                                         </td>
-                                        
                                         <td><Badge bg="dark">{visit.purpose}</Badge></td>
                                         <td style={{ maxWidth: '200px' }} className="text-truncate" title={visit.remarks}>{visit.remarks || '-'}</td>
                                         <td>
@@ -510,9 +483,9 @@ const AdminDashboard = () => {
         </Tab>
       </Tabs>
 
-      {/* --- MODALS (Shared across tabs) --- */}
+      {/* --- MODALS --- */}
 
-      {/* Pending Verifications */}
+      {/* Pending Verifications Notif */}
       <Modal show={showNotif} onHide={() => setShowNotif(false)} size="lg" centered>
         <Modal.Header closeButton className="bg-light"><Modal.Title className="h5 fw-bold">Pending Approval</Modal.Title></Modal.Header>
         <Modal.Body className="p-0">
@@ -520,114 +493,253 @@ const AdminDashboard = () => {
            pending.map(p => (
             <div key={p.id} className="p-3 border-bottom d-flex justify-content-between align-items-center bg-white">
               <div><h6 className="mb-0 fw-bold">{p.full_name}</h6><small className="text-muted">{p.personal_email}</small></div>
-              <Button variant="danger" size="sm" onClick={() => setSelectedStaff(p)}>REVIEW</Button>
+              <Button variant="danger" size="sm" onClick={() => { setSelectedStaff(p); setShowNotif(false); }}>REVIEW</Button>
             </div>
           ))}
         </Modal.Body>
       </Modal>
 
-    {/* Verification Review */}
+      {/* COMPREHENSIVE EMPLOYEE PROFILE MODAL */}
       <Modal show={!!selectedStaff} onHide={() => setSelectedStaff(null)} size="xl" centered>
         <Modal.Header closeButton className="bg-dark text-white d-flex justify-content-between align-items-center w-100">
-          <Modal.Title className="h6 mb-0">Reviewing: {selectedStaff?.full_name}</Modal.Title>
+          <Modal.Title className="h6 mb-0">Employee Profile: {selectedStaff?.full_name}</Modal.Title>
           <Button variant="outline-light" size="sm" className="fw-bold ms-auto me-3 d-flex align-items-center" onClick={() => {
               const printWindow = window.open('', '_blank');
               printWindow.document.write(`
-                <html>
-                  <head>
-                    <title>Verification_${selectedStaff?.full_name}</title>
-                    <style>
-                      body { font-family: Arial, sans-serif; padding: 40px; color: #333; }
-                      h2 { text-align: center; border-bottom: 2px solid #dc3545; padding-bottom: 10px; }
-                      .flex-row { display: flex; justify-content: space-between; margin-top: 30px; }
-                      .photo { width: 150px; height: 150px; border-radius: 8px; object-fit: cover; border: 2px solid #ccc; }
-                      .details { flex-grow: 1; padding-left: 30px; }
-                      table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-                      td, th { padding: 10px; border: 1px solid #ddd; text-align: left; }
-                      th { background-color: #f8f9fa; width: 30%; }
-                      .doc-img { width: 100%; max-width: 500px; margin-top: 10px; border: 1px solid #ccc; }
-                    </style>
-                  </head>
-                  <body>
-                    <h2>Lizza - Employee Verification Report</h2>
-                    <div class="flex-row">
-                      <div><img src="${selectedStaff?.profile_photo_path}" class="photo" alt="Profile" /></div>
-                      <div class="details">
-                        <table>
-                          <tr><th>Full Name</th><td>${selectedStaff?.full_name}</td></tr>
-                          <tr><th>Email</th><td>${selectedStaff?.personal_email}</td></tr>
-                          <tr><th>Mobile</th><td>${selectedStaff?.phone_number}</td></tr>
-                          <tr><th>Date of Birth</th><td>${selectedStaff?.dob}</td></tr>
-                          <tr><th>Father's Name</th><td>${selectedStaff?.father_name || 'N/A'}</td></tr>
-                          <tr><th>Designation</th><td>${selectedStaff?.designation}</td></tr>
-                          <tr><th>Department</th><td>${selectedStaff?.department}</td></tr>
-                        </table>
-                      </div>
+                <html><head><title>Profile_${selectedStaff?.full_name}</title>
+                  <style>
+                    body { font-family: Arial, sans-serif; padding: 40px; color: #333; }
+                    h2 { text-align: center; border-bottom: 2px solid #dc3545; padding-bottom: 10px; }
+                    .flex-row { display: flex; justify-content: space-between; margin-top: 30px; }
+                    .photo { width: 150px; height: 150px; border-radius: 8px; object-fit: cover; border: 2px solid #ccc; }
+                    .details { flex-grow: 1; padding-left: 30px; }
+                    table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+                    td, th { padding: 10px; border: 1px solid #ddd; text-align: left; }
+                    th { background-color: #f8f9fa; width: 30%; }
+                  </style>
+                </head><body>
+                  <h2>Lizza - Employee Profile Report</h2>
+                  <div class="flex-row">
+                    <div><img src="${selectedStaff?.profile_photo_path}" class="photo" alt="Profile" /></div>
+                    <div class="details">
+                      <table>
+                        <tr><th>Full Name</th><td>${selectedStaff?.full_name}</td></tr>
+                        <tr><th>Email</th><td>${selectedStaff?.personal_email}</td></tr>
+                        <tr><th>Mobile</th><td>${selectedStaff?.phone_number}</td></tr>
+                        <tr><th>Date of Birth</th><td>${selectedStaff?.dob}</td></tr>
+                        <tr><th>Designation</th><td>${selectedStaff?.designation}</td></tr>
+                        <tr><th>Department</th><td>${selectedStaff?.department}</td></tr>
+                      </table>
                     </div>
-                    <h3 style="margin-top: 40px;">Identity Document (Aadhaar)</h3>
-                    <img src="${selectedStaff?.aadhar_photo_path}" class="doc-img" alt="Aadhaar Document" />
-                    <script>
-                      setTimeout(() => { window.print(); window.close(); }, 500);
-                    </script>
-                  </body>
-                </html>
+                  </div>
+                  <script>setTimeout(() => { window.print(); window.close(); }, 500);</script>
+                </body></html>
               `);
               printWindow.document.close();
           }}>
-            <FileText size={16} className="me-2"/> Download PDF
+            <FileText size={16} className="me-2"/> Print Summary
           </Button>
         </Modal.Header>
+        
         <Modal.Body className="bg-light p-4">
           <Row>
+            {/* Left Sidebar Profile Info */}
             <Col md={3}>
               <Card className="p-3 shadow-sm border-0 mb-3 text-center">
-                <img src={selectedStaff?.profile_photo_path} alt="Profile" className="img-fluid rounded-circle mb-3 mx-auto" style={{width: '120px', height: '120px', objectFit: 'cover'}} />
-                <h5 className="fw-bold mb-1">{selectedStaff?.first_name}</h5>
+                <img src={selectedStaff?.profile_photo_path || "https://via.placeholder.com/150"} alt="Profile" className="img-fluid rounded-circle mb-3 mx-auto" style={{width: '130px', height: '130px', objectFit: 'cover', border: '3px solid #0d6efd'}} />
+                <h5 className="fw-bold mb-1">{selectedStaff?.full_name}</h5>
                 <Badge bg="primary" className="mb-3">{selectedStaff?.designation}</Badge>
                 
                 <div className="text-start small mb-4">
-                    <p className="mb-1"><strong>Phone:</strong> {selectedStaff?.phone_number}</p>
-                    <p className="mb-1"><strong>DOB:</strong> {selectedStaff?.dob}</p>
-                    <p className="mb-1"><strong>Email:</strong> {selectedStaff?.personal_email}</p>
+                    <p className="mb-1"><strong className="text-muted">Phone:</strong> {selectedStaff?.phone_number}</p>
+                    <p className="mb-1"><strong className="text-muted">DOB:</strong> {selectedStaff?.dob}</p>
+                    <p className="mb-1"><strong className="text-muted">Email:</strong> {selectedStaff?.personal_email}</p>
+                    <p className="mb-1"><strong className="text-muted">Blood:</strong> <Badge bg="danger">{selectedStaff?.blood_group || 'N/A'}</Badge></p>
                 </div>
                 
-                <Button variant="success" className="w-100 fw-bold" onClick={() => handleVerify(selectedStaff.email)}>APPROVE & ACTIVATE</Button>
+                {/* Conditionally render Action Button based on status */}
+                {!selectedStaff?.is_verified && (
+                    <Button variant="success" className="w-100 fw-bold shadow-sm" onClick={() => handleVerify(selectedStaff.email)}>APPROVE & ACTIVATE</Button>
+                )}
+                {selectedStaff?.is_verified && (
+                    <Badge bg="success" className="w-100 p-2 shadow-sm"><CheckCircle size={14} className="me-1"/> ACTIVE EMPLOYEE</Badge>
+                )}
               </Card>
             </Col>
             
+            {/* Right Detailed Tabs */}
             <Col md={9}>
-              <Card className="border-0 shadow-sm p-4 h-100 overflow-auto">
-                <h5 className="fw-bold border-bottom pb-2 mb-4 text-primary">Application Details</h5>
-                <Row className="mb-4">
-                    <Col sm={6} className="mb-3">
-                        <small className="text-muted d-block text-uppercase fw-bold">Full Name</small>
-                        <span>{selectedStaff?.full_name}</span>
-                    </Col>
-                    <Col sm={6} className="mb-3">
-                        <small className="text-muted d-block text-uppercase fw-bold">Father's Name</small>
-                        <span>{selectedStaff?.father_name || '-'}</span>
-                    </Col>
-                    <Col sm={6} className="mb-3">
-                        <small className="text-muted d-block text-uppercase fw-bold">Department</small>
-                        <span>{selectedStaff?.department}</span>
-                    </Col>
-                    <Col sm={6} className="mb-3">
-                        <small className="text-muted d-block text-uppercase fw-bold">Assigned Shift</small>
-                        <span>{selectedStaff?.shift_start} to {selectedStaff?.shift_end}</span>
-                    </Col>
-                </Row>
-                
-                <h5 className="fw-bold border-bottom pb-2 mb-3 mt-2 text-primary">Aadhaar Evidence</h5>
-                <div className="bg-white border rounded p-3 text-center">
-                    <img src={selectedStaff?.aadhar_photo_path} alt="Aadhaar" className="img-fluid rounded" style={{maxHeight: '300px'}} />
-                </div>
+              <Card className="border-0 shadow-sm p-3 h-100 overflow-auto">
+                 <Tabs defaultActiveKey="identity" className="mb-4">
+                    
+                    {/* TAB: IDENTITY */}
+                    <Tab eventKey="identity" title="Identity">
+                        <h6 className="fw-bold border-bottom pb-2 mb-3 text-primary mt-2">Personal Information</h6>
+                        <Row>
+                            <Col sm={4} className="mb-3"><small className="text-muted d-block text-uppercase fw-bold">Gender</small><span>{selectedStaff?.gender || 'N/A'}</span></Col>
+                            <Col sm={4} className="mb-3"><small className="text-muted d-block text-uppercase fw-bold">Marital Status</small><span>{selectedStaff?.marital_status || 'N/A'}</span></Col>
+                            <Col sm={4} className="mb-3"><small className="text-muted d-block text-uppercase fw-bold">Identity Mark</small><span>{selectedStaff?.identity_mark || 'N/A'}</span></Col>
+                            <Col sm={4} className="mb-3"><small className="text-muted d-block text-uppercase fw-bold">Father's Name</small><span>{selectedStaff?.father_name || 'N/A'}</span></Col>
+                            <Col sm={4} className="mb-3"><small className="text-muted d-block text-uppercase fw-bold">Mother's Name</small><span>{selectedStaff?.mother_name || 'N/A'}</span></Col>
+                            <Col sm={4} className="mb-3"><small className="text-muted d-block text-uppercase fw-bold">Nationality</small><span>{selectedStaff?.nationality || 'N/A'}</span></Col>
+                        </Row>
+                        
+                        <h6 className="fw-bold border-bottom pb-2 mb-3 mt-3 text-primary">Medical & Demographics</h6>
+                        <Row>
+                            <Col sm={3} className="mb-3"><small className="text-muted d-block text-uppercase fw-bold">Height (cm)</small><span>{selectedStaff?.height || 'N/A'}</span></Col>
+                            <Col sm={3} className="mb-3"><small className="text-muted d-block text-uppercase fw-bold">Caste</small><span>{selectedStaff?.caste || 'N/A'}</span></Col>
+                            <Col sm={3} className="mb-3"><small className="text-muted d-block text-uppercase fw-bold">Category</small><span>{selectedStaff?.category || 'N/A'}</span></Col>
+                            <Col sm={3} className="mb-3"><small className="text-muted d-block text-uppercase fw-bold">Religion</small><span>{selectedStaff?.religion || 'N/A'}</span></Col>
+                            <Col sm={12} className="mb-3"><small className="text-muted d-block text-uppercase fw-bold">Medical Remarks</small><span>{selectedStaff?.medical_remarks || 'None'}</span></Col>
+                        </Row>
+                    </Tab>
+
+                    {/* TAB: ADDRESS */}
+                    <Tab eventKey="address" title="Addresses">
+                        <Row className="mt-2">
+                            <Col md={6}>
+                                <h6 className="fw-bold border-bottom pb-2 mb-3 text-primary">Permanent Address</h6>
+                                <p className="mb-1"><small className="text-muted fw-bold">Address:</small> {selectedStaff?.perm_address || 'N/A'}</p>
+                                <p className="mb-1"><small className="text-muted fw-bold">State:</small> {selectedStaff?.perm_state || 'N/A'}</p>
+                                <p className="mb-1"><small className="text-muted fw-bold">PIN Code:</small> {selectedStaff?.perm_pin || 'N/A'}</p>
+                                <p className="mb-1"><small className="text-muted fw-bold">Alt Mobile:</small> {selectedStaff?.perm_mobile || 'N/A'}</p>
+                            </Col>
+                            <Col md={6}>
+                                <h6 className="fw-bold border-bottom pb-2 mb-3 text-primary">Temporary Address</h6>
+                                <p className="mb-1"><small className="text-muted fw-bold">Address:</small> {selectedStaff?.temp_address || 'N/A'}</p>
+                                <p className="mb-1"><small className="text-muted fw-bold">State:</small> {selectedStaff?.temp_state || 'N/A'}</p>
+                                <p className="mb-1"><small className="text-muted fw-bold">PIN Code:</small> {selectedStaff?.temp_pin || 'N/A'}</p>
+                                <p className="mb-1"><small className="text-muted fw-bold">Local Mobile:</small> {selectedStaff?.temp_mobile || 'N/A'}</p>
+                            </Col>
+                        </Row>
+                    </Tab>
+
+                    {/* TAB: WORK & BANK */}
+                    <Tab eventKey="work" title="Work & Bank">
+                        <h6 className="fw-bold border-bottom pb-2 mb-3 text-primary mt-2">Work Allocation</h6>
+                        <Row>
+                            <Col sm={4} className="mb-3"><small className="text-muted d-block text-uppercase fw-bold">System Role</small><Badge bg="dark">{selectedStaff?.user_type}</Badge></Col>
+                            <Col sm={4} className="mb-3"><small className="text-muted d-block text-uppercase fw-bold">Department</small><span>{selectedStaff?.department || 'N/A'}</span></Col>
+                            <Col sm={4} className="mb-3"><small className="text-muted d-block text-uppercase fw-bold">Unit / Site</small><span>{selectedStaff?.unit_name || 'N/A'}</span></Col>
+                            <Col sm={4} className="mb-3"><small className="text-muted d-block text-uppercase fw-bold">Shift Timings</small><span>{selectedStaff?.shift_start ? `${selectedStaff.shift_start} to ${selectedStaff.shift_end}` : 'Dynamic/N/A'}</span></Col>
+                        </Row>
+                        
+                        <h6 className="fw-bold border-bottom pb-2 mb-3 mt-3 text-primary">Bank & Financial Details</h6>
+                        <Row>
+                            <Col sm={4} className="mb-3"><small className="text-muted d-block text-uppercase fw-bold">Bank Name</small><span>{selectedStaff?.bank_name || 'N/A'}</span></Col>
+                            <Col sm={4} className="mb-3"><small className="text-muted d-block text-uppercase fw-bold">IFSC Code</small><span>{selectedStaff?.ifsc_code || 'N/A'}</span></Col>
+                            <Col sm={4} className="mb-3"><small className="text-muted d-block text-uppercase fw-bold">Account Number</small>
+                                <span className={selectedStaff?.account_number_enc ? "fw-bold text-success" : "text-muted"}>{selectedStaff?.account_number_enc ? "[Encrypted in DB]" : "N/A"}</span>
+                            </Col>
+                        </Row>
+                    </Tab>
+
+                    {/* TAB: BACKGROUND (JSON ARRAYS) */}
+                    <Tab eventKey="background" title="Background Data">
+                        <h6 className="fw-bold border-bottom pb-2 mb-3 text-primary mt-2">Education History</h6>
+                        <Table size="sm" bordered hover className="mb-4 small">
+                            <thead className="table-light"><tr><th>Qualification</th><th>Institute</th><th>Year</th><th>Marks</th></tr></thead>
+                            <tbody>
+                                {safeParseJSON(selectedStaff?.education_json).map((edu, i) => (
+                                    <tr key={i}><td>{edu.qualification || '-'}</td><td>{edu.institute || '-'}</td><td>{edu.year || '-'}</td><td>{edu.marks || '-'}</td></tr>
+                                ))}
+                            </tbody>
+                        </Table>
+
+                        <h6 className="fw-bold border-bottom pb-2 mb-3 text-primary">Work Experience</h6>
+                        <Table size="sm" bordered hover className="mb-4 small">
+                            <thead className="table-light"><tr><th>Company</th><th>Designation</th><th>Period</th></tr></thead>
+                            <tbody>
+                                {safeParseJSON(selectedStaff?.experience_json).map((exp, i) => (
+                                    <tr key={i}><td>{exp.company || '-'}</td><td>{exp.designation || '-'}</td><td>{exp.period || '-'}</td></tr>
+                                ))}
+                            </tbody>
+                        </Table>
+
+                        <h6 className="fw-bold border-bottom pb-2 mb-3 text-primary">Family Details</h6>
+                        <Table size="sm" bordered hover className="mb-0 small">
+                            <thead className="table-light"><tr><th>Name</th><th>Relation</th><th>DOB</th></tr></thead>
+                            <tbody>
+                                {safeParseJSON(selectedStaff?.family_json).map((fam, i) => (
+                                    <tr key={i}><td>{fam.name || '-'}</td><td>{fam.relation || '-'}</td><td>{fam.dob || '-'}</td></tr>
+                                ))}
+                            </tbody>
+                        </Table>
+                    </Tab>
+
+                    {/* TAB: DOCUMENTS & KYC */}
+                    <Tab eventKey="documents" title="KYC Documents">
+                        <h6 className="fw-bold border-bottom pb-2 mb-3 text-primary mt-2">Government IDs</h6>
+                        <Row className="mb-4">
+                            <Col sm={6} className="mb-3">
+                                <small className="text-muted d-block text-uppercase fw-bold">Gov ID (UID)</small>
+                                <span className={selectedStaff?.aadhar_enc ? "text-danger fw-bold" : "text-muted"}>
+                                    {selectedStaff?.aadhar_enc ? "[Aadhaar Redacted]" : "N/A"}
+                                </span>
+                            </Col>
+                            <Col sm={6} className="mb-3">
+                                <small className="text-muted d-block text-uppercase fw-bold">PAN Card Number</small>
+                                <span className={selectedStaff?.pan_enc ? "text-success fw-bold" : "text-muted"}>{selectedStaff?.pan_enc ? "[Encrypted in DB]" : "N/A"}</span>
+                            </Col>
+                            <Col sm={6} className="mb-3">
+                                <small className="text-muted d-block text-uppercase fw-bold">Voter ID</small>
+                                <span className={selectedStaff?.voter_id_enc ? "text-success fw-bold" : "text-muted"}>{selectedStaff?.voter_id_enc ? "[Encrypted in DB]" : "N/A"}</span>
+                            </Col>
+                            <Col sm={6} className="mb-3">
+                                <small className="text-muted d-block text-uppercase fw-bold">Driving Licence</small>
+                                <span className={selectedStaff?.driving_licence_enc ? "text-success fw-bold" : "text-muted"}>{selectedStaff?.driving_licence_enc ? "[Encrypted in DB]" : "N/A"}</span>
+                            </Col>
+                        </Row>
+
+                        <h6 className="fw-bold border-bottom pb-2 mb-3 text-primary">Uploaded Evidence Gallery</h6>
+                        <Row>
+                            {selectedStaff?.aadhar_photo_path && (
+                                <Col md={6} className="mb-3 text-center">
+                                    <small className="text-muted fw-bold d-block mb-1">Aadhaar Document</small>
+                                    <img src={selectedStaff.aadhar_photo_path} alt="Aadhaar" className="img-thumbnail" style={{maxHeight: '180px'}} />
+                                </Col>
+                            )}
+                            {selectedStaff?.bank_passbook_path && (
+                                <Col md={6} className="mb-3 text-center">
+                                    <small className="text-muted fw-bold d-block mb-1">Bank Passbook / Cheque</small>
+                                    <img src={selectedStaff.bank_passbook_path} alt="Bank" className="img-thumbnail" style={{maxHeight: '180px'}} />
+                                </Col>
+                            )}
+                            {selectedStaff?.pan_photo_path && (
+                                <Col md={6} className="mb-3 text-center">
+                                    <small className="text-muted fw-bold d-block mb-1">PAN Card</small>
+                                    <img src={selectedStaff.pan_photo_path} alt="PAN" className="img-thumbnail" style={{maxHeight: '180px'}} />
+                                </Col>
+                            )}
+                            {selectedStaff?.voter_photo_path && (
+                                <Col md={6} className="mb-3 text-center">
+                                    <small className="text-muted fw-bold d-block mb-1">Voter ID</small>
+                                    <img src={selectedStaff.voter_photo_path} alt="Voter ID" className="img-thumbnail" style={{maxHeight: '180px'}} />
+                                </Col>
+                            )}
+                            {selectedStaff?.fingerprints_left_path && (
+                                <Col md={6} className="mb-3 text-center">
+                                    <small className="text-muted fw-bold d-block mb-1">Left Hand Fingerprints</small>
+                                    <img src={selectedStaff.fingerprints_left_path} alt="Left FP" className="img-thumbnail" style={{maxHeight: '180px'}} />
+                                </Col>
+                            )}
+                            {selectedStaff?.fingerprints_right_path && (
+                                <Col md={6} className="mb-3 text-center">
+                                    <small className="text-muted fw-bold d-block mb-1">Right Hand Fingerprints</small>
+                                    <img src={selectedStaff.fingerprints_right_path} alt="Right FP" className="img-thumbnail" style={{maxHeight: '180px'}} />
+                                </Col>
+                            )}
+                        </Row>
+                    </Tab>
+
+                 </Tabs>
               </Card>
             </Col>
           </Row>
         </Modal.Body>
       </Modal>
 
-      {/* Onboarding */}
+      {/* Onboarding Modal */}
       <Modal show={showAddEmp} onHide={() => setShowAddEmp(false)} size="lg" centered>
           <Modal.Header closeButton className="bg-light"><Modal.Title className="h5 fw-bold">Onboard New Employee</Modal.Title></Modal.Header>
           <Modal.Body className="p-4">
@@ -635,7 +747,7 @@ const AdminDashboard = () => {
           </Modal.Body>
       </Modal>
 
-      {/* Edit Branch */}
+      {/* Edit Branch Modal */}
       <Modal show={editLocModal} onHide={() => setEditLocModal(false)} centered>
           <Modal.Header closeButton><Modal.Title className="h6 fw-bold">Edit Branch Location</Modal.Title></Modal.Header>
           <Modal.Body>
