@@ -399,9 +399,19 @@ async def log_site_visit(
     distance = get_distance(lat, lon, site.lat, site.lon)
     if distance > site.radius: raise HTTPException(400, f"Geotag validation failed. You are {int(distance)}m away from the site. Must be within {site.radius}m.")
 
+    # --- FIX 1: Auto-start SiteStay if the background ping missed it ---
+    now_utc = datetime.utcnow()
+    active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
+    
+    if not active_stay or active_stay.location_id != site.id:
+        if active_stay: active_stay.exit_time = now_utc
+        db.add(SiteStay(officer_id=user.id, location_id=site.id, entry_time=now_utc))
+
     photo_url = upload_to_cloud(photo)
     visit = SiteVisit(officer_id=user.id, location_id=site.id, purpose=purpose, remarks=remarks, photo_path=photo_url)
-    db.add(visit); db.commit()
+    db.add(visit)
+    db.commit()
+    
     return {"status": "success", "message": "Visit logged and geotag verified."}
 
 @app.get("/api/field-officer/my-visits")
@@ -433,10 +443,18 @@ def get_monthly_field_visits(
     
     for v, u, loc in results:
         ist_time = convert_utc_to_ist(v.visit_time)
-        stay = db.query(SiteStay).filter(SiteStay.officer_id == v.officer_id, SiteStay.location_id == v.location_id, SiteStay.entry_time <= v.visit_time).order_by(SiteStay.entry_time.desc()).first()
+        
+        # --- FIX 2: Added a 5-minute buffer to catch slight timing mismatches ---
+        stay = db.query(SiteStay).filter(
+            SiteStay.officer_id == v.officer_id, 
+            SiteStay.location_id == v.location_id, 
+            SiteStay.entry_time <= v.visit_time + timedelta(minutes=5) 
+        ).order_by(SiteStay.entry_time.desc()).first()
 
         entry_str, exit_str, duration_str = "N/A", "N/A", "N/A"
-        if stay and (stay.exit_time is None or stay.exit_time >= v.visit_time):
+        
+        # Apply the buffer to the exit time check as well
+        if stay and (stay.exit_time is None or stay.exit_time >= v.visit_time - timedelta(minutes=5)):
             entry_ist = convert_utc_to_ist(stay.entry_time)
             entry_str = entry_ist.strftime("%I:%M %p") if entry_ist else "N/A"
             if stay.exit_time:
