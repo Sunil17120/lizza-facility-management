@@ -206,6 +206,65 @@ const AdminDashboard = () => {
     document.body.removeChild(link);
   };
 
+  const downloadAttendanceExcel = async () => {
+    try {
+      let url = `/api/admin/reports/monthly-attendance?month=${reportMonth}&year=${reportYear}`;
+      if (filterOfficer) url += `&user_id=${filterOfficer}`;
+      if (filterSite) url += `&location_id=${filterSite}`;
+      if (filterRole && filterRole !== 'all') url += `&user_type=${filterRole}`;
+
+      const res = await fetch(url);
+      const attendance = await res.json();
+      if (!res.ok || attendance.length === 0) {
+        return alert('No attendance records found for the selected filters.');
+      }
+
+      let tableHtml = `
+        <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+        <head><meta charset="utf-8"></head><body>
+        <table border="1">
+          <thead>
+            <tr style="background-color: #f2f2f2; font-weight: bold;">
+              <th>Date</th><th>Employee ID</th><th>Employee Name</th><th>Role</th><th>Site</th>
+              <th>Check-In</th><th>Check-Out</th><th>Duration</th>
+            </tr>
+          </thead>
+          <tbody>
+      `;
+
+      attendance.forEach(r => {
+        tableHtml += `
+          <tr>
+            <td>${r.date || 'N/A'}</td>
+            <td>${r.employee_id || 'N/A'}</td>
+            <td>${r.employee_name || 'N/A'}</td>
+            <td>${r.user_type || 'N/A'}</td>
+            <td>${r.site_name || 'N/A'}</td>
+            <td>${r.checkin_time || 'N/A'}</td>
+            <td>${r.checkout_time || 'N/A'}</td>
+            <td>${r.duration || 'N/A'}</td>
+          </tr>
+        `;
+      });
+
+      tableHtml += `</tbody></table></body></html>`;
+      const blob = new Blob([tableHtml], { type: 'application/vnd.ms-excel' });
+      const urlBlob = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = urlBlob;
+      const employeeSegment = filterOfficer ? `_Employee_${filterOfficer}` : '';
+      const siteSegment = filterSite ? `_Site_${filterSite}` : '';
+      const roleSegment = filterRole !== 'all' ? `_${filterRole}` : '';
+      link.download = `Attendance_${reportMonth}_${reportYear}${roleSegment}${siteSegment}${employeeSegment}.xls`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      console.error(err);
+      alert('Unable to download attendance report.');
+    }
+  };
+
   // --- FULL COMPREHENSIVE PDF GENERATOR ---
   const handlePrintProfile = () => {
     const printWindow = window.open('', '_blank');
@@ -595,12 +654,15 @@ const AdminDashboard = () => {
               <Card className="border-0 shadow-sm mb-4">
                 <Card.Header className="bg-dark text-white p-3 d-flex justify-content-between align-items-center">
                   <h6 className="mb-0 fw-bold d-flex align-items-center"><MapPin className="me-2 text-danger" size={18}/> Field Officer Site Visits</h6>
-                  <div className="d-flex gap-2">
+                  <div className="d-flex gap-2 flex-wrap">
                     <Button variant="light" size="sm" className="fw-bold text-dark d-flex align-items-center" onClick={() => downloadExcel(false)} disabled={fieldReports.length === 0}>
-                      <Download size={14} className="me-2 text-success"/> Download Excel
+                      <Download size={14} className="me-2 text-success"/> Download Visits Excel
                     </Button>
                     <Button variant="outline-light" size="sm" className="fw-bold text-dark d-flex align-items-center" onClick={() => downloadExcel(true)} disabled={fieldReports.length === 0}>
-                      <Download size={14} className="me-2 text-success"/> Download Excel (With Photos)
+                      <Download size={14} className="me-2 text-success"/> Download Visits Excel (With Photos)
+                    </Button>
+                    <Button variant="warning" size="sm" className="fw-bold text-dark d-flex align-items-center" onClick={downloadAttendanceExcel}>
+                      <Download size={14} className="me-2 text-dark"/> Download Attendance Excel
                     </Button>
                   </div>
                 </Card.Header>
