@@ -164,8 +164,8 @@ def init_db():
         ("profile_photo_path", "TEXT"), ("aadhar_photo_path", "TEXT"), ("pan_photo_path", "TEXT"),
         ("voter_photo_path", "TEXT"), ("dl_photo_path", "TEXT"), ("passport_photo_path", "TEXT"),
         ("fingerprints_left_path", "TEXT"), ("fingerprints_right_path", "TEXT"), 
-        ("bank_passbook_path", "TEXT"), ("filled_form_path", "TEXT")
-        ("extra_documents_json", "TEXT"),
+        ("bank_passbook_path", "TEXT"), ("filled_form_path", "TEXT"),
+        ("extra_documents_json", "TEXT")
     ]
     
     with engine.connect() as conn:
