@@ -29,11 +29,14 @@ const getStatusIcon = (isPresent) => {
   });
 };
 
-// Safe JSON parser for the dynamic background arrays (Education, Experience, etc.)
+// CRASH-PROOF JSON PARSER: Filters out nulls and safely handles undefined inputs
 const safeParseJSON = (jsonStr) => {
+    if (!jsonStr || jsonStr === 'null' || jsonStr === 'undefined') return [];
     try {
         const parsed = JSON.parse(jsonStr);
-        return Array.isArray(parsed) ? parsed : (typeof parsed === 'object' ? [parsed] : []);
+        const arr = Array.isArray(parsed) ? parsed : (typeof parsed === 'object' && parsed !== null ? [parsed] : []);
+        // Remove any nulls that might have snuck into the array
+        return arr.filter(item => item !== null && item !== undefined);
     } catch (e) {
         return [];
     }
@@ -171,15 +174,15 @@ const AdminDashboard = () => {
       const imgTag = r.photo ? `<img src="${r.photo}" width="120" height="120" style="object-fit: contain;" />` : 'No Photo';
       tableHtml += `
         <tr>
-          <td>${r.date}</td>
-          <td>${r.time}</td>
-          <td>${r.officer_id}</td>
-          <td>${r.officer_name}</td>
-          <td>${r.site_name}</td>
-          <td>${r.entry_time}</td>
-          <td>${r.exit_time}</td>
-          <td>${r.duration}</td>
-          <td>${r.purpose}</td>
+          <td>${r.date || 'N/A'}</td>
+          <td>${r.time || 'N/A'}</td>
+          <td>${r.officer_id || 'N/A'}</td>
+          <td>${r.officer_name || 'N/A'}</td>
+          <td>${r.site_name || 'N/A'}</td>
+          <td>${r.entry_time || 'N/A'}</td>
+          <td>${r.exit_time || 'N/A'}</td>
+          <td>${r.duration || 'N/A'}</td>
+          <td>${r.purpose || 'N/A'}</td>
           <td>${r.remarks || ''}</td>
           <td style="height: 130px; text-align: center; vertical-align: middle;">${imgTag}</td>
         </tr>
@@ -216,27 +219,33 @@ const AdminDashboard = () => {
     addDoc('Left Hand Fingerprints', selectedStaff?.fingerprints_left_path);
     addDoc('Right Hand Fingerprints', selectedStaff?.fingerprints_right_path);
 
+    // Safely parse and add EXTRA documents
+    const extraDocs = safeParseJSON(selectedStaff?.extra_documents_json);
+    extraDocs.forEach(doc => {
+      if (doc?.path) addDoc(doc?.title || 'Additional Document', doc.path);
+    });
+
     const kycStatusHtml = selectedStaff?.kyc_mode !== 'without_aadhaar' 
         ? '<span style="color: #198754; font-weight: bold;">✅ Aadhaar Verified (Digital e-KYC)</span>' 
         : '<span style="color: #dc3545; font-weight: bold;">⚠️ Manual Verification (No e-KYC)</span>';
 
     const eduData = safeParseJSON(selectedStaff?.education_json);
-    let eduHtml = eduData.length > 0 && eduData[0].qualification !== '' 
-        ? `<table><tr><th>Qualification</th><th>Institute</th><th>Year</th><th>Marks</th></tr>` + eduData.map(e => `<tr><td>${e.qualification||'-'}</td><td>${e.institute||'-'}</td><td>${e.year||'-'}</td><td>${e.marks||'-'}</td></tr>`).join('') + `</table>` 
+    let eduHtml = eduData.length > 0 && eduData[0]?.qualification
+        ? `<table><tr><th>Qualification</th><th>Institute</th><th>Year</th><th>Marks</th></tr>` + eduData.map(e => `<tr><td>${e?.qualification||'-'}</td><td>${e?.institute||'-'}</td><td>${e?.year||'-'}</td><td>${e?.marks||'-'}</td></tr>`).join('') + `</table>` 
         : '<p class="text-muted">No education history provided.</p>';
 
     const expData = safeParseJSON(selectedStaff?.experience_json);
-    let expHtml = expData.length > 0 && expData[0].company !== ''
-        ? `<table><tr><th>Company Name</th><th>Designation</th><th>Period</th></tr>` + expData.map(e => `<tr><td>${e.company||'-'}</td><td>${e.designation||'-'}</td><td>${e.period||'-'}</td></tr>`).join('') + `</table>`
+    let expHtml = expData.length > 0 && expData[0]?.company
+        ? `<table><tr><th>Company Name</th><th>Designation</th><th>Period</th></tr>` + expData.map(e => `<tr><td>${e?.company||'-'}</td><td>${e?.designation||'-'}</td><td>${e?.period||'-'}</td></tr>`).join('') + `</table>`
         : '<p class="text-muted">No prior work experience provided.</p>';
 
     const famData = safeParseJSON(selectedStaff?.family_json);
-    let famHtml = famData.length > 0 && famData[0].name !== ''
-        ? `<table><tr><th>Name</th><th>Relationship</th><th>DOB</th></tr>` + famData.map(f => `<tr><td>${f.name||'-'}</td><td>${f.relation||'-'}</td><td>${f.dob||'-'}</td></tr>`).join('') + `</table>`
+    let famHtml = famData.length > 0 && famData[0]?.name
+        ? `<table><tr><th>Name</th><th>Relationship</th><th>DOB</th></tr>` + famData.map(f => `<tr><td>${f?.name||'-'}</td><td>${f?.relation||'-'}</td><td>${f?.dob||'-'}</td></tr>`).join('') + `</table>`
         : '<p class="text-muted">No family details provided.</p>';
 
     printWindow.document.write(`
-        <html><head><title>Dossier_${selectedStaff?.full_name}</title>
+        <html><head><title>Dossier_${selectedStaff?.full_name || 'Employee'}</title>
           <style>
             body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; padding: 30px; color: #333; max-width: 900px; margin: auto; font-size: 14px; }
             h2 { text-align: center; border-bottom: 3px solid #0d6efd; padding-bottom: 10px; margin-bottom: 20px; color: #0d6efd; text-transform: uppercase;}
@@ -265,12 +274,12 @@ const AdminDashboard = () => {
             <div><img src="${selectedStaff?.profile_photo_path || 'https://via.placeholder.com/150'}" class="photo" alt="Profile" /></div>
             <div class="details">
               <table>
-                <tr><th>Full Name</th><td style="font-weight: bold; font-size: 16px;">${selectedStaff?.full_name}</td></tr>
-                <tr><th>System Role</th><td style="text-transform: uppercase; font-weight:bold;">${selectedStaff?.user_type}</td></tr>
+                <tr><th>Full Name</th><td style="font-weight: bold; font-size: 16px;">${selectedStaff?.full_name || 'N/A'}</td></tr>
+                <tr><th>System Role</th><td style="text-transform: uppercase; font-weight:bold;">${selectedStaff?.user_type || 'N/A'}</td></tr>
                 <tr><th>Assigned Dept/Site</th><td>${selectedStaff?.department || 'N/A'} - ${selectedStaff?.unit_name || 'Dynamic'}</td></tr>
-                <tr><th>Designation</th><td>${selectedStaff?.designation}</td></tr>
-                <tr><th>Primary Mobile</th><td>${selectedStaff?.phone_number}</td></tr>
-                <tr><th>Personal Email</th><td>${selectedStaff?.personal_email}</td></tr>
+                <tr><th>Designation</th><td>${selectedStaff?.designation || 'N/A'}</td></tr>
+                <tr><th>Primary Mobile</th><td>${selectedStaff?.phone_number || 'N/A'}</td></tr>
+                <tr><th>Personal Email</th><td>${selectedStaff?.personal_email || 'N/A'}</td></tr>
                 <tr><th>KYC Authenticity</th><td>${kycStatusHtml}</td></tr>
               </table>
             </div>
@@ -335,18 +344,19 @@ const AdminDashboard = () => {
   };
 
   // --- DATA PROCESSING ---
-  const pending = employees.filter(e => !e.is_verified && e.user_type !== 'admin');
-  const verified = employees.filter(e => e.is_verified);
-  const fieldOfficers = verified.filter(e => e.user_type === 'field_officer');
+  const pending = employees.filter(e => !e?.is_verified && e?.user_type !== 'admin');
+  const verified = employees.filter(e => e?.is_verified);
+  const fieldOfficers = verified.filter(e => e?.user_type === 'field_officer');
   
   const groupedReports = fieldReports.reduce((acc, visit) => {
+    if (!visit?.date) return acc;
     if (!acc[visit.date]) acc[visit.date] = [];
     acc[visit.date].push(visit);
     return acc;
   }, {});
 
-  const managerStats = verified.filter(e => e.user_type === 'manager').map(mgr => {
-    const teamSize = verified.filter(emp => emp.manager_id === mgr.id).length;
+  const managerStats = verified.filter(e => e?.user_type === 'manager').map(mgr => {
+    const teamSize = verified.filter(emp => emp?.manager_id === mgr?.id).length;
     return { ...mgr, teamSize };
   });
 
@@ -376,8 +386,8 @@ const AdminDashboard = () => {
           <Row className="mb-4 text-center">
             <Col md={3}><Card className="p-3 shadow-sm border-0"><div className="text-muted small">TOTAL STAFF</div><h4 className="fw-bold"><Users size={20} className="me-2"/>{employees.length}</h4></Card></Col>
             <Col md={3}><Card className="p-3 shadow-sm border-0"><div className="text-muted small text-primary">ASSIGNED SITES</div><h4 className="fw-bold text-primary"><MapPin size={20} className="me-2"/>{locations.length}</h4></Card></Col>
-            <Col md={3}><Card className="p-3 shadow-sm border-0"><div className="text-muted small text-success">PRESENT</div><h4 className="fw-bold text-success"><UserCheck size={20} className="me-2"/>{employees.filter(e => e.is_present).length}</h4></Card></Col>
-            <Col md={3}><Card className="p-3 shadow-sm border-0"><div className="text-muted small text-danger">ABSENT</div><h4 className="fw-bold text-danger"><UserX size={20} className="me-2"/>{employees.filter(e => !e.is_present).length}</h4></Card></Col>
+            <Col md={3}><Card className="p-3 shadow-sm border-0"><div className="text-muted small text-success">PRESENT</div><h4 className="fw-bold text-success"><UserCheck size={20} className="me-2"/>{employees.filter(e => e?.is_present).length}</h4></Card></Col>
+            <Col md={3}><Card className="p-3 shadow-sm border-0"><div className="text-muted small text-danger">ABSENT</div><h4 className="fw-bold text-danger"><UserX size={20} className="me-2"/>{employees.filter(e => !e?.is_present).length}</h4></Card></Col>
           </Row>
 
           <Row>
@@ -413,7 +423,7 @@ const AdminDashboard = () => {
                 <MapContainer center={[22.5726, 88.3639]} zoom={5} style={{ height: '100%' }}>
                   <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
                   
-                  {liveLocations.map(loc => (loc.lat && loc.lon) && (
+                  {liveLocations.map(loc => (loc?.lat && loc?.lon) && (
                     <Marker 
                         key={loc.email} 
                         position={[loc.lat, loc.lon]}
@@ -421,7 +431,7 @@ const AdminDashboard = () => {
                     >
                       <Popup>
                         <div className="text-center">
-                            <strong className="d-block">{loc.name}</strong>
+                            <strong className="d-block">{loc.name || 'Unknown'}</strong>
                             <Badge bg={loc.present ? "success" : "danger"} className="mt-1">
                                 {loc.present ? "In Geofence" : "Outside"}
                             </Badge>
@@ -431,8 +441,8 @@ const AdminDashboard = () => {
                   ))}
                   
                   {locations.map(office => (
-                    <Circle key={office.id} center={[office.lat, office.lon]} radius={office.radius} pathOptions={{ color: 'red', fillColor: 'red', fillOpacity: 0.1 }}>
-                      <Popup>{office.name} Geofence ({office.radius}m)</Popup>
+                    <Circle key={office.id} center={[office.lat, office.lon]} radius={office.radius || 200} pathOptions={{ color: 'red', fillColor: 'red', fillOpacity: 0.1 }}>
+                      <Popup>{office.name} Geofence ({office.radius || 200}m)</Popup>
                     </Circle>
                   ))}
                 </MapContainer>
@@ -449,8 +459,8 @@ const AdminDashboard = () => {
               <tbody>
                 {verified.map(emp => (
                   <tr key={emp.id}>
-                    <td><div className="fw-bold">{emp.full_name}</div><Badge bg="light" text="dark">{emp.blockchain_id || 'Pending'}</Badge></td>
-                    <td className="text-muted">{emp.email}</td>
+                    <td><div className="fw-bold">{emp.full_name || 'N/A'}</div><Badge bg="light" text="dark">{emp.blockchain_id || 'Pending'}</Badge></td>
+                    <td className="text-muted">{emp.email || 'N/A'}</td>
                     
                     <td>
                       <Form.Select size="sm" value={emp.location_id || ''} onChange={e => {
@@ -468,7 +478,7 @@ const AdminDashboard = () => {
                           if (target) { target.manager_id = e.target.value ? parseInt(e.target.value) : null; setEmployees(updated); }
                       }}>
                         <option value="">No Manager</option>
-                        {employees.filter(m => m.user_type === 'manager').map(mgr => (
+                        {employees.filter(m => m?.user_type === 'manager').map(mgr => (
                           <option key={mgr.id} value={mgr.id}>{mgr.full_name}</option>
                         ))}
                       </Form.Select>
@@ -485,7 +495,7 @@ const AdminDashboard = () => {
                                 if (target) { target.shift_end = e.target.value; setEmployees(updated); }
                             }} disabled={emp.user_type === 'field_officer'} />
                         </div>
-                        <Form.Select size="sm" value={emp.user_type} onChange={e => {
+                        <Form.Select size="sm" value={emp.user_type || 'employee'} onChange={e => {
                             const updated = [...employees]; const target = updated.find(u => u.id === emp.id);
                             if (target) { target.user_type = e.target.value; setEmployees(updated); }
                         }}>
@@ -516,121 +526,121 @@ const AdminDashboard = () => {
         {/* ========================================== */}
         <Tab eventKey="reports" title={<span className="fw-bold px-3">Reports & Field Operations</span>}>
             
-            <div className="p-3 bg-light border-bottom d-flex flex-wrap gap-4 align-items-center">
-              <h5 className="mb-0 fw-bold d-flex align-items-center text-primary"><Filter className="me-2" /> Report Filters</h5>
-              
-              <div className="d-flex gap-2 align-items-center border-start ps-4">
-                <span className="small fw-bold text-muted text-uppercase">Month/Year:</span>
-                <Form.Select size="sm" value={reportMonth} onChange={e => setReportMonth(e.target.value)} style={{width: '130px'}}>
-                  {[...Array(12)].map((_, i) => (
-                    <option key={i+1} value={i+1}>{new Date(0, i).toLocaleString('en', { month: 'long' })}</option>
-                  ))}
-                </Form.Select>
-                <Form.Select size="sm" value={reportYear} onChange={e => setReportYear(e.target.value)} style={{width: '90px'}}>
-                  <option value="2026">2026</option>
-                  <option value="2027">2027</option>
-                </Form.Select>
-              </div>
-
-              <div className="d-flex gap-2 align-items-center border-start ps-4">
-                <span className="small fw-bold text-muted text-uppercase">Specific Data:</span>
-                <Form.Select size="sm" value={filterOfficer} onChange={e => setFilterOfficer(e.target.value)} style={{width: '150px'}}>
-                  <option value="">All Officers</option>
-                  {fieldOfficers.map(o => <option key={o.id} value={o.id}>{o.full_name}</option>)}
-                </Form.Select>
-                <Form.Select size="sm" value={filterSite} onChange={e => setFilterSite(e.target.value)} style={{width: '150px'}}>
-                  <option value="">All Sites</option>
-                  {locations.map(loc => <option key={loc.id} value={loc.id}>{loc.name}</option>)}
-                </Form.Select>
-              </div>
+          <div className="p-3 bg-light border-bottom d-flex flex-wrap gap-4 align-items-center">
+            <h5 className="mb-0 fw-bold d-flex align-items-center text-primary"><Filter className="me-2" /> Report Filters</h5>
+            
+            <div className="d-flex gap-2 align-items-center border-start ps-4">
+              <span className="small fw-bold text-muted text-uppercase">Month/Year:</span>
+              <Form.Select size="sm" value={reportMonth} onChange={e => setReportMonth(e.target.value)} style={{width: '130px'}}>
+                {[...Array(12)].map((_, i) => (
+                  <option key={i+1} value={i+1}>{new Date(0, i).toLocaleString('en', { month: 'long' })}</option>
+                ))}
+              </Form.Select>
+              <Form.Select size="sm" value={reportYear} onChange={e => setReportYear(e.target.value)} style={{width: '90px'}}>
+                <option value="2026">2026</option>
+                <option value="2027">2027</option>
+              </Form.Select>
             </div>
 
-            <div className="p-4">
-                <Row className="mb-4">
-                  <Col md={12}>
-                    <Card className="border-0 shadow-sm">
-                      <Card.Header className="bg-white py-3"><h6 className="m-0 fw-bold d-flex align-items-center"><Briefcase size={18} className="me-2 text-warning"/> Manager Team Summaries</h6></Card.Header>
-                      <Table responsive hover className="align-middle mb-0 small">
-                        <thead className="table-light"><tr><th>Manager Name</th><th>Department</th><th>Total Employees Managed</th><th>Live Presence</th></tr></thead>
-                        <tbody>
-                          {managerStats.length === 0 ? <tr><td colSpan="4" className="text-center py-3 text-muted">No managers found.</td></tr> :
-                           managerStats.map(mgr => (
-                             <tr key={mgr.id}>
-                               <td className="fw-bold">{mgr.full_name}</td>
-                               <td><Badge bg="secondary">{mgr.department || 'General'}</Badge></td>
-                               <td><h5 className="m-0 fw-bold">{mgr.teamSize} <Users size={16} className="ms-1 text-muted"/></h5></td>
-                               <td><Badge bg={mgr.is_present ? "success" : "danger"}>{mgr.is_present ? "On Duty" : "Offline"}</Badge></td>
-                             </tr>
-                           ))}
-                        </tbody>
-                      </Table>
-                    </Card>
-                  </Col>
-                </Row>
+            <div className="d-flex gap-2 align-items-center border-start ps-4">
+              <span className="small fw-bold text-muted text-uppercase">Specific Data:</span>
+              <Form.Select size="sm" value={filterOfficer} onChange={e => setFilterOfficer(e.target.value)} style={{width: '150px'}}>
+                <option value="">All Officers</option>
+                {fieldOfficers.map(o => <option key={o.id} value={o.id}>{o.full_name}</option>)}
+              </Form.Select>
+              <Form.Select size="sm" value={filterSite} onChange={e => setFilterSite(e.target.value)} style={{width: '150px'}}>
+                <option value="">All Sites</option>
+                {locations.map(loc => <option key={loc.id} value={loc.id}>{loc.name}</option>)}
+              </Form.Select>
+            </div>
+          </div>
 
-                <Card className="border-0 shadow-sm mb-4">
-                  <Card.Header className="bg-dark text-white p-3 d-flex justify-content-between align-items-center">
-                    <h6 className="mb-0 fw-bold d-flex align-items-center"><MapPin className="me-2 text-danger" size={18}/> Field Officer Site Visits</h6>
-                    <Button variant="light" size="sm" className="fw-bold text-dark d-flex align-items-center" onClick={downloadExcelWithPhotos} disabled={fieldReports.length === 0}>
-                      <Download size={14} className="me-2 text-success"/> Download Excel (With Photos)
-                    </Button>
-                  </Card.Header>
-                  <Card.Body className="p-0">
-                    {reportsLoading ? (
-                      <div className="text-center py-5"><Spinner variant="primary" animation="border" /></div>
-                    ) : fieldReports.length === 0 ? (
-                      <div className="text-center py-5 text-muted">No field visits recorded matching these filters.</div>
-                    ) : (
-                      <div className="accordion accordion-flush" id="reportAccordion">
-                        {Object.keys(groupedReports).map((dateStr, index) => (
-                          <div className="accordion-item border-bottom" key={dateStr}>
-                            <h2 className="accordion-header">
-                              <button className="accordion-button bg-light fw-bold" type="button" data-bs-toggle="collapse" data-bs-target={`#collapse${index}`}>
-                                <Calendar size={16} className="me-2 text-primary"/>
-                                {new Date(dateStr).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
-                                <Badge bg="primary" className="ms-3">{groupedReports[dateStr].length} Visits</Badge>
-                              </button>
-                            </h2>
-                            <div id={`collapse${index}`} className="accordion-collapse collapse show">
-                              <div className="accordion-body p-0">
-                                <Table hover responsive className="mb-0 align-middle small">
-                                  <thead className="table-secondary">
-                                    <tr>
-                                      <th>Photo Time</th><th>Officer</th><th>Site</th><th>Entry</th><th>Exit</th>
-                                      <th>Duration</th><th>Purpose</th><th>Remarks</th><th>Evidence</th>
+          <div className="p-4">
+              <Row className="mb-4">
+                <Col md={12}>
+                  <Card className="border-0 shadow-sm">
+                    <Card.Header className="bg-white py-3"><h6 className="m-0 fw-bold d-flex align-items-center"><Briefcase size={18} className="me-2 text-warning"/> Manager Team Summaries</h6></Card.Header>
+                    <Table responsive hover className="align-middle mb-0 small">
+                      <thead className="table-light"><tr><th>Manager Name</th><th>Department</th><th>Total Employees Managed</th><th>Live Presence</th></tr></thead>
+                      <tbody>
+                        {managerStats.length === 0 ? <tr><td colSpan="4" className="text-center py-3 text-muted">No managers found.</td></tr> :
+                         managerStats.map(mgr => (
+                           <tr key={mgr.id}>
+                             <td className="fw-bold">{mgr.full_name || 'N/A'}</td>
+                             <td><Badge bg="secondary">{mgr.department || 'General'}</Badge></td>
+                             <td><h5 className="m-0 fw-bold">{mgr.teamSize || 0} <Users size={16} className="ms-1 text-muted"/></h5></td>
+                             <td><Badge bg={mgr.is_present ? "success" : "danger"}>{mgr.is_present ? "On Duty" : "Offline"}</Badge></td>
+                           </tr>
+                         ))}
+                      </tbody>
+                    </Table>
+                  </Card>
+                </Col>
+              </Row>
+
+              <Card className="border-0 shadow-sm mb-4">
+                <Card.Header className="bg-dark text-white p-3 d-flex justify-content-between align-items-center">
+                  <h6 className="mb-0 fw-bold d-flex align-items-center"><MapPin className="me-2 text-danger" size={18}/> Field Officer Site Visits</h6>
+                  <Button variant="light" size="sm" className="fw-bold text-dark d-flex align-items-center" onClick={downloadExcelWithPhotos} disabled={fieldReports.length === 0}>
+                    <Download size={14} className="me-2 text-success"/> Download Excel (With Photos)
+                  </Button>
+                </Card.Header>
+                <Card.Body className="p-0">
+                  {reportsLoading ? (
+                    <div className="text-center py-5"><Spinner variant="primary" animation="border" /></div>
+                  ) : fieldReports.length === 0 ? (
+                    <div className="text-center py-5 text-muted">No field visits recorded matching these filters.</div>
+                  ) : (
+                    <div className="accordion accordion-flush" id="reportAccordion">
+                      {Object.keys(groupedReports).map((dateStr, index) => (
+                        <div className="accordion-item border-bottom" key={dateStr}>
+                          <h2 className="accordion-header">
+                            <button className="accordion-button bg-light fw-bold" type="button" data-bs-toggle="collapse" data-bs-target={`#collapse${index}`}>
+                              <Calendar size={16} className="me-2 text-primary"/>
+                              {new Date(dateStr).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+                              <Badge bg="primary" className="ms-3">{groupedReports[dateStr].length} Visits</Badge>
+                            </button>
+                          </h2>
+                          <div id={`collapse${index}`} className="accordion-collapse collapse show">
+                            <div className="accordion-body p-0">
+                              <Table hover responsive className="mb-0 align-middle small">
+                                <thead className="table-secondary">
+                                  <tr>
+                                    <th>Photo Time</th><th>Officer</th><th>Site</th><th>Entry</th><th>Exit</th>
+                                    <th>Duration</th><th>Purpose</th><th>Remarks</th><th>Evidence</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {groupedReports[dateStr].map(visit => (
+                                    <tr key={visit.visit_id}>
+                                      <td className="fw-bold text-nowrap">{visit.time || 'N/A'}</td>
+                                      <td><span className="text-muted d-block" style={{fontSize:'0.7rem'}}>{visit.officer_id || 'N/A'}</span>{visit.officer_name || 'N/A'}</td>
+                                      <td><MapPin size={12} className="me-1 text-danger"/>{visit.site_name || 'N/A'}</td>
+                                      <td className="text-success fw-bold text-nowrap">{visit.entry_time || 'N/A'}</td>
+                                      <td className={visit.exit_time === 'Active' ? 'text-primary fw-bold text-nowrap' : 'text-danger fw-bold text-nowrap'}>{visit.exit_time || 'N/A'}</td>
+                                      <td>
+                                        <Badge bg={visit.duration === 'In Progress' ? 'primary' : 'secondary'} className="text-nowrap">{visit.duration || 'N/A'}</Badge>
+                                      </td>
+                                      <td><Badge bg="dark">{visit.purpose || 'N/A'}</Badge></td>
+                                      <td style={{ maxWidth: '200px' }} className="text-truncate" title={visit.remarks}>{visit.remarks || '-'}</td>
+                                      <td>
+                                        <Button variant="outline-secondary" size="sm" onClick={() => setPhotoPreview(visit.photo)} disabled={!visit.photo}>
+                                          <ImageIcon size={14} className="me-1"/> View Photo
+                                        </Button>
+                                      </td>
                                     </tr>
-                                  </thead>
-                                  <tbody>
-                                    {groupedReports[dateStr].map(visit => (
-                                      <tr key={visit.visit_id}>
-                                        <td className="fw-bold text-nowrap">{visit.time}</td>
-                                        <td><span className="text-muted d-block" style={{fontSize:'0.7rem'}}>{visit.officer_id}</span>{visit.officer_name}</td>
-                                        <td><MapPin size={12} className="me-1 text-danger"/>{visit.site_name}</td>
-                                        <td className="text-success fw-bold text-nowrap">{visit.entry_time}</td>
-                                        <td className={visit.exit_time === 'Active' ? 'text-primary fw-bold text-nowrap' : 'text-danger fw-bold text-nowrap'}>{visit.exit_time}</td>
-                                        <td>
-                                          <Badge bg={visit.duration === 'In Progress' ? 'primary' : 'secondary'} className="text-nowrap">{visit.duration}</Badge>
-                                        </td>
-                                        <td><Badge bg="dark">{visit.purpose}</Badge></td>
-                                        <td style={{ maxWidth: '200px' }} className="text-truncate" title={visit.remarks}>{visit.remarks || '-'}</td>
-                                        <td>
-                                          <Button variant="outline-secondary" size="sm" onClick={() => setPhotoPreview(visit.photo)}>
-                                            <ImageIcon size={14} className="me-1"/> View Photo
-                                          </Button>
-                                        </td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </Table>
-                              </div>
+                                  ))}
+                                </tbody>
+                              </Table>
                             </div>
                           </div>
-                        ))}
-                      </div>
-                    )}
-                  </Card.Body>
-                </Card>
-            </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </Card.Body>
+              </Card>
+          </div>
         </Tab>
       </Tabs>
 
@@ -644,9 +654,9 @@ const AdminDashboard = () => {
            pending.map(p => (
             <div key={p.id} className="p-3 border-bottom d-flex justify-content-between align-items-center bg-white">
               <div>
-                <h6 className="mb-0 fw-bold">{p.full_name}</h6>
-                <small className="text-muted">{p.personal_email}</small>
-                {p.kyc_mode !== 'without_aadhaar' && <Badge bg="success" className="ms-2" style={{fontSize:'0.65rem'}}>Aadhaar Verified</Badge>}
+                <h6 className="mb-0 fw-bold">{p?.full_name || 'N/A'}</h6>
+                <small className="text-muted">{p?.personal_email || 'N/A'}</small>
+                {p?.kyc_mode !== 'without_aadhaar' && <Badge bg="success" className="ms-2" style={{fontSize:'0.65rem'}}>Aadhaar Verified</Badge>}
               </div>
               <Button variant="danger" size="sm" onClick={() => { setSelectedStaff(p); setShowNotif(false); }}>REVIEW</Button>
             </div>
@@ -657,7 +667,7 @@ const AdminDashboard = () => {
       {/* COMPREHENSIVE EMPLOYEE PROFILE MODAL */}
       <Modal show={!!selectedStaff} onHide={() => setSelectedStaff(null)} size="xl" centered>
         <Modal.Header closeButton className="bg-dark text-white d-flex justify-content-between align-items-center w-100">
-          <Modal.Title className="h6 mb-0">Employee Profile: {selectedStaff?.full_name}</Modal.Title>
+          <Modal.Title className="h6 mb-0">Employee Profile: {selectedStaff?.full_name || 'Unknown'}</Modal.Title>
           <Button variant="outline-light" size="sm" className="fw-bold ms-auto me-3 d-flex align-items-center" onClick={handlePrintProfile}>
             <FileText size={16} className="me-2"/> Download Complete Dossier (PDF)
           </Button>
@@ -669,13 +679,13 @@ const AdminDashboard = () => {
             <Col md={3}>
               <Card className="p-3 shadow-sm border-0 mb-3 text-center">
                 <img src={selectedStaff?.profile_photo_path || "https://via.placeholder.com/150"} alt="Profile" className="img-fluid rounded-circle mb-3 mx-auto" style={{width: '130px', height: '130px', objectFit: 'cover', border: '3px solid #0d6efd'}} />
-                <h5 className="fw-bold mb-1">{selectedStaff?.full_name}</h5>
-                <Badge bg="primary" className="mb-3">{selectedStaff?.designation}</Badge>
+                <h5 className="fw-bold mb-1">{selectedStaff?.full_name || 'N/A'}</h5>
+                <Badge bg="primary" className="mb-3">{selectedStaff?.designation || 'N/A'}</Badge>
                 
                 <div className="text-start small mb-4">
-                    <p className="mb-1"><strong className="text-muted">Phone:</strong> {selectedStaff?.phone_number}</p>
-                    <p className="mb-1"><strong className="text-muted">DOB:</strong> {selectedStaff?.dob}</p>
-                    <p className="mb-1"><strong className="text-muted">Email:</strong> {selectedStaff?.personal_email}</p>
+                    <p className="mb-1"><strong className="text-muted">Phone:</strong> {selectedStaff?.phone_number || 'N/A'}</p>
+                    <p className="mb-1"><strong className="text-muted">DOB:</strong> {selectedStaff?.dob || 'N/A'}</p>
+                    <p className="mb-1"><strong className="text-muted">Email:</strong> {selectedStaff?.personal_email || 'N/A'}</p>
                     <p className="mb-1"><strong className="text-muted">Blood:</strong> <Badge bg="danger">{selectedStaff?.blood_group || 'N/A'}</Badge></p>
                 </div>
                 
@@ -739,7 +749,7 @@ const AdminDashboard = () => {
                     <Tab eventKey="work" title="Work & Bank">
                         <h6 className="fw-bold border-bottom pb-2 mb-3 text-primary mt-2">Work Allocation</h6>
                         <Row>
-                            <Col sm={4} className="mb-3"><small className="text-muted d-block text-uppercase fw-bold">System Role</small><Badge bg="dark">{selectedStaff?.user_type}</Badge></Col>
+                            <Col sm={4} className="mb-3"><small className="text-muted d-block text-uppercase fw-bold">System Role</small><Badge bg="dark">{selectedStaff?.user_type || 'N/A'}</Badge></Col>
                             <Col sm={4} className="mb-3"><small className="text-muted d-block text-uppercase fw-bold">Department</small><span>{selectedStaff?.department || 'N/A'}</span></Col>
                             <Col sm={4} className="mb-3"><small className="text-muted d-block text-uppercase fw-bold">Unit / Site</small><span>{selectedStaff?.unit_name || 'N/A'}</span></Col>
                             <Col sm={4} className="mb-3"><small className="text-muted d-block text-uppercase fw-bold">Shift Timings</small><span>{selectedStaff?.shift_start ? `${selectedStaff.shift_start} to ${selectedStaff.shift_end}` : 'Dynamic/N/A'}</span></Col>
@@ -762,7 +772,7 @@ const AdminDashboard = () => {
                             <thead className="table-light"><tr><th>Qualification</th><th>Institute</th><th>Year</th><th>Marks</th></tr></thead>
                             <tbody>
                                 {safeParseJSON(selectedStaff?.education_json).map((edu, i) => (
-                                    <tr key={i}><td>{edu.qualification || '-'}</td><td>{edu.institute || '-'}</td><td>{edu.year || '-'}</td><td>{edu.marks || '-'}</td></tr>
+                                    <tr key={i}><td>{edu?.qualification || '-'}</td><td>{edu?.institute || '-'}</td><td>{edu?.year || '-'}</td><td>{edu?.marks || '-'}</td></tr>
                                 ))}
                             </tbody>
                         </Table>
@@ -772,7 +782,7 @@ const AdminDashboard = () => {
                             <thead className="table-light"><tr><th>Company</th><th>Designation</th><th>Period</th></tr></thead>
                             <tbody>
                                 {safeParseJSON(selectedStaff?.experience_json).map((exp, i) => (
-                                    <tr key={i}><td>{exp.company || '-'}</td><td>{exp.designation || '-'}</td><td>{exp.period || '-'}</td></tr>
+                                    <tr key={i}><td>{exp?.company || '-'}</td><td>{exp?.designation || '-'}</td><td>{exp?.period || '-'}</td></tr>
                                 ))}
                             </tbody>
                         </Table>
@@ -782,7 +792,7 @@ const AdminDashboard = () => {
                             <thead className="table-light"><tr><th>Name</th><th>Relation</th><th>DOB</th></tr></thead>
                             <tbody>
                                 {safeParseJSON(selectedStaff?.family_json).map((fam, i) => (
-                                    <tr key={i}><td>{fam.name || '-'}</td><td>{fam.relation || '-'}</td><td>{fam.dob || '-'}</td></tr>
+                                    <tr key={i}><td>{fam?.name || '-'}</td><td>{fam?.relation || '-'}</td><td>{fam?.dob || '-'}</td></tr>
                                 ))}
                             </tbody>
                         </Table>
@@ -853,6 +863,17 @@ const AdminDashboard = () => {
                                     <img src={selectedStaff.fingerprints_right_path} alt="Right FP" className="img-thumbnail" style={{maxHeight: '180px'}} />
                                 </Col>
                             )}
+                            
+                            {/* NEW: EXTRA DOCUMENTS RENDERER */}
+                            {safeParseJSON(selectedStaff?.extra_documents_json).map((doc, idx) => (
+                                doc?.path && (
+                                    <Col md={6} className="mb-3 text-center" key={idx}>
+                                        <small className="text-muted fw-bold d-block mb-1">{doc?.title || 'Additional Document'}</small>
+                                        <img src={doc.path} alt={doc?.title || 'Doc'} className="img-thumbnail" style={{maxHeight: '180px'}} />
+                                    </Col>
+                                )
+                            ))}
+
                         </Row>
                     </Tab>
 
@@ -877,12 +898,12 @@ const AdminDashboard = () => {
           <Modal.Body>
               {editingLoc && (
                   <Form onSubmit={handleUpdateBranch}>
-                      <Form.Group className="mb-2"><Form.Label className="small fw-bold">Branch Name</Form.Label><Form.Control size="sm" value={editingLoc.name} onChange={e => setEditingLoc({...editingLoc, name: e.target.value})} required /></Form.Group>
+                      <Form.Group className="mb-2"><Form.Label className="small fw-bold">Branch Name</Form.Label><Form.Control size="sm" value={editingLoc?.name || ''} onChange={e => setEditingLoc({...editingLoc, name: e.target.value})} required /></Form.Group>
                       <Row>
-                          <Col><Form.Group className="mb-2"><Form.Label className="small fw-bold">Latitude</Form.Label><Form.Control size="sm" value={editingLoc.lat} onChange={e => setEditingLoc({...editingLoc, lat: e.target.value})} required /></Form.Group></Col>
-                          <Col><Form.Group className="mb-2"><Form.Label className="small fw-bold">Longitude</Form.Label><Form.Control size="sm" value={editingLoc.lon} onChange={e => setEditingLoc({...editingLoc, lon: e.target.value})} required /></Form.Group></Col>
+                          <Col><Form.Group className="mb-2"><Form.Label className="small fw-bold">Latitude</Form.Label><Form.Control size="sm" value={editingLoc?.lat || ''} onChange={e => setEditingLoc({...editingLoc, lat: e.target.value})} required /></Form.Group></Col>
+                          <Col><Form.Group className="mb-2"><Form.Label className="small fw-bold">Longitude</Form.Label><Form.Control size="sm" value={editingLoc?.lon || ''} onChange={e => setEditingLoc({...editingLoc, lon: e.target.value})} required /></Form.Group></Col>
                       </Row>
-                      <Form.Group className="mb-4"><Form.Label className="small fw-bold">Radius (meters)</Form.Label><Form.Control size="sm" type="number" value={editingLoc.radius} onChange={e => setEditingLoc({...editingLoc, radius: e.target.value})} required /></Form.Group>
+                      <Form.Group className="mb-4"><Form.Label className="small fw-bold">Radius (meters)</Form.Label><Form.Control size="sm" type="number" value={editingLoc?.radius || 200} onChange={e => setEditingLoc({...editingLoc, radius: e.target.value})} required /></Form.Group>
                       <Button type="submit" variant="primary" size="sm" className="w-100 fw-bold">UPDATE BRANCH</Button>
                   </Form>
               )}
