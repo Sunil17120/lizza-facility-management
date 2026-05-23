@@ -55,6 +55,9 @@ class LocationCreate(BaseModel):
     lon: float
     radius: int
 
+class CheckAction(BaseModel):
+    email: str
+
 # --- HELPERS ---
 def get_db():
     db = SessionLocal()
@@ -427,7 +430,8 @@ def get_my_visits(email: str, db: Session = Depends(get_db)):
 
 @app.get("/api/admin/reports/monthly-field-visits")
 def get_monthly_field_visits(
-    month: int, year: int, officer_id: Optional[int] = None, location_id: Optional[int] = None, db: Session = Depends(get_db)
+    month: int, year: int, officer_id: Optional[int] = None, location_id: Optional[int] = None,
+    user_type: Optional[str] = None, db: Session = Depends(get_db)
 ):
     _, last_day = calendar.monthrange(year, month)
     start_utc = datetime(year, month, 1, 0, 0, 0) - timedelta(hours=5, minutes=30)
@@ -437,6 +441,7 @@ def get_monthly_field_visits(
     query = query.filter(SiteVisit.visit_time >= start_utc, SiteVisit.visit_time <= end_utc)
     if officer_id: query = query.filter(SiteVisit.officer_id == officer_id)
     if location_id: query = query.filter(SiteVisit.location_id == location_id)
+    if user_type: query = query.filter(User.user_type == user_type)
     
     results = query.order_by(SiteVisit.visit_time.asc()).all()
     report_data = []
@@ -572,6 +577,73 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
                 return {"is_inside": False, "status": "warning", "warning_seconds": remaining}
     
     return {"is_inside": False, "status": "outside", "message": "Outside Geofence"}
+
+
+@app.post("/api/user/checkin")
+def user_checkin(data: CheckAction, db: Session = Depends(get_db)):
+    email = data.email.lower().strip()
+    user = db.query(User).filter(User.email == email).first()
+    if not user: raise HTTPException(404, "User not found")
+
+    # try to validate last known location from redis
+    coords = r.get(f"loc:{email}") if r else None
+    office = db.query(OfficeLocation).filter(OfficeLocation.id == user.location_id).first() if user.location_id else None
+    if office and coords:
+        try:
+            parts = coords.split(',')
+            lat, lon = float(parts[0]), float(parts[1])
+            distance = get_distance(lat, lon, office.lat, office.lon)
+            if distance > office.radius:
+                raise HTTPException(400, f"Geofence validation failed. You are {int(distance)}m away.")
+        except HTTPException: raise
+        except Exception:
+            pass
+
+    now_utc = datetime.utcnow()
+    active = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
+    if active:
+        return {"status": "success", "message": "Already checked in."}
+
+    stay = SiteStay(officer_id=user.id, location_id=office.id if office else None, entry_time=now_utc)
+    user.is_present = True
+    db.add(stay)
+    # create attendance record
+    try:
+        from .database import Attendance
+    except ImportError:
+        from database import Attendance
+    attendance = Attendance(user_id=user.id, checkin_time=now_utc, date=now_utc)
+    db.add(attendance)
+    db.commit()
+    return {"status": "success", "message": "Checked In", "updated_user": {"id": user.id, "email": user.email, "is_present": user.is_present, "shift_start": user.shift_start, "shift_end": user.shift_end, "location_id": user.location_id, "blockchain_id": user.blockchain_id}}
+
+
+@app.post("/api/user/checkout")
+def user_checkout(data: CheckAction, db: Session = Depends(get_db)):
+    email = data.email.lower().strip()
+    user = db.query(User).filter(User.email == email).first()
+    if not user: raise HTTPException(404, "User not found")
+
+    now_utc = datetime.utcnow()
+    active = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
+    if not active:
+        return {"status": "error", "detail": "No active check-in found."}
+
+    active.exit_time = now_utc
+    duration_seconds = int((active.exit_time - active.entry_time).total_seconds()) if active.entry_time else 0
+    user.is_present = False
+    # update latest attendance row
+    try:
+        from .database import Attendance
+    except ImportError:
+        from database import Attendance
+    att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).order_by(Attendance.checkin_time.desc()).first()
+    if att:
+        att.checkout_time = now_utc
+        att.duration_seconds = duration_seconds
+    db.commit()
+
+    return {"status": "success", "message": "Checked Out", "duration_seconds": duration_seconds, "updated_user": {"id": user.id, "email": user.email, "is_present": user.is_present, "shift_start": user.shift_start, "shift_end": user.shift_end, "location_id": user.location_id, "blockchain_id": user.blockchain_id}}
 
 # --- e-KYC EXTRACTION ---
 @app.post("/api/manager/extract-ekyc")
