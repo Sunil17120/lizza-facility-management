@@ -213,7 +213,7 @@ const FieldOfficerDashboard = () => {
                       <Form.Select size="sm" value={purpose} onChange={e => setPurpose(e.target.value)} required>
                         <option value="">Select Purpose...</option>
                         <option value="Inspection">Site visit</option>
-                        <option value="Maintenance">Training</option>
+                        <option value="Training">Training</option>
                         <option value="Client Meeting">Client Meeting</option>
                         <option value="Delivery/Pickup">Attendance</option>
                         <option value="Bill Submission">Bill Submission</option>
