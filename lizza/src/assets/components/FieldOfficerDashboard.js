@@ -1,7 +1,7 @@
 // Build trigger IST 2026-04-10
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Container, Card, Row, Col, Badge, Form, Button, Alert, Spinner, Table } from 'react-bootstrap';
-import { MapPin, Camera, Navigation, UserPlus, CheckCircle, FileText, Map as MapIcon } from 'lucide-react';
+import { MapPin, Camera, Navigation, UserPlus, CheckCircle, FileText, Map as MapIcon, LogIn, LogOut } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 import EmployeeOnboardForm from './EmployeeOnboardForm'; 
 
@@ -129,6 +129,33 @@ const FieldOfficerDashboard = () => {
     }
   }, [processNewLocation]);
 
+  // --- NEW: MANUAL SYNC (CHECK IN / CHECK OUT) ---
+  const handleManualSync = async (type) => {
+    if (!activeSite || !myLoc) return alert("Geofence error: You must be inside the site boundary.");
+    setIsSubmitting(true);
+    
+    const formData = new FormData();
+    formData.append('email', userEmail);
+    formData.append('location_id', activeSite.id);
+    formData.append('type', type);
+    formData.append('lat', myLoc.lat);
+    formData.append('lon', myLoc.lon);
+
+    try {
+      const res = await fetch('/api/field-officer/manual-sync', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (res.ok) {
+        setAlertMsg({ type: 'success', text: `Successfully Checked ${type === 'in' ? 'In' : 'Out'} at ${new Date().toLocaleTimeString()}` });
+        fetchData();
+      } else {
+        setAlertMsg({ type: 'danger', text: data.detail || `Failed to check ${type}.` });
+      }
+    } catch (err) {
+      setAlertMsg({ type: 'danger', text: 'Network error submitting manual sync.' });
+    }
+    setIsSubmitting(false);
+  };
+
   const handleVisitSubmit = async (e) => {
     e.preventDefault();
     if (!photo) return alert("You must capture a geotagged photo to log the visit.");
@@ -197,15 +224,27 @@ const FieldOfficerDashboard = () => {
                 </h5>
                 
                 {activeSite ? (
-                  <Alert variant="success" className="d-flex align-items-center fw-bold mb-0">
-                    <CheckCircle className="me-2"/> At Site: {activeSite.name}
-                  </Alert>
+                  <>
+                    <Alert variant="success" className="d-flex align-items-center fw-bold mb-3">
+                      <CheckCircle className="me-2"/> At Site: {activeSite.name}
+                    </Alert>
+                    
+                    {/* NEW: MANUAL SYNC BUTTONS */}
+                    <div className="d-flex gap-2 mb-3">
+                      <Button variant="success" className="w-50 fw-bold d-flex align-items-center justify-content-center" disabled={!activeSite || isSubmitting} onClick={() => handleManualSync('in')}>
+                        <LogIn className="me-2" size={16}/> Check In
+                      </Button>
+                      <Button variant="danger" className="w-50 fw-bold d-flex align-items-center justify-content-center" disabled={!activeSite || isSubmitting} onClick={() => handleManualSync('out')}>
+                        <LogOut className="me-2" size={16}/> Check Out
+                      </Button>
+                    </div>
+                  </>
                 ) : (
                   <Alert variant="warning" className="mb-0">Searching for nearby sites... Drive to a geofence to log a visit.</Alert>
                 )}
 
                 {activeSite && (
-                  <Form onSubmit={handleVisitSubmit} className="mt-4 border-top pt-3">
+                  <Form onSubmit={handleVisitSubmit} className="mt-2 border-top pt-3">
                     <h6 className="fw-bold mb-3"><FileText className="me-2" size={18}/>Log Visit Report</h6>
                     {alertMsg && <Alert variant={alertMsg.type} className="small">{alertMsg.text}</Alert>}
                     

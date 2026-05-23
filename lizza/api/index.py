@@ -472,6 +472,40 @@ def get_monthly_field_visits(
             "photo": v.photo_path, "excel_photo": f'=IMAGE("{v.photo_path}", "Visit Photo", 0)' if v.photo_path else "No Photo"
         })
     return report_data
+@app.post("/api/field-officer/manual-sync")
+async def manual_sync(
+    email: str = Form(...), location_id: int = Form(...), type: str = Form(...), 
+    lat: float = Form(...), lon: float = Form(...), db: Session = Depends(get_db)
+):
+    user = db.query(User).filter(User.email == email.lower().strip()).first()
+    if not user or user.user_type != 'field_officer': raise HTTPException(403, "Unauthorized")
+    
+    site = db.query(OfficeLocation).filter(OfficeLocation.id == location_id).first()
+    if not site: raise HTTPException(404, "Site not found")
+
+    # Double-check geofence server-side for security
+    distance = get_distance(lat, lon, site.lat, site.lon)
+    if distance > site.radius: raise HTTPException(400, f"Validation failed. You are outside the {site.radius}m geofence.")
+
+    now_utc = datetime.utcnow()
+    active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
+
+    if type == 'in':
+        if not active_stay or active_stay.location_id != site.id:
+            if active_stay: active_stay.exit_time = now_utc
+            db.add(SiteStay(officer_id=user.id, location_id=site.id, entry_time=now_utc))
+            db.commit()
+            return {"status": "success", "message": "Manual Check-In recorded."}
+        return {"status": "success", "message": "Already checked in."}
+
+    elif type == 'out':
+        if active_stay and active_stay.location_id == site.id:
+            active_stay.exit_time = now_utc
+            db.commit()
+            return {"status": "success", "message": "Manual Check-Out recorded."}
+        return {"status": "error", "detail": "No active check-in found at this location."}
+        
+    raise HTTPException(400, "Invalid sync type")
 
 # --- USER & LOCATION TRACKING ---
 @app.post("/api/user/update-location")
