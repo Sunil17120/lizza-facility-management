@@ -44,38 +44,17 @@ const UserDashboard = () => {
       const res = await fetch(`/api/user/update-location?email=${userEmail}&lat=${lat}&lon=${lon}`, { method: 'POST' });
       const data = await res.json();
 
-      if (data.status === 'off_duty') {
-        // Handle the new privacy barrier!
+      if (data.is_inside) {
         setViolationTime(null);
-        setStatus({ type: 'secondary', msg: 'Location Tracking Paused (Off Duty)', code: 'off_duty' });
-      }
-      else if (data.status === 'warning') { 
-        setViolationTime(data.warning_seconds); 
-        setStatus({ type: 'danger', msg: `OUT OF BOUNDS! Return in ${data.warning_seconds}s`, code: 'warning' }); 
-      } 
-      else if (data.status === 'violation') { 
-        setViolationTime(0); 
-        setStatus({ type: 'danger', msg: 'MARKED ABSENT (VIOLATION)', code: 'violation' }); 
-      }
-      else if (data.is_inside) { 
-        setViolationTime(null); 
-        setStatus({ type: 'success', msg: data.message || 'Inside Geofence', code: 'inside' }); 
-      } 
-      else { 
-        setViolationTime(null); 
-        setStatus({ type: 'warning', msg: 'Outside Geofence', code: 'outside' }); 
+        setStatus({ type: 'success', msg: data.message || 'Inside Geofence', code: 'inside' });
+      } else {
+        setViolationTime(null);
+        setStatus({ type: 'warning', msg: 'Outside Geofence', code: 'outside' });
       }
     } catch (err) {
       setStatus({ type: 'danger', msg: 'Sync Error', code: 'error' });
     }
   }, [userEmail]);
-
-  const handleManualSync = () => {
-    if (!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition((pos) => {
-      syncLocation(pos.coords.latitude, pos.coords.longitude);
-    });
-  };
 
   const handleCheckIn = async () => {
     if (actionLoading || status.code !== 'inside') return;
@@ -122,7 +101,7 @@ const UserDashboard = () => {
       const data = await res.json();
       if (res.ok) {
         setCheckedIn(false);
-        setStatus({ type: 'secondary', msg: data.message || 'Checked Out (Off Duty)', code: 'off_duty' });
+        setStatus({ type: 'secondary', msg: data.message || 'Checked Out', code: 'outside' });
         if (data.updated_user) setDbUser(data.updated_user);
       } else {
         setStatus({ type: 'danger', msg: data.detail || data.message || 'Check-out failed', code: 'error' });
@@ -223,7 +202,7 @@ const UserDashboard = () => {
                 </div>
               </div>
 
-              <div className="d-flex gap-2 mb-3">
+                    <div className="d-flex gap-2 mb-3">
                 <Button variant="success" className="fw-bold flex-fill d-flex align-items-center justify-content-center" onClick={handleCheckIn} disabled={status.code !== 'inside' || checkedIn || actionLoading}>
                   {actionLoading && <Spinner animation="border" size="sm" className="me-2" />}<MapPin size={16} className="me-2" />{checkedIn ? 'Checked In' : 'Check In'}
                 </Button>
@@ -231,10 +210,6 @@ const UserDashboard = () => {
                   {actionLoading && <Spinner animation="border" size="sm" className="me-2" /> }Check Out
                 </Button>
               </div>
-
-              <Button variant="danger" className="mb-4 fw-bold w-100 py-3 shadow-sm" onClick={handleManualSync} disabled={status.code === 'off_duty'}>
-                <MapPin size={18} className="me-2" /> {status.code === 'off_duty' ? "Sync Disabled (Off Duty)" : "Manual Sync & Check-In"}
-              </Button>
             </Card.Body>
           </Card>
         </Col>
