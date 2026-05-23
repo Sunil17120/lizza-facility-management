@@ -212,10 +212,10 @@ const FieldOfficerDashboard = () => {
                     <Form.Group className="mb-2">
                       <Form.Select size="sm" value={purpose} onChange={e => setPurpose(e.target.value)} required>
                         <option value="">Select Purpose...</option>
-                        <option value="Inspection">Site visit</option>
+                        <option value="Site visit">Site visit</option>
                         <option value="Training">Training</option>
                         <option value="Client Meeting">Client Meeting</option>
-                        <option value="Delivery/Pickup">Attendance</option>
+                        <option value="Attendance">Attendance</option>
                         <option value="Bill Submission">Bill Submission</option>
                       </Form.Select>
                     </Form.Group>
