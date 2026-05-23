@@ -105,7 +105,7 @@ class User(Base):
     prev_role = Column(String, nullable=True)
     emergency_contact = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
-
+    extra_documents_json = Column(Text, nullable=True)
 class EmployeeLocation(Base):
     __tablename__ = "employee_locations"
     id = Column(Integer, primary_key=True)
@@ -165,6 +165,7 @@ def init_db():
         ("voter_photo_path", "TEXT"), ("dl_photo_path", "TEXT"), ("passport_photo_path", "TEXT"),
         ("fingerprints_left_path", "TEXT"), ("fingerprints_right_path", "TEXT"), 
         ("bank_passbook_path", "TEXT"), ("filled_form_path", "TEXT")
+        ("extra_documents_json", "TEXT"),
     ]
     
     with engine.connect() as conn:
