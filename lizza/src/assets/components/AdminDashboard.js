@@ -63,6 +63,7 @@ const AdminDashboard = () => {
   // --- REPORTS STATES ---
   const [reportMonth, setReportMonth] = useState(new Date().getMonth() + 1);
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
+  const [filterRole, setFilterRole] = useState('all');
   const [filterOfficer, setFilterOfficer] = useState('');
   const [filterSite, setFilterSite] = useState('');
   
@@ -99,12 +100,13 @@ const AdminDashboard = () => {
       let url = `/api/admin/reports/monthly-field-visits?month=${reportMonth}&year=${reportYear}`;
       if (filterOfficer) url += `&officer_id=${filterOfficer}`;
       if (filterSite) url += `&location_id=${filterSite}`;
+      if (filterRole && filterRole !== 'all') url += `&user_type=${filterRole}`;
       
       const res = await fetch(url);
       if (res.ok) setFieldReports(await res.json());
     } catch (err) { console.error("Report fetch error", err); }
     setReportsLoading(false);
-  }, [reportMonth, reportYear, filterOfficer, filterSite, mainTab]);
+  }, [reportMonth, reportYear, filterOfficer, filterSite, filterRole, mainTab]);
 
   useEffect(() => { fetchReportsData(); }, [fetchReportsData]);
 
@@ -155,16 +157,16 @@ const AdminDashboard = () => {
   };
 
   // --- EXCEL DOWNLOADER ---
-  const downloadExcelWithPhotos = () => {
+  const downloadExcel = (withPhotos = false) => {
     let tableHtml = `
       <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
       <head><meta charset="utf-8"></head><body>
       <table border="1">
         <thead>
           <tr style="background-color: #f2f2f2; font-weight: bold;">
-            <th>Date</th><th>Photo Time</th><th>Officer ID</th><th>Officer Name</th><th>Site Name</th>
+            <th>Date</th><th>Photo Time</th><th>Employee ID</th><th>Employee Name</th><th>Site Name</th>
             <th>Site Entry</th><th>Site Exit</th><th>Total Duration</th>
-            <th>Purpose</th><th>Remarks</th><th>Geotagged Photo</th>
+            <th>Purpose</th><th>Remarks</th>${withPhotos ? '<th>Geotagged Photo</th>' : ''}
           </tr>
         </thead>
         <tbody>
@@ -184,7 +186,7 @@ const AdminDashboard = () => {
           <td>${r.duration || 'N/A'}</td>
           <td>${r.purpose || 'N/A'}</td>
           <td>${r.remarks || ''}</td>
-          <td style="height: 130px; text-align: center; vertical-align: middle;">${imgTag}</td>
+          ${withPhotos ? `<td style="height: 130px; text-align: center; vertical-align: middle;">${imgTag}</td>` : ''}
         </tr>
       `;
     });
@@ -195,7 +197,10 @@ const AdminDashboard = () => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `Field_Visits_${reportMonth}_${reportYear}.xls`; 
+    const employeeSegment = filterOfficer ? `_Employee_${filterOfficer}` : '';
+    const siteSegment = filterSite ? `_Site_${filterSite}` : '';
+    const roleSegment = filterRole !== 'all' ? `_${filterRole}` : '';
+    link.download = `Visits_${reportMonth}_${reportYear}${roleSegment}${siteSegment}${employeeSegment}.xls`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -346,6 +351,10 @@ const AdminDashboard = () => {
   // --- DATA PROCESSING ---
   const pending = employees.filter(e => !e?.is_verified && e?.user_type !== 'admin');
   const verified = employees.filter(e => e?.is_verified);
+  const reportPersonnel = verified.filter(e => {
+    if (filterRole === 'all') return ['field_officer', 'employee'].includes(e?.user_type);
+    return e?.user_type === filterRole;
+  });
   const fieldOfficers = verified.filter(e => e?.user_type === 'field_officer');
   
   const groupedReports = fieldReports.reduce((acc, visit) => {
@@ -531,22 +540,27 @@ const AdminDashboard = () => {
             
             <div className="d-flex gap-2 align-items-center border-start ps-4">
               <span className="small fw-bold text-muted text-uppercase">Month/Year:</span>
-              <Form.Select size="sm" value={reportMonth} onChange={e => setReportMonth(e.target.value)} style={{width: '130px'}}>
+              <Form.Select size="sm" value={reportMonth} onChange={e => setReportMonth(parseInt(e.target.value, 10))} style={{width: '130px'}}>
                 {[...Array(12)].map((_, i) => (
                   <option key={i+1} value={i+1}>{new Date(0, i).toLocaleString('en', { month: 'long' })}</option>
                 ))}
               </Form.Select>
-              <Form.Select size="sm" value={reportYear} onChange={e => setReportYear(e.target.value)} style={{width: '90px'}}>
+              <Form.Select size="sm" value={reportYear} onChange={e => setReportYear(parseInt(e.target.value, 10))} style={{width: '90px'}}>
                 <option value="2026">2026</option>
                 <option value="2027">2027</option>
               </Form.Select>
             </div>
 
-            <div className="d-flex gap-2 align-items-center border-start ps-4">
+            <div className="d-flex gap-2 align-items-center border-start ps-4 flex-wrap">
               <span className="small fw-bold text-muted text-uppercase">Specific Data:</span>
-              <Form.Select size="sm" value={filterOfficer} onChange={e => setFilterOfficer(e.target.value)} style={{width: '150px'}}>
-                <option value="">All Officers</option>
-                {fieldOfficers.map(o => <option key={o.id} value={o.id}>{o.full_name}</option>)}
+              <Form.Select size="sm" value={filterRole} onChange={e => { setFilterRole(e.target.value); setFilterOfficer(''); }} style={{width: '170px'}}>
+                <option value="all">All Employees</option>
+                <option value="field_officer">Field Officers</option>
+                <option value="employee">Normal Employees</option>
+              </Form.Select>
+              <Form.Select size="sm" value={filterOfficer} onChange={e => setFilterOfficer(e.target.value)} style={{width: '180px'}}>
+                <option value="">All Persons</option>
+                {reportPersonnel.map(o => <option key={o.id} value={o.id}>{o.full_name} ({o.user_type === 'employee' ? 'Employee' : 'Field Officer'})</option>)}
               </Form.Select>
               <Form.Select size="sm" value={filterSite} onChange={e => setFilterSite(e.target.value)} style={{width: '150px'}}>
                 <option value="">All Sites</option>
@@ -581,9 +595,14 @@ const AdminDashboard = () => {
               <Card className="border-0 shadow-sm mb-4">
                 <Card.Header className="bg-dark text-white p-3 d-flex justify-content-between align-items-center">
                   <h6 className="mb-0 fw-bold d-flex align-items-center"><MapPin className="me-2 text-danger" size={18}/> Field Officer Site Visits</h6>
-                  <Button variant="light" size="sm" className="fw-bold text-dark d-flex align-items-center" onClick={downloadExcelWithPhotos} disabled={fieldReports.length === 0}>
-                    <Download size={14} className="me-2 text-success"/> Download Excel (With Photos)
-                  </Button>
+                  <div className="d-flex gap-2">
+                    <Button variant="light" size="sm" className="fw-bold text-dark d-flex align-items-center" onClick={() => downloadExcel(false)} disabled={fieldReports.length === 0}>
+                      <Download size={14} className="me-2 text-success"/> Download Excel
+                    </Button>
+                    <Button variant="outline-light" size="sm" className="fw-bold text-dark d-flex align-items-center" onClick={() => downloadExcel(true)} disabled={fieldReports.length === 0}>
+                      <Download size={14} className="me-2 text-success"/> Download Excel (With Photos)
+                    </Button>
+                  </div>
                 </Card.Header>
                 <Card.Body className="p-0">
                   {reportsLoading ? (

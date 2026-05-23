@@ -17,6 +17,8 @@ const UserDashboard = () => {
   const [isForceChange, setIsForceChange] = useState(false);
   const [passForm, setPassForm] = useState({ oldPass: '', newPass: '', confirmPass: '' });
   const [passError, setPassError] = useState('');
+  const [checkedIn, setCheckedIn] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
   
   const userEmail = localStorage.getItem('userEmail');
 
@@ -31,6 +33,7 @@ const UserDashboard = () => {
           if (data.user_type === 'manager') return navigate('/manager', { replace: true });
           if (data.user_type === 'admin') return navigate('/admin', { replace: true });
           setDbUser(data); 
+          setCheckedIn(Boolean(data.checked_in));
           setLoading(false); 
         })
         .catch(() => setLoading(false));
@@ -92,6 +95,42 @@ const UserDashboard = () => {
     navigator.geolocation.getCurrentPosition((pos) => {
       syncLocation(pos.coords.latitude, pos.coords.longitude);
     });
+  };
+
+  const handleCheckIn = async () => {
+    if (actionLoading || status.code !== 'inside') return;
+    setActionLoading(true);
+    try {
+      const res = await fetch('/api/user/checkin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: userEmail }) });
+      const data = await res.json();
+      if (res.ok) {
+        setCheckedIn(true);
+        setStatus({ type: 'success', msg: data.message || 'Checked In', code: 'inside' });
+        if (data.updated_user) setDbUser(data.updated_user);
+      } else {
+        setStatus({ type: 'danger', msg: data.detail || 'Check-in failed', code: 'error' });
+      }
+    } catch (err) {
+      setStatus({ type: 'danger', msg: 'Network error during check-in', code: 'error' });
+    } finally { setActionLoading(false); }
+  };
+
+  const handleCheckOut = async () => {
+    if (actionLoading || status.code !== 'inside') return;
+    setActionLoading(true);
+    try {
+      const res = await fetch('/api/user/checkout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: userEmail }) });
+      const data = await res.json();
+      if (res.ok) {
+        setCheckedIn(false);
+        setStatus({ type: 'secondary', msg: data.message || 'Checked Out (Off Duty)', code: 'off_duty' });
+        if (data.updated_user) setDbUser(data.updated_user);
+      } else {
+        setStatus({ type: 'danger', msg: data.detail || 'Check-out failed', code: 'error' });
+      }
+    } catch (err) {
+      setStatus({ type: 'danger', msg: 'Network error during check-out', code: 'error' });
+    } finally { setActionLoading(false); }
   };
 
   useEffect(() => {
@@ -194,6 +233,15 @@ const UserDashboard = () => {
                      (status.code === 'violation' ? "ABSENT (VIOLATION)" : "OFF DUTY / OUTSIDE")}
                   </span>
                 </div>
+              </div>
+
+              <div className="d-flex gap-2 mb-3">
+                <Button variant="success" className="fw-bold flex-fill d-flex align-items-center justify-content-center" onClick={handleCheckIn} disabled={status.code !== 'inside' || checkedIn || actionLoading}>
+                  {actionLoading && <Spinner animation="border" size="sm" className="me-2" />}<MapPin size={16} className="me-2" />{checkedIn ? 'Checked In' : 'Check In'}
+                </Button>
+                <Button variant="outline-danger" className="fw-bold flex-fill d-flex align-items-center justify-content-center" onClick={handleCheckOut} disabled={status.code !== 'inside' || !checkedIn || actionLoading}>
+                  {actionLoading && <Spinner animation="border" size="sm" className="me-2" /> }Check Out
+                </Button>
               </div>
 
               <Button variant="danger" className="mb-4 fw-bold w-100 py-3 shadow-sm" onClick={handleManualSync} disabled={status.code === 'off_duty'}>

@@ -140,6 +140,15 @@ class SiteStay(Base):
     entry_time = Column(DateTime, default=datetime.utcnow)
     exit_time = Column(DateTime, nullable=True)
 
+class Attendance(Base):
+    __tablename__ = "attendances"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    checkin_time = Column(DateTime, default=datetime.utcnow)
+    checkout_time = Column(DateTime, nullable=True)
+    duration_seconds = Column(Integer, nullable=True)
+    date = Column(DateTime, default=datetime.utcnow)
+
 def init_db():
     Base.metadata.create_all(bind=engine)
     
