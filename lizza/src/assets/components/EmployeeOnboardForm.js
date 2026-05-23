@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { Form, Row, Col, Button, Image, Alert, Card, Tab, Tabs, Modal } from 'react-bootstrap';
-import { Camera, CheckCircle, UploadCloud, QrCode, Fingerprint, Lock, Plus } from 'lucide-react';
+import { Camera, CheckCircle, UploadCloud, QrCode, Fingerprint, Lock, Plus, Trash } from 'lucide-react';
 import ReactCrop from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 
@@ -63,6 +63,9 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
     profile: null, aadharPhoto: null, fingerprintsLeft: null, fingerprintsRight: null,
     panPhoto: null, voterPhoto: null, dlPhoto: null, passportPhoto: null, bankPassbook: null
   });
+  
+  // --- ADDED: EXTRA DOCUMENTS STATE ---
+  const [extraDocuments, setExtraDocuments] = useState([{ title: '', file: null }]);
   
   const [previews, setPreviews] = useState({ profile: null });
   const [error, setError] = useState(null);
@@ -232,6 +235,18 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
     if (files.voterPhoto) submitData.append('voter_photo', files.voterPhoto);
     if (files.dlPhoto) submitData.append('dl_photo', files.dlPhoto);
     if (files.passportPhoto) submitData.append('passport_photo', files.passportPhoto);
+
+    // --- ADDED: EXTRA DOCUMENTS SUBMISSION ---
+    const extraDocsInfo = [];
+    extraDocuments.forEach((doc, idx) => {
+      if (doc.title.trim() && doc.file) {
+        submitData.append('extra_files', doc.file); // Array of files
+        extraDocsInfo.push({ title: doc.title, originalName: doc.file.name });
+      }
+    });
+    if (extraDocsInfo.length > 0) {
+      submitData.append('extra_docs_info', JSON.stringify(extraDocsInfo));
+    }
 
     setIsProcessing(true);
     try {
@@ -548,6 +563,64 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
                     )}
                 </Col>
               </Row>
+
+              {/* --- ADDED: EXTRA DOCUMENTS SECTION --- */}
+              <h6 className="mt-4 fw-bold border-bottom pb-2 text-primary">Additional Documents</h6>
+              {extraDocuments.map((doc, idx) => (
+                <Row key={idx} className="mb-2 align-items-center">
+                  <Col md={5}>
+                    <Form.Control 
+                      size="sm" 
+                      placeholder="Document Title (e.g. Police Verification, Certificate)" 
+                      value={doc.title} 
+                      onChange={e => { 
+                        const newDocs = [...extraDocuments]; 
+                        newDocs[idx].title = e.target.value; 
+                        setExtraDocuments(newDocs); 
+                      }} 
+                    />
+                  </Col>
+                  <Col md={5}>
+                    <Form.Control 
+                      type="file" 
+                      size="sm" 
+                      accept="image/*,.pdf" 
+                      onChange={async (e) => {
+                        const file = e.target.files[0];
+                        if (file) {
+                          if (file.size > 15 * 1024 * 1024) { 
+                              alert("File too large. Max 15MB"); 
+                              e.target.value = ""; 
+                              return; 
+                          }
+                          const newDocs = [...extraDocuments];
+                          // Use the existing compressImage function if it's an image
+                          if (file.type.startsWith('image/')) {
+                              newDocs[idx].file = await compressImage(file);
+                          } else {
+                              newDocs[idx].file = file;
+                          }
+                          setExtraDocuments(newDocs);
+                        }
+                      }} 
+                    />
+                  </Col>
+                  <Col md={2}>
+                    {extraDocuments.length > 1 && (
+                      <Button size="sm" variant="outline-danger" onClick={() => {
+                        const newDocs = extraDocuments.filter((_, i) => i !== idx);
+                        setExtraDocuments(newDocs);
+                      }}>
+                        <Trash size={14} />
+                      </Button>
+                    )}
+                  </Col>
+                </Row>
+              ))}
+              <Button size="sm" variant="outline-primary" onClick={() => setExtraDocuments([...extraDocuments, { title: '', file: null }])}>
+                <Plus size={14} className="me-1"/> Add Extra Document
+              </Button>
+
             </Tab>
           </Tabs>
 

@@ -7,6 +7,7 @@ from sqlalchemy import extract, text
 from pydantic import BaseModel
 from datetime import datetime, timedelta
 from sqlalchemy.exc import IntegrityError
+from typing import Optional, List
 import pyzipper
 import io
 import xml.etree.ElementTree as ET
@@ -175,7 +176,7 @@ async def add_employee(
     pan_number: Optional[str] = Form(None), voter_id: Optional[str] = Form(None), 
     driving_licence: Optional[str] = Form(None), passport_no: Optional[str] = Form(None),
     
-    department: Optional[str] = Form("Operations"), manager_id: Optional[int] = Form(None), # Default to None to prevent FK crash
+    department: Optional[str] = Form("Operations"), manager_id: Optional[int] = Form(None),
     location_id: Optional[int] = Form(None), shift_start: Optional[str] = Form(None), shift_end: Optional[str] = Form(None),
     
     profile_photo: Optional[UploadFile] = File(None), aadhar_photo: Optional[UploadFile] = File(None),
@@ -183,6 +184,11 @@ async def add_employee(
     dl_photo: Optional[UploadFile] = File(None), passport_photo: Optional[UploadFile] = File(None),
     fingerprints_left: Optional[UploadFile] = File(None), fingerprints_right: Optional[UploadFile] = File(None),
     bank_passbook: Optional[UploadFile] = File(None),
+    
+    # --- ADDED: EXTRA DOCUMENTS PARAMETERS ---
+    extra_files: Optional[List[UploadFile]] = File(None),
+    extra_docs_info: Optional[str] = Form(None),
+    
     db: Session = Depends(get_db)
 ):
     if not phone_number.isdigit() or len(phone_number) != 10:
@@ -220,6 +226,26 @@ async def add_employee(
     right_fp_url = upload_to_cloud(fingerprints_right) if kyc_mode == 'without_aadhaar' else None
     passbook_url = upload_to_cloud(bank_passbook) 
 
+    # --- ADDED: EXTRA DOCUMENTS PROCESSING ---
+    final_extra_docs = []
+    if extra_docs_info and extra_files:
+        try:
+            docs_info = json.loads(extra_docs_info)
+            for file in extra_files:
+                matched_info = next((info for info in docs_info if info.get("originalName") == file.filename), None)
+                if matched_info:
+                    uploaded_url = upload_to_cloud(file)
+                    if uploaded_url:
+                        final_extra_docs.append({
+                            "title": matched_info.get("title", "Untitled Document"),
+                            "path": uploaded_url
+                        })
+        except Exception as e:
+            print(f"Error processing extra documents: {e}")
+
+    extra_documents_json_str = json.dumps(final_extra_docs) if final_extra_docs else None
+
+    # --- UPDATED: USER CREATION WITH extra_documents_json ---
     new_user = User(
         first_name=first_name, last_name=last_name, full_name=f"{first_name} {last_name}",
         email=base_email, personal_email=personal_email, phone_number=phone_number,
@@ -235,6 +261,7 @@ async def add_employee(
         
         languages_json=languages_json, education_json=education_json, experience_json=experience_json, 
         family_json=family_json, references_json=references_json,
+        extra_documents_json=extra_documents_json_str, 
         
         aadhar_enc=safe_encrypt(aadhar_number), pan_enc=safe_encrypt(pan_number),
         account_number_enc=safe_encrypt(account_number), voter_id_enc=safe_encrypt(voter_id),
