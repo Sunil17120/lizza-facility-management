@@ -11,8 +11,7 @@ const UserDashboard = () => {
   const [dbUser, setDbUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState({ type: 'info', msg: 'Initializing...', code: 'normal' });
-  const [violationTime, setViolationTime] = useState(null); 
-  const [checkInTimeLeft, setCheckInTimeLeft] = useState(null); 
+  const [violationTime, setViolationTime] = useState(null);
   const [showPassModal, setShowPassModal] = useState(false);
   const [isForceChange, setIsForceChange] = useState(false);
   const [passForm, setPassForm] = useState({ oldPass: '', newPass: '', confirmPass: '' });
@@ -39,25 +38,6 @@ const UserDashboard = () => {
         .catch(() => setLoading(false));
     }
   }, [userEmail, navigate]);
-
-  useEffect(() => {
-    if (!dbUser || !dbUser.shift_start) return;
-    const interval = setInterval(() => {
-      const [h, m] = dbUser.shift_start.split(':');
-      const now = new Date(), shiftStart = new Date();
-      shiftStart.setHours(parseInt(h), parseInt(m), 0);
-      
-      const gracePeriodEnd = new Date(shiftStart.getTime() + 15 * 60000);
-      const diff = gracePeriodEnd - now;
-
-      if (diff > 0 && diff < 15 * 60000) {
-        setCheckInTimeLeft(`${Math.floor(diff / 60000)}m ${Math.floor((diff % 60000) / 1000)}s`);
-      } else {
-        setCheckInTimeLeft(null);
-      }
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [dbUser]);
 
   const syncLocation = useCallback(async (lat, lon) => {
     try {
@@ -101,17 +81,27 @@ const UserDashboard = () => {
     if (actionLoading || status.code !== 'inside') return;
     setActionLoading(true);
     try {
-      const res = await fetch('/api/user/checkin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: userEmail }) });
+      if (!navigator.geolocation) throw new Error('Location access is required for geofence validation.');
+      const coords = await new Promise((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => resolve(pos.coords),
+          (err) => reject(err),
+          { enableHighAccuracy: true }
+        );
+      });
+
+      const res = await fetch('/api/user/checkin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: userEmail, lat: coords.latitude, lon: coords.longitude }) });
       const data = await res.json();
       if (res.ok) {
         setCheckedIn(true);
         setStatus({ type: 'success', msg: data.message || 'Checked In', code: 'inside' });
         if (data.updated_user) setDbUser(data.updated_user);
       } else {
-        setStatus({ type: 'danger', msg: data.detail || 'Check-in failed', code: 'error' });
+        setStatus({ type: 'danger', msg: data.detail || data.message || 'Check-in failed', code: 'error' });
       }
     } catch (err) {
-      setStatus({ type: 'danger', msg: 'Network error during check-in', code: 'error' });
+      const msg = err?.message || 'Network error during check-in';
+      setStatus({ type: 'danger', msg, code: 'error' });
     } finally { setActionLoading(false); }
   };
 
@@ -119,17 +109,27 @@ const UserDashboard = () => {
     if (actionLoading || status.code !== 'inside') return;
     setActionLoading(true);
     try {
-      const res = await fetch('/api/user/checkout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: userEmail }) });
+      if (!navigator.geolocation) throw new Error('Location access is required for geofence validation.');
+      const coords = await new Promise((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => resolve(pos.coords),
+          (err) => reject(err),
+          { enableHighAccuracy: true }
+        );
+      });
+
+      const res = await fetch('/api/user/checkout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: userEmail, lat: coords.latitude, lon: coords.longitude }) });
       const data = await res.json();
       if (res.ok) {
         setCheckedIn(false);
         setStatus({ type: 'secondary', msg: data.message || 'Checked Out (Off Duty)', code: 'off_duty' });
         if (data.updated_user) setDbUser(data.updated_user);
       } else {
-        setStatus({ type: 'danger', msg: data.detail || 'Check-out failed', code: 'error' });
+        setStatus({ type: 'danger', msg: data.detail || data.message || 'Check-out failed', code: 'error' });
       }
     } catch (err) {
-      setStatus({ type: 'danger', msg: 'Network error during check-out', code: 'error' });
+      const msg = err?.message || 'Network error during check-out';
+      setStatus({ type: 'danger', msg, code: 'error' });
     } finally { setActionLoading(false); }
   };
 
@@ -210,18 +210,6 @@ const UserDashboard = () => {
                  <MapIcon size={18} className="me-2" />} 
                 {status.msg}
               </Alert>
-
-              <div className="d-flex justify-content-center gap-5 mb-4">
-                <div className="text-center"><p className="text-muted small fw-bold mb-1">SHIFT START</p><h3 className="fw-bold text-dark">{dbUser?.shift_start || '--:--'}</h3></div><div className="vr"></div>
-                <div className="text-center"><p className="text-muted small fw-bold mb-1">SHIFT END</p><h3 className="fw-bold text-dark">{dbUser?.shift_end || '--:--'}</h3></div>
-              </div>
-
-              {checkInTimeLeft && status.code !== 'violation' && status.code !== 'off_duty' && (
-                  <div className="mb-4 p-2 bg-warning bg-opacity-10 rounded border border-warning">
-                    <div className="d-flex align-items-center justify-content-center text-warning fw-bold"><Clock size={16} className="me-2"/>Time remaining to mark Present:</div>
-                    <h4 className="fw-bold text-dark mt-1">{checkInTimeLeft}</h4>
-                  </div>
-              )}
 
               <div className="p-3 bg-light rounded-3 border mb-4">
                 <p className="small text-muted mb-2">Duty Status</p>

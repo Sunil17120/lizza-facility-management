@@ -94,12 +94,32 @@ class LocationCreate(BaseModel):
 
 class CheckAction(BaseModel):
     email: str
+    lat: Optional[float] = None
+    lon: Optional[float] = None
 
 # --- HELPERS ---
 def get_db():
     db = SessionLocal()
     try: yield db
     finally: db.close()
+
+def get_saved_coordinates(email: str):
+    if not r: return None, None
+    coords = r.get(f"loc:{email}")
+    if not coords: return None, None
+    try:
+        lat, lon = coords.split(',')
+        return float(lat), float(lon)
+    except Exception:
+        return None, None
+
+def validate_geofence_for_user(db, user, latitude: float, longitude: float):
+    if not user.location_id: return
+    office = db.query(OfficeLocation).filter(OfficeLocation.id == user.location_id).first()
+    if not office: return
+    distance = get_distance(latitude, longitude, office.lat, office.lon)
+    if distance > office.radius:
+        raise HTTPException(400, f"Geofence validation failed. You are {int(distance)}m away.")
 
 def get_secure_hash(password: str, salt: str):
     return hashlib.sha256((password + salt + PEPPER).encode()).hexdigest()
@@ -514,6 +534,49 @@ def get_monthly_field_visits(
             "photo": v.photo_path, "excel_photo": f'=IMAGE("{v.photo_path}", "Visit Photo", 0)' if v.photo_path else "No Photo"
         })
     return report_data
+
+@app.get("/api/admin/reports/monthly-attendance")
+def get_monthly_attendance(
+    month: int, year: int, user_id: Optional[int] = None, location_id: Optional[int] = None,
+    user_type: Optional[str] = None, db: Session = Depends(get_db)
+):
+    _, last_day = calendar.monthrange(year, month)
+    start_utc = datetime(year, month, 1, 0, 0, 0) - timedelta(hours=5, minutes=30)
+    end_utc = datetime(year, month, last_day, 23, 59, 59) - timedelta(hours=5, minutes=30)
+
+    try:
+        from .database import Attendance
+    except ImportError:
+        from database import Attendance
+
+    query = db.query(Attendance, User, OfficeLocation).join(User, Attendance.user_id == User.id).outerjoin(OfficeLocation, User.location_id == OfficeLocation.id)
+    query = query.filter(Attendance.date >= start_utc, Attendance.date <= end_utc)
+    if user_id: query = query.filter(User.id == user_id)
+    if location_id: query = query.filter(User.location_id == location_id)
+    if user_type: query = query.filter(User.user_type == user_type)
+    results = query.order_by(Attendance.date.asc()).all()
+
+    report_data = []
+    for att, u, loc in results:
+        checkin_ist = convert_utc_to_ist(att.checkin_time)
+        checkout_ist = convert_utc_to_ist(att.checkout_time)
+        duration_str = 'N/A'
+        if att.duration_seconds is not None:
+            hours, remainder = divmod(att.duration_seconds, 3600)
+            duration_str = f"{int(hours)}h {int(remainder // 60)}m"
+        report_data.append({
+            "attendance_id": att.id,
+            "date": checkin_ist.strftime("%d-%b-%Y") if checkin_ist else "N/A",
+            "employee_id": u.blockchain_id or f"EMP-{u.id}",
+            "employee_name": u.full_name,
+            "user_type": u.user_type,
+            "site_name": loc.name if loc else 'N/A',
+            "checkin_time": checkin_ist.strftime("%I:%M %p") if checkin_ist else "N/A",
+            "checkout_time": checkout_ist.strftime("%I:%M %p") if checkout_ist else "N/A",
+            "duration": duration_str,
+        })
+    return report_data
+
 @app.post("/api/field-officer/manual-sync")
 async def manual_sync(
     email: str = Form(...), location_id: int = Form(...), type: str = Form(...), 
@@ -559,9 +622,13 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
     now_str = now_ist.strftime("%H:%M")
 
     if user.user_type in ['employee', 'manager']:
-        if not user.shift_start or not user.shift_end or not is_time_between(user.shift_start, user.shift_end, now_str):
-            if r: r.delete(f"loc:{email}")
-            return {"is_inside": False, "status": "off_duty", "message": "Off Duty - Location tracking paused."}
+        office = db.query(OfficeLocation).filter(OfficeLocation.id == user.location_id).first() if user.location_id else None
+        if not office:
+            return {"is_inside": True, "status": "normal", "message": "Location Updated"}
+        is_inside = get_distance(lat, lon, office.lat, office.lon) <= office.radius
+        if is_inside:
+            return {"is_inside": True, "status": "inside", "message": "Inside Geofence"}
+        return {"is_inside": False, "status": "outside", "message": "Outside Geofence"}
 
     if r:
         if user.is_present: r.set(f"loc:{email}", f"{lat},{lon}", ex=43200) 
@@ -622,19 +689,16 @@ def user_checkin(data: CheckAction, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == email).first()
     if not user: raise HTTPException(404, "User not found")
 
-    # try to validate last known location from redis
-    coords = r.get(f"loc:{email}") if r else None
     office = db.query(OfficeLocation).filter(OfficeLocation.id == user.location_id).first() if user.location_id else None
-    if office and coords:
-        try:
-            parts = coords.split(',')
-            lat, lon = float(parts[0]), float(parts[1])
-            distance = get_distance(lat, lon, office.lat, office.lon)
-            if distance > office.radius:
-                raise HTTPException(400, f"Geofence validation failed. You are {int(distance)}m away.")
-        except HTTPException: raise
-        except Exception:
-            pass
+    lat, lon = data.lat, data.lon
+    if office:
+        if lat is None or lon is None:
+            lat, lon = get_saved_coordinates(email)
+        if lat is None or lon is None:
+            raise HTTPException(400, "Geofence validation requires current location. Please refresh location and try again.")
+        distance = get_distance(lat, lon, office.lat, office.lon)
+        if distance > office.radius:
+            raise HTTPException(400, f"Geofence validation failed. You are {int(distance)}m away.")
 
     now_utc = datetime.utcnow()
     active = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
@@ -660,6 +724,17 @@ def user_checkout(data: CheckAction, db: Session = Depends(get_db)):
     email = data.email.lower().strip()
     user = db.query(User).filter(User.email == email).first()
     if not user: raise HTTPException(404, "User not found")
+
+    office = db.query(OfficeLocation).filter(OfficeLocation.id == user.location_id).first() if user.location_id else None
+    lat, lon = data.lat, data.lon
+    if office:
+        if lat is None or lon is None:
+            lat, lon = get_saved_coordinates(email)
+        if lat is None or lon is None:
+            raise HTTPException(400, "Geofence validation requires current location. Please refresh location and try again.")
+        distance = get_distance(lat, lon, office.lat, office.lon)
+        if distance > office.radius:
+            raise HTTPException(400, f"Geofence validation failed. You are {int(distance)}m away.")
 
     now_utc = datetime.utcnow()
     active = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
