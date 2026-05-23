@@ -23,7 +23,44 @@ except ImportError:
 
 app = FastAPI()
 redis_url = os.environ.get("REDIS_URL") or os.environ.get("KV_URL")
-r = redis.from_url(redis_url, decode_responses=True) if redis_url else None
+r = None
+class SafeRedisClient:
+    def __init__(self, client):
+        self._client = client
+
+    def __bool__(self):
+        return bool(self._client)
+
+    def get(self, key):
+        if not self._client:
+            return None
+        try:
+            return self._client.get(key)
+        except redis.exceptions.RedisError:
+            return None
+
+    def set(self, key, value, ex=None):
+        if not self._client:
+            return None
+        try:
+            return self._client.set(key, value, ex=ex)
+        except redis.exceptions.RedisError:
+            return None
+
+    def delete(self, *keys):
+        if not self._client:
+            return None
+        try:
+            return self._client.delete(*keys)
+        except redis.exceptions.RedisError:
+            return None
+
+try:
+    redis_client = redis.from_url(redis_url, decode_responses=True) if redis_url else None
+except Exception as e:
+    print("Redis initialization failed:", e)
+    redis_client = None
+r = SafeRedisClient(redis_client)
 init_db()
 PEPPER = os.environ.get("SECRET_PEPPER", "change_me_in_vercel_settings")
 
