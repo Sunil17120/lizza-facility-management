@@ -338,6 +338,11 @@ const FieldOfficerDashboard = () => {
                 <h5 className="fw-bold mb-3 d-flex align-items-center">
                   <MapPin className="me-2 text-danger"/> Current Status
                 </h5>
+                {alertMsg && (
+                  <Alert variant={alertMsg.type} className="mb-3 small d-flex align-items-center">
+                    {alertMsg.text}
+                  </Alert>
+                )}
                 
                 {activeSite ? (
                   <>

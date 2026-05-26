@@ -552,6 +552,33 @@ def delete_location(loc_id: int, db: Session = Depends(get_db)):
     if loc: db.delete(loc); db.commit()
     return {"status": "deleted"}
 
+@app.delete("/api/admin/delete-visit/{visit_id}")
+def delete_visit(visit_id: int, db: Session = Depends(get_db)):
+    visit = db.query(SiteVisit).filter(SiteVisit.id == visit_id).first()
+    if not visit: raise HTTPException(status_code=404, detail="Visit not found")
+    db.delete(visit)
+    db.commit()
+    return {"status": "success"}
+
+@app.delete("/api/admin/delete-attendance/{attendance_id}")
+def delete_attendance(attendance_id: int, db: Session = Depends(get_db)):
+    try:
+        from .database import Attendance
+    except ImportError:
+        from database import Attendance
+
+    att = db.query(Attendance).filter(Attendance.id == attendance_id).first()
+    if not att: raise HTTPException(status_code=404, detail="Attendance record not found")
+
+    if att.checkout_time is None:
+        user = db.query(User).filter(User.id == att.user_id).first()
+        if user:
+            user.is_present = False
+
+    db.delete(att)
+    db.commit()
+    return {"status": "success"}
+
 # --- FIELD OFFICER & REPORTING ROUTES ---
 @app.post("/api/field-officer/log-visit")
 async def log_site_visit(
@@ -703,6 +730,25 @@ async def manual_sync(
     if distance > site.radius: raise HTTPException(400, f"Validation failed. You are outside the {site.radius}m geofence.")
 
     now_utc = datetime.utcnow()
+
+    # Check if this site was already visited today before allowing another in-check.
+    visited_key = f"visited:{user.email}:{site.id}"
+    if type == 'in' and r and r.get(visited_key):
+        raise HTTPException(400, "This site was already visited. Next visit allowed after 18:00.")
+
+    if type == 'in':
+        try:
+            last_visit = db.query(SiteVisit).filter(SiteVisit.officer_id == user.id, SiteVisit.location_id == site.id).order_by(SiteVisit.visit_time.desc()).first()
+            if last_visit:
+                last_visit_ist = convert_utc_to_ist(last_visit.visit_time)
+                now_ist = convert_utc_to_ist(now_utc)
+                if last_visit_ist and last_visit_ist.date() == now_ist.date() and now_ist.hour < 18:
+                    raise HTTPException(400, "This site was already visited today. Next visit allowed after 18:00.")
+        except HTTPException:
+            raise
+        except Exception:
+            pass
+
     active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
 
     if type == 'in':

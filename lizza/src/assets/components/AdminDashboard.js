@@ -210,6 +210,20 @@ const AdminDashboard = () => {
     }
   };
 
+  const handleDeleteVisit = async (id) => {
+    if (window.confirm('Permanently delete this visit record?')) {
+      await fetch(`/api/admin/delete-visit/${id}`, { method: 'DELETE' });
+      fetchReportsData();
+    }
+  };
+
+  const handleDeleteAttendance = async (id) => {
+    if (window.confirm('Permanently delete this attendance record?')) {
+      await fetch(`/api/admin/delete-attendance/${id}`, { method: 'DELETE' });
+      fetchAttendanceData();
+    }
+  };
+
   const handleEditEmpSave = async (e) => {
     e.preventDefault();
     try {
@@ -863,9 +877,12 @@ const AdminDashboard = () => {
                                         </td>
                                         <td><Badge bg="dark">{visit.purpose || 'N/A'}</Badge></td>
                                         <td style={{ maxWidth: '200px' }} className="text-truncate" title={visit.remarks}>{visit.remarks || '-'}</td>
-                                        <td>
+                                        <td className="d-flex gap-2">
                                           <Button variant="outline-secondary" size="sm" onClick={() => setPhotoPreview(visit.photo)} disabled={!visit.photo}>
                                             <ImageIcon size={14} className="me-1"/> View Photo
+                                          </Button>
+                                          <Button variant="outline-danger" size="sm" onClick={() => handleDeleteVisit(visit.visit_id)}>
+                                            <Trash2 size={14} className="me-1"/> Delete
                                           </Button>
                                         </td>
                                       </tr>
@@ -900,7 +917,7 @@ const AdminDashboard = () => {
                         <thead className="table-secondary">
                           <tr>
                             <th>Date</th><th>Employee ID</th><th>Name</th><th>Role</th><th>Site</th>
-                            <th>Check-In</th><th>Check-Out</th><th>Duration</th>
+                            <th>Check-In</th><th>Check-Out</th><th>Duration</th><th>Action</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -914,6 +931,11 @@ const AdminDashboard = () => {
                               <td>{record.checkin_time || 'N/A'}</td>
                               <td>{record.checkout_time || 'N/A'}</td>
                               <td>{record.duration || 'N/A'}</td>
+                              <td>
+                                <Button variant="outline-danger" size="sm" onClick={() => handleDeleteAttendance(record.attendance_id)}>
+                                  <Trash2 size={14} className="me-1"/> Delete
+                                </Button>
+                              </td>
                             </tr>
                           ))}
                         </tbody>
