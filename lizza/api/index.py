@@ -448,22 +448,32 @@ def delete_employee(user_id: int, db: Session = Depends(get_db)):
         if user.user_type == 'admin' or user.email == 'admin@lizza.com':
             raise HTTPException(status_code=403, detail="Security protocol prevents deleting the Super Admin account.")
 
+        # 1. Clear Manager references
         db.query(User).filter(User.manager_id == user_id).update({"manager_id": None})
+        
+        # 2. Delete related records (Ensure all referenced tables are included)
         db.query(EmployeeLocation).filter(EmployeeLocation.user_id == user_id).delete()
         db.query(SiteVisit).filter(SiteVisit.officer_id == user_id).delete()
         db.query(SiteStay).filter(SiteStay.officer_id == user_id).delete()
         
+        # ADD THIS: Clear Attendance records
+        try:
+            from .database import Attendance
+            db.query(Attendance).filter(Attendance.user_id == user_id).delete()
+        except: pass
+
+        # 3. Existing logs cleanup
         db.execute(text("DELETE FROM field_visit_logs WHERE officer_id = :uid"), {"uid": user_id})
 
+        # 4. Final deletion
         db.delete(user)
         db.commit()
         return {"status": "success", "message": "Employee and all related records deleted."}
 
-    except HTTPException: raise
     except Exception as e:
         db.rollback() 
-        print(f"Delete Error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to delete employee due to a database constraint. Error: {str(e)}")
+        print(f"Delete Error Details: {str(e)}") # Check your console logs for the exact constraint name
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @app.delete("/api/admin/delete-location/{loc_id}")
 def delete_location(loc_id: int, db: Session = Depends(get_db)):
