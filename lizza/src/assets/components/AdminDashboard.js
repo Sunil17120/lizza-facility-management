@@ -69,11 +69,14 @@ const AdminDashboard = () => {
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
   const [filterRole, setFilterRole] = useState('all');
   const [reportOfficerSearch, setReportOfficerSearch] = useState('');
-  const [showReportSuggestions, setShowReportSuggestions] = useState(false); // NEW: Controls the dropdown visibility
+  const [showReportSuggestions, setShowReportSuggestions] = useState(false); // Controls the dropdown visibility
   const [filterSite, setFilterSite] = useState('');
+  const [reportsSubTab, setReportsSubTab] = useState('site-visits');
   
   const [fieldReports, setFieldReports] = useState([]);
+  const [attendanceRecords, setAttendanceRecords] = useState([]);
   const [reportsLoading, setReportsLoading] = useState(false);
+  const [attendanceLoading, setAttendanceLoading] = useState(false);
   const [photoPreview, setPhotoPreview] = useState(null);
   
   const adminEmail = localStorage.getItem('userEmail');
@@ -150,6 +153,40 @@ const AdminDashboard = () => {
   }, [reportMonth, reportYear, reportOfficerSearch, filterSite, filterRole, mainTab, employees]);
 
   useEffect(() => { fetchReportsData(); }, [fetchReportsData]);
+
+  const fetchAttendanceData = useCallback(async () => {
+    if (mainTab !== 'reports') return;
+    setAttendanceLoading(true);
+    try {
+      let url = `/api/admin/reports/monthly-attendance?month=${reportMonth}&year=${reportYear}`;
+      if (reportOfficerSearch && employees.length > 0) {
+        const matchedOfficer = employees.find(o => 
+          o.is_verified &&
+          (filterRole === 'all' ? ['field_officer', 'employee'].includes(o?.user_type) : o?.user_type === filterRole) &&
+          (o.full_name?.toLowerCase().includes(reportOfficerSearch.toLowerCase()) ||
+           o.email?.toLowerCase().includes(reportOfficerSearch.toLowerCase()) ||
+           o.blockchain_id?.toLowerCase().includes(reportOfficerSearch.toLowerCase()) ||
+           o.phone_number?.includes(reportOfficerSearch))
+        );
+        if (matchedOfficer) url += `&user_id=${matchedOfficer.id}`;
+      }
+      if (filterSite) url += `&location_id=${filterSite}`;
+      if (filterRole && filterRole !== 'all') url += `&user_type=${filterRole}`;
+
+      const res = await fetch(url);
+      if (res.ok) setAttendanceRecords(await res.json());
+      else setAttendanceRecords([]);
+    } catch (err) {
+      console.error("Attendance fetch error", err);
+      setAttendanceRecords([]);
+    }
+    setAttendanceLoading(false);
+  }, [reportMonth, reportYear, reportOfficerSearch, filterSite, filterRole, mainTab, employees]);
+
+  useEffect(() => {
+    if (mainTab !== 'reports') return;
+    fetchAttendanceData();
+  }, [fetchAttendanceData]);
 
   // --- ACTIONS: EMPLOYEES ---
   const handleVerify = async (email) => {
@@ -752,98 +789,140 @@ const AdminDashboard = () => {
           </div>
 
           <div className="p-4">
-              <Row className="mb-4">
-                <Col md={12}>
-                  <Card className="border-0 shadow-sm">
-                    <Card.Header className="bg-white py-3"><h6 className="m-0 fw-bold d-flex align-items-center"><Briefcase size={18} className="me-2 text-warning"/> Manager Team Summaries</h6></Card.Header>
-                    <Table responsive hover className="align-middle mb-0 small">
-                      <thead className="table-light"><tr><th>Manager Name</th><th>Department</th><th>Total Employees Managed</th><th>Live Presence</th></tr></thead>
-                      <tbody>
-                        {managerStats.length === 0 ? <tr><td colSpan="4" className="text-center py-3 text-muted">No managers found.</td></tr> :
-                         managerStats.map(mgr => (
-                           <tr key={mgr.id}>
-                             <td className="fw-bold">{mgr.full_name || 'N/A'}</td>
-                             <td><Badge bg="secondary">{mgr.department || 'General'}</Badge></td>
-                             <td><h5 className="m-0 fw-bold">{mgr.teamSize || 0} <Users size={16} className="ms-1 text-muted"/></h5></td>
-                             <td><Badge bg={mgr.is_present ? "success" : "danger"}>{mgr.is_present ? "On Duty" : "Offline"}</Badge></td>
-                           </tr>
-                         ))}
-                      </tbody>
-                    </Table>
-                  </Card>
-                </Col>
-              </Row>
+            <Tabs activeKey={reportsSubTab} onSelect={(k) => setReportsSubTab(k)} className="mb-4">
+              <Tab eventKey="site-visits" title="Site Visits">
+                <Row className="mb-4">
+                  <Col md={12}>
+                    <Card className="border-0 shadow-sm">
+                      <Card.Header className="bg-white py-3"><h6 className="m-0 fw-bold d-flex align-items-center"><Briefcase size={18} className="me-2 text-warning"/> Manager Team Summaries</h6></Card.Header>
+                      <Table responsive hover className="align-middle mb-0 small">
+                        <thead className="table-light"><tr><th>Manager Name</th><th>Department</th><th>Total Employees Managed</th><th>Live Presence</th></tr></thead>
+                        <tbody>
+                          {managerStats.length === 0 ? <tr><td colSpan="4" className="text-center py-3 text-muted">No managers found.</td></tr> :
+                           managerStats.map(mgr => (
+                             <tr key={mgr.id}>
+                               <td className="fw-bold">{mgr.full_name || 'N/A'}</td>
+                               <td><Badge bg="secondary">{mgr.department || 'General'}</Badge></td>
+                               <td><h5 className="m-0 fw-bold">{mgr.teamSize || 0} <Users size={16} className="ms-1 text-muted"/></h5></td>
+                               <td><Badge bg={mgr.is_present ? "success" : "danger"}>{mgr.is_present ? "On Duty" : "Offline"}</Badge></td>
+                             </tr>
+                           ))}
+                        </tbody>
+                      </Table>
+                    </Card>
+                  </Col>
+                </Row>
 
-              <Card className="border-0 shadow-sm mb-4">
-                <Card.Header className="bg-dark text-white p-3 d-flex justify-content-between align-items-center">
-                  <h6 className="mb-0 fw-bold d-flex align-items-center"><MapPin className="me-2 text-danger" size={18}/> Field Officer Site Visits</h6>
-                  <div className="d-flex gap-2 flex-wrap">
-                    <Button variant="light" size="sm" className="fw-bold text-dark d-flex align-items-center" onClick={() => downloadExcel(false)} disabled={fieldReports.length === 0}>
-                      <Download size={14} className="me-2 text-success"/> Download Visits Excel
-                    </Button>
-                    <Button variant="outline-light" size="sm" className="fw-bold text-dark d-flex align-items-center" onClick={() => downloadExcel(true)} disabled={fieldReports.length === 0}>
-                      <Download size={14} className="me-2 text-success"/> Download Visits Excel (With Photos)
-                    </Button>
-                    <Button variant="warning" size="sm" className="fw-bold text-dark d-flex align-items-center" onClick={downloadAttendanceExcel}>
-                      <Download size={14} className="me-2 text-dark"/> Download Attendance Excel
-                    </Button>
-                  </div>
-                </Card.Header>
-                <Card.Body className="p-0">
-                  {reportsLoading ? (
-                    <div className="text-center py-5"><Spinner variant="primary" animation="border" /></div>
-                  ) : fieldReports.length === 0 ? (
-                    <div className="text-center py-5 text-muted">No field visits recorded matching these filters.</div>
-                  ) : (
-                    <div className="accordion accordion-flush" id="reportAccordion">
-                      {Object.keys(groupedReports).map((dateStr, index) => (
-                        <div className="accordion-item border-bottom" key={dateStr}>
-                          <h2 className="accordion-header">
-                            <button className="accordion-button bg-light fw-bold" type="button" data-bs-toggle="collapse" data-bs-target={`#collapse${index}`}>
-                              <Calendar size={16} className="me-2 text-primary"/>
-                              {new Date(dateStr).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
-                              <Badge bg="primary" className="ms-3">{groupedReports[dateStr].length} Visits</Badge>
-                            </button>
-                          </h2>
-                          <div id={`collapse${index}`} className="accordion-collapse collapse show">
-                            <div className="accordion-body p-0">
-                              <Table hover responsive className="mb-0 align-middle small">
-                                <thead className="table-secondary">
-                                  <tr>
-                                    <th>Photo Time</th><th>Officer</th><th>Site</th><th>Entry</th><th>Exit</th>
-                                    <th>Duration</th><th>Purpose</th><th>Remarks</th><th>Evidence</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {groupedReports[dateStr].map(visit => (
-                                    <tr key={visit.visit_id}>
-                                      <td className="fw-bold text-nowrap">{visit.time || 'N/A'}</td>
-                                      <td><span className="text-muted d-block" style={{fontSize:'0.7rem'}}>{visit.officer_id || 'N/A'}</span>{visit.officer_name || 'N/A'}</td>
-                                      <td><MapPin size={12} className="me-1 text-danger"/>{visit.site_name || 'N/A'}</td>
-                                      <td className="text-success fw-bold text-nowrap">{visit.entry_time || 'N/A'}</td>
-                                      <td className={visit.exit_time === 'Active' ? 'text-primary fw-bold text-nowrap' : 'text-danger fw-bold text-nowrap'}>{visit.exit_time || 'N/A'}</td>
-                                      <td>
-                                        <Badge bg={visit.duration === 'In Progress' ? 'primary' : 'secondary'} className="text-nowrap">{visit.duration || 'N/A'}</Badge>
-                                      </td>
-                                      <td><Badge bg="dark">{visit.purpose || 'N/A'}</Badge></td>
-                                      <td style={{ maxWidth: '200px' }} className="text-truncate" title={visit.remarks}>{visit.remarks || '-'}</td>
-                                      <td>
-                                        <Button variant="outline-secondary" size="sm" onClick={() => setPhotoPreview(visit.photo)} disabled={!visit.photo}>
-                                          <ImageIcon size={14} className="me-1"/> View Photo
-                                        </Button>
-                                      </td>
+                <Card className="border-0 shadow-sm mb-4">
+                  <Card.Header className="bg-dark text-white p-3 d-flex justify-content-between align-items-center">
+                    <h6 className="mb-0 fw-bold d-flex align-items-center"><MapPin className="me-2 text-danger" size={18}/> Field Officer Site Visits</h6>
+                    <div className="d-flex gap-2 flex-wrap">
+                      <Button variant="light" size="sm" className="fw-bold text-dark d-flex align-items-center" onClick={() => downloadExcel(false)} disabled={fieldReports.length === 0}>
+                        <Download size={14} className="me-2 text-success"/> Download Visits Excel
+                      </Button>
+                      <Button variant="outline-light" size="sm" className="fw-bold text-dark d-flex align-items-center" onClick={() => downloadExcel(true)} disabled={fieldReports.length === 0}>
+                        <Download size={14} className="me-2 text-success"/> Download Visits Excel (With Photos)
+                      </Button>
+                    </div>
+                  </Card.Header>
+                  <Card.Body className="p-0">
+                    {reportsLoading ? (
+                      <div className="text-center py-5"><Spinner variant="primary" animation="border" /></div>
+                    ) : fieldReports.length === 0 ? (
+                      <div className="text-center py-5 text-muted">No field visits recorded matching these filters.</div>
+                    ) : (
+                      <div className="accordion accordion-flush" id="reportAccordion">
+                        {Object.keys(groupedReports).map((dateStr, index) => (
+                          <div className="accordion-item border-bottom" key={dateStr}>
+                            <h2 className="accordion-header">
+                              <button className="accordion-button bg-light fw-bold" type="button" data-bs-toggle="collapse" data-bs-target={`#collapse${index}`}>
+                                <Calendar size={16} className="me-2 text-primary"/>
+                                {new Date(dateStr).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+                                <Badge bg="primary" className="ms-3">{groupedReports[dateStr].length} Visits</Badge>
+                              </button>
+                            </h2>
+                            <div id={`collapse${index}`} className="accordion-collapse collapse show">
+                              <div className="accordion-body p-0">
+                                <Table hover responsive className="mb-0 align-middle small">
+                                  <thead className="table-secondary">
+                                    <tr>
+                                      <th>Photo Time</th><th>Officer</th><th>Site</th><th>Entry</th><th>Exit</th>
+                                      <th>Duration</th><th>Purpose</th><th>Remarks</th><th>Evidence</th>
                                     </tr>
-                                  ))}
-                                </tbody>
-                              </Table>
+                                  </thead>
+                                  <tbody>
+                                    {groupedReports[dateStr].map(visit => (
+                                      <tr key={visit.visit_id}>
+                                        <td className="fw-bold text-nowrap">{visit.time || 'N/A'}</td>
+                                        <td><span className="text-muted d-block" style={{fontSize:'0.7rem'}}>{visit.officer_id || 'N/A'}</span>{visit.officer_name || 'N/A'}</td>
+                                        <td><MapPin size={12} className="me-1 text-danger"/>{visit.site_name || 'N/A'}</td>
+                                        <td className="text-success fw-bold text-nowrap">{visit.entry_time || 'N/A'}</td>
+                                        <td className={visit.exit_time === 'Active' ? 'text-primary fw-bold text-nowrap' : 'text-danger fw-bold text-nowrap'}>{visit.exit_time || 'N/A'}</td>
+                                        <td>
+                                          <Badge bg={visit.duration === 'In Progress' ? 'primary' : 'secondary'} className="text-nowrap">{visit.duration || 'N/A'}</Badge>
+                                        </td>
+                                        <td><Badge bg="dark">{visit.purpose || 'N/A'}</Badge></td>
+                                        <td style={{ maxWidth: '200px' }} className="text-truncate" title={visit.remarks}>{visit.remarks || '-'}</td>
+                                        <td>
+                                          <Button variant="outline-secondary" size="sm" onClick={() => setPhotoPreview(visit.photo)} disabled={!visit.photo}>
+                                            <ImageIcon size={14} className="me-1"/> View Photo
+                                          </Button>
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </Table>
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </Card.Body>
-              </Card>
+                        ))}
+                      </div>
+                    )}
+                  </Card.Body>
+                </Card>
+              </Tab>
+
+              <Tab eventKey="attendance" title="Attendance">
+                <Card className="border-0 shadow-sm mb-4">
+                  <Card.Header className="bg-dark text-white p-3 d-flex justify-content-between align-items-center">
+                    <h6 className="mb-0 fw-bold d-flex align-items-center"><Calendar className="me-2 text-warning" size={18}/> Attendance Records</h6>
+                    <Button variant="warning" size="sm" className="fw-bold text-dark d-flex align-items-center" onClick={downloadAttendanceExcel} disabled={attendanceRecords.length === 0}>
+                      <Download size={14} className="me-2 text-dark"/> Download Attendance Excel
+                    </Button>
+                  </Card.Header>
+                  <Card.Body className="p-0">
+                    {attendanceLoading ? (
+                      <div className="text-center py-5"><Spinner variant="primary" animation="border" /></div>
+                    ) : attendanceRecords.length === 0 ? (
+                      <div className="text-center py-5 text-muted">No attendance records found for the selected filters.</div>
+                    ) : (
+                      <Table hover responsive className="mb-0 align-middle small">
+                        <thead className="table-secondary">
+                          <tr>
+                            <th>Date</th><th>Employee ID</th><th>Name</th><th>Role</th><th>Site</th>
+                            <th>Check-In</th><th>Check-Out</th><th>Duration</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {attendanceRecords.map((record, idx) => (
+                            <tr key={idx}>
+                              <td>{record.date || 'N/A'}</td>
+                              <td>{record.employee_id || 'N/A'}</td>
+                              <td>{record.employee_name || 'N/A'}</td>
+                              <td>{record.user_type || 'N/A'}</td>
+                              <td>{record.site_name || 'N/A'}</td>
+                              <td>{record.checkin_time || 'N/A'}</td>
+                              <td>{record.checkout_time || 'N/A'}</td>
+                              <td>{record.duration || 'N/A'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </Table>
+                    )}
+                  </Card.Body>
+                </Card>
+              </Tab>
+            </Tabs>
           </div>
         </Tab>
       </Tabs>
