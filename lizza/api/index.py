@@ -74,7 +74,6 @@ r = SafeRedisClient(redis_client)
 init_db()
 PEPPER = os.environ.get("SECRET_PEPPER", "change_me_in_vercel_settings")
 
-# --- TIMEZONE & SHIFT HELPERS ---
 def convert_utc_to_ist(utc_dt):
     if not utc_dt: return None
     if utc_dt.tzinfo is not None: utc_dt = utc_dt.replace(tzinfo=None)
@@ -86,14 +85,11 @@ def is_time_between(start_str, end_str, check_str):
         return start_str <= check_str <= end_str
     else: 
         return start_str <= check_str or check_str <= end_str
+
 def get_site_at_location(lat, lon, db):
-    # Fetch all offices and apply a fast bounding-box filter before precise distance
     offices = db.query(OfficeLocation).all()
     for office in offices:
-        # approximate degree differences for given radius (meters -> degrees)
-        # 1 degree latitude ~= 111320 meters
         lat_diff = office.radius / 111320.0
-        # longitude degree size varies with latitude
         lon_diff = office.radius / (111320.0 * max(0.000001, math.cos(math.radians(office.lat))))
         if abs(lat - office.lat) > lat_diff or abs(lon - office.lon) > lon_diff:
             continue
@@ -101,6 +97,7 @@ def get_site_at_location(lat, lon, db):
         if distance <= office.radius:
             return office
     return None
+
 class AuthRequest(BaseModel): 
     email: str
     password: str
@@ -121,7 +118,6 @@ class CheckAction(BaseModel):
     lat: Optional[float] = None
     lon: Optional[float] = None
 
-# --- HELPERS ---
 def get_db():
     db = SessionLocal()
     try: yield db
@@ -200,7 +196,6 @@ def safe_encrypt(data: str) -> str:
         return None
     return cipher.encrypt(str(data).encode()).decode()
 
-# --- AUTH & PROFILE ---
 @app.post("/api/login")
 def login(data: AuthRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == data.email.lower().strip()).first()
@@ -237,7 +232,6 @@ def change_password(data: PasswordChange, db: Session = Depends(get_db)):
     db.commit()
     return {"status": "success"}
 
-# --- MANAGER & ONBOARDING ---
 @app.post("/api/manager/add-employee")
 async def add_employee(
     first_name: str = Form(...), last_name: str = Form(...), phone_number: str = Form(...), 
@@ -275,7 +269,6 @@ async def add_employee(
     fingerprints_left: Optional[UploadFile] = File(None), fingerprints_right: Optional[UploadFile] = File(None),
     bank_passbook: Optional[UploadFile] = File(None),
     
-    # --- ADDED: EXTRA DOCUMENTS PARAMETERS ---
     extra_files: Optional[List[UploadFile]] = File(None),
     extra_docs_info: Optional[str] = Form(None),
     
@@ -316,7 +309,6 @@ async def add_employee(
     right_fp_url = upload_to_cloud(fingerprints_right) if kyc_mode == 'without_aadhaar' else None
     passbook_url = upload_to_cloud(bank_passbook) 
 
-    # --- ADDED: EXTRA DOCUMENTS PROCESSING ---
     final_extra_docs = []
     if extra_docs_info and extra_files:
         try:
@@ -335,7 +327,6 @@ async def add_employee(
 
     extra_documents_json_str = json.dumps(final_extra_docs) if final_extra_docs else None
 
-    # --- UPDATED: USER CREATION WITH extra_documents_json ---
     new_user = User(
         first_name=first_name, last_name=last_name, full_name=f"{first_name} {last_name}",
         email=base_email, personal_email=personal_email, phone_number=phone_number,
@@ -402,7 +393,6 @@ async def manager_tracking_ws(websocket: WebSocket, manager_id: int):
     finally:
         manager_connections.get(manager_id, set()).discard(websocket)
 
-# --- ADMIN ROUTES ---
 @app.post("/api/admin/verify-employee")
 def verify_employee(target_email: str, admin_email: str, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == target_email).first()
@@ -436,7 +426,6 @@ def update_location_endpoint(loc_id: int, data: LocationCreate, db: Session = De
 
 @app.get("/api/admin/live-tracking")
 def get_live_tracking(admin_email: str, db: Session = Depends(get_db)):
-    """Get real-time tracking of all verified users with location details"""
     users = db.query(User).filter(User.is_verified == True).all()
     results = []
     for u in users:
@@ -448,7 +437,6 @@ def get_live_tracking(admin_email: str, db: Session = Depends(get_db)):
                 lat, lon = float(parts[0]), float(parts[1])
             except: pass
         
-        # Get current geofence if inside
         site_name = None
         if lat and lon:
             site = get_site_at_location(lat, lon, db)
@@ -470,7 +458,6 @@ def get_live_tracking(admin_email: str, db: Session = Depends(get_db)):
 
 @app.websocket("/ws/admin-tracking")
 async def admin_tracking_ws(websocket: WebSocket, admin_id: int):
-    """WebSocket for admin real-time tracking of all users"""
     await websocket.accept()
     connections = manager_connections.setdefault(f"admin_{admin_id}", set())
     connections.add(websocket)
@@ -482,10 +469,8 @@ async def admin_tracking_ws(websocket: WebSocket, admin_id: int):
     finally:
         manager_connections.get(f"admin_{admin_id}", set()).discard(websocket)
 
-
 @app.post("/api/admin/update-employee-inline")
 def update_employee_inline(data: dict, db: Session = Depends(get_db)):
-    # Best practice: Look up by ID to allow email edits. Fallback to email if ID is missing.
     user_id = data.get("id")
     if user_id:
         user = db.query(User).filter(User.id == user_id).first()
@@ -494,7 +479,6 @@ def update_employee_inline(data: dict, db: Session = Depends(get_db)):
         
     if not user: raise HTTPException(404, "User not found")
     
-    # Update all possible fields sent from the frontend Edit Modal
     if "full_name" in data: user.full_name = data.get("full_name")
     if "email" in data: user.email = data.get("email")
     if "phone_number" in data: user.phone_number = data.get("phone_number")
@@ -519,31 +503,26 @@ def delete_employee(user_id: int, db: Session = Depends(get_db)):
         if user.user_type == 'admin' or user.email == 'admin@lizza.com':
             raise HTTPException(status_code=403, detail="Security protocol prevents deleting the Super Admin account.")
 
-        # 1. Clear Manager references
         db.query(User).filter(User.manager_id == user_id).update({"manager_id": None})
         
-        # 2. Delete related records (Ensure all referenced tables are included)
         db.query(EmployeeLocation).filter(EmployeeLocation.user_id == user_id).delete()
         db.query(SiteVisit).filter(SiteVisit.officer_id == user_id).delete()
         db.query(SiteStay).filter(SiteStay.officer_id == user_id).delete()
         
-        # ADD THIS: Clear Attendance records
         try:
             from .database import Attendance
             db.query(Attendance).filter(Attendance.user_id == user_id).delete()
         except: pass
 
-        # 3. Existing logs cleanup
         db.execute(text("DELETE FROM field_visit_logs WHERE officer_id = :uid"), {"uid": user_id})
 
-        # 4. Final deletion
         db.delete(user)
         db.commit()
         return {"status": "success", "message": "Employee and all related records deleted."}
 
     except Exception as e:
         db.rollback() 
-        print(f"Delete Error Details: {str(e)}") # Check your console logs for the exact constraint name
+        print(f"Delete Error Details: {str(e)}") 
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @app.delete("/api/admin/delete-location/{loc_id}")
@@ -579,7 +558,6 @@ def delete_attendance(attendance_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"status": "success"}
 
-# --- FIELD OFFICER & REPORTING ROUTES ---
 @app.post("/api/field-officer/log-visit")
 async def log_site_visit(
     email: str = Form(...), location_id: int = Form(...), purpose: str = Form(...), remarks: str = Form(""),
@@ -593,13 +571,11 @@ async def log_site_visit(
     distance = get_distance(lat, lon, site.lat, site.lon)
     if distance > site.radius: raise HTTPException(400, f"Geotag validation failed. You are {int(distance)}m away from the site. Must be within {site.radius}m.")
 
-    # Require an active SiteStay (i.e., user must Check-In first) before allowing photo upload.
     now_utc = datetime.utcnow()
     active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
     if not active_stay or active_stay.location_id != site.id:
         raise HTTPException(400, "You must Check-In at the site before uploading a visit photo.")
 
-    # Prevent uploads after user has already checked out and visited the same site for the day
     visited_key = f"visited:{user.email}:{site.id}"
     if r and r.get(visited_key):
         raise HTTPException(400, "This site has already been visited. Next visit allowed after 18:00.")
@@ -643,7 +619,6 @@ def get_monthly_field_visits(
     for v, u, loc in results:
         ist_time = convert_utc_to_ist(v.visit_time)
         
-        # --- FIX 2: Added a 5-minute buffer to catch slight timing mismatches ---
         stay = db.query(SiteStay).filter(
             SiteStay.officer_id == v.officer_id, 
             SiteStay.location_id == v.location_id, 
@@ -652,7 +627,6 @@ def get_monthly_field_visits(
 
         entry_str, exit_str, duration_str = "N/A", "N/A", "N/A"
         
-        # Apply the buffer to the exit time check as well
         if stay and (stay.exit_time is None or stay.exit_time >= v.visit_time - timedelta(minutes=5)):
             entry_ist = convert_utc_to_ist(stay.entry_time)
             entry_str = entry_ist.strftime("%I:%M %p") if entry_ist else "N/A"
@@ -725,29 +699,22 @@ async def manual_sync(
     site = db.query(OfficeLocation).filter(OfficeLocation.id == location_id).first()
     if not site: raise HTTPException(404, "Site not found")
 
-    # Double-check geofence server-side for security
     distance = get_distance(lat, lon, site.lat, site.lon)
     if distance > site.radius: raise HTTPException(400, f"Validation failed. You are outside the {site.radius}m geofence.")
 
     now_utc = datetime.utcnow()
 
-    # Check if this site was already visited today before allowing another in-check.
     visited_key = f"visited:{user.email}:{site.id}"
     if type == 'in' and r and r.get(visited_key):
         raise HTTPException(400, "This site was already visited. Next visit allowed after 18:00.")
 
     if type == 'in':
-        try:
-            last_visit = db.query(SiteVisit).filter(SiteVisit.officer_id == user.id, SiteVisit.location_id == site.id).order_by(SiteVisit.visit_time.desc()).first()
-            if last_visit:
-                last_visit_ist = convert_utc_to_ist(last_visit.visit_time)
-                now_ist = convert_utc_to_ist(now_utc)
-                if last_visit_ist and last_visit_ist.date() == now_ist.date() and now_ist.hour < 18:
-                    raise HTTPException(400, "This site was already visited today. Next visit allowed after 18:00.")
-        except HTTPException:
-            raise
-        except Exception:
-            pass
+        last_visit = db.query(SiteVisit).filter(SiteVisit.officer_id == user.id, SiteVisit.location_id == site.id).order_by(SiteVisit.visit_time.desc()).first()
+        if last_visit:
+            last_visit_ist = convert_utc_to_ist(last_visit.visit_time)
+            now_ist = convert_utc_to_ist(now_utc)
+            if last_visit_ist and last_visit_ist.date() == now_ist.date() and now_ist.hour < 18:
+                raise HTTPException(400, "This site was already visited today. Next visit allowed after 18:00.")
 
     active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
 
@@ -768,7 +735,6 @@ async def manual_sync(
         
     raise HTTPException(400, "Invalid sync type")
 
-# --- USER & LOCATION TRACKING ---
 @app.post("/api/user/update-location")
 async def update_location(email: str, lat: float, lon: float, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == email.lower().strip()).first()
@@ -787,67 +753,43 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
         active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
 
         if current_site:
-            if not active_stay or active_stay.location_id != current_site.id:
-                if active_stay: active_stay.exit_time = now_utc
-                db.add(SiteStay(officer_id=user.id, location_id=current_site.id, entry_time=now_utc))
-                db.commit()
-            # Clear outside tracking when back inside
+            if user.is_present: 
+                if not active_stay or active_stay.location_id != current_site.id:
+                    if active_stay: active_stay.exit_time = now_utc
+                    db.add(SiteStay(officer_id=user.id, location_id=current_site.id, entry_time=now_utc))
+                    db.commit()
+            else:
+                if active_stay:
+                    active_stay.exit_time = now_utc
+                    db.commit()
+
             if r: r.delete(f"outside:{email}")
         else:
             if active_stay:
                 active_stay.exit_time = now_utc
                 db.commit()
-            # Track when user went outside geofence
             if r:
                 outside_key = f"outside:{email}"
                 outside_time_str = r.get(outside_key)
                 if not outside_time_str:
-                    # First time going outside, set timestamp
-                    r.set(outside_key, now_utc.isoformat(), ex=600)  # 10 min buffer
+                    r.set(outside_key, now_utc.isoformat(), ex=600)  
                 else:
-                    # Check if been outside for > 5 minutes
-                    try:
-                        outside_time = datetime.fromisoformat(outside_time_str)
-                        outside_duration = (now_utc - outside_time).total_seconds()
-                        if outside_duration > 300:  # 5 minutes
-                            # Auto-checkout: set attendance checkout and SiteStay exit_time
-                            from .database import Attendance
-                            att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
-                            if att:
-                                att.checkout_time = now_utc
-                                att.duration_seconds = int((att.checkout_time - att.checkin_time).total_seconds())
-                                user.is_present = False
-                                # set SiteStay exit_time if present
-                                if active_stay:
-                                    active_stay.exit_time = now_utc
-                                db.commit()
-                                r.delete(outside_key)
-                    except Exception as e:
-                        print(f"Auto-checkout error: {e}")
-
-        response = {
-            "is_inside": current_site is not None,
-            "status": "inside" if current_site is not None else "outside",
-            "message": "Inside Geofence" if current_site is not None else "Outside Geofence",
-            "site_name": current_site.name if current_site else None
-        }
-        if user.manager_id:
-            await broadcast_manager_update(user.manager_id, {
-                "type": "location_update",
-                "data": {
-                    "email": user.email,
-                    "name": user.full_name,
-                    "lat": lat,
-                    "lon": lon,
-                    "present": current_site is not None,
-                    "site_name": current_site.name if current_site else None
-                }
-            })
-        return response
+                    outside_time = datetime.fromisoformat(outside_time_str)
+                    outside_duration = (now_utc - outside_time).total_seconds()
+                    if outside_duration > 300:  
+                        from .database import Attendance
+                        att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
+                        if att:
+                            att.checkout_time = now_utc
+                            att.duration_seconds = int((att.checkout_time - att.checkin_time).total_seconds())
+                            user.is_present = False
+                            if active_stay:
+                                active_stay.exit_time = now_utc
+                            db.commit()
+                            r.delete(outside_key)
 
     current_site = get_site_at_location(lat, lon, db)
     
-    # Auto-checkout for regular employees outside office for 5+ minutes
     if not current_site and user.user_type in ['employee', 'manager']:
         if r:
             outside_key = f"outside:{email}"
@@ -855,20 +797,17 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
             if not outside_time_str:
                 r.set(outside_key, now_utc.isoformat(), ex=600)
             else:
-                try:
-                    outside_time = datetime.fromisoformat(outside_time_str)
-                    outside_duration = (now_utc - outside_time).total_seconds()
-                    if outside_duration > 300:
-                        from .database import Attendance
-                        att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
-                        if att:
-                            att.checkout_time = now_utc
-                            att.duration_seconds = int((att.checkout_time - att.checkin_time).total_seconds())
-                            user.is_present = False
-                            db.commit()
-                            r.delete(outside_key)
-                except Exception as e:
-                    print(f"Auto-checkout error: {e}")
+                outside_time = datetime.fromisoformat(outside_time_str)
+                outside_duration = (now_utc - outside_time).total_seconds()
+                if outside_duration > 300:
+                    from .database import Attendance
+                    att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
+                    if att:
+                        att.checkout_time = now_utc
+                        att.duration_seconds = int((att.checkout_time - att.checkin_time).total_seconds())
+                        user.is_present = False
+                        db.commit()
+                        r.delete(outside_key)
     elif current_site and r:
         r.delete(f"outside:{email}")
     
@@ -895,7 +834,6 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
 
 @app.post("/api/user/checkin")
 def user_checkin(data: CheckAction, db: Session = Depends(get_db)):
-    # Calculate site dynamically
     site = get_site_at_location(data.lat, data.lon, db)
     if not site:
         raise HTTPException(400, "You are not inside any valid geofence area.")
@@ -904,7 +842,6 @@ def user_checkin(data: CheckAction, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(404, "User not found")
     
-    # Check if already checked in
     from .database import Attendance
     open_attendance = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
     if open_attendance:
@@ -912,33 +849,27 @@ def user_checkin(data: CheckAction, db: Session = Depends(get_db)):
 
     now_utc = datetime.utcnow()
 
-    # Prevent re-checkin at same site until 18:00 local if already visited earlier
     now_ist = convert_utc_to_ist(now_utc)
     visited_key = f"visited:{user.email}:{site.id}"
     if r and r.get(visited_key):
         raise HTTPException(400, "This site was already visited. Next visit allowed after 18:00.")
-    # Fallback DB check if Redis not available
-    try:
-        last_visit = db.query(SiteVisit).filter(SiteVisit.officer_id == user.id, SiteVisit.location_id == site.id).order_by(SiteVisit.visit_time.desc()).first()
-        if last_visit:
-            last_visit_ist = convert_utc_to_ist(last_visit.visit_time)
-            if last_visit_ist and last_visit_ist.date() == now_ist.date() and now_ist.hour < 18:
-                raise HTTPException(400, "This site was already visited today. Next visit allowed after 18:00.")
-    except Exception:
-        pass
 
-    # Store the location_id of the site they checked into and create SiteStay for field officers
+    last_visit = db.query(SiteVisit).filter(SiteVisit.officer_id == user.id, SiteVisit.location_id == site.id).order_by(SiteVisit.visit_time.desc()).first()
+    if last_visit:
+        last_visit_ist = convert_utc_to_ist(last_visit.visit_time)
+        if last_visit_ist and last_visit_ist.date() == now_ist.date() and now_ist.hour < 18:
+            raise HTTPException(400, "This site was already visited today. Next visit allowed after 18:00.")
+
     attendance = Attendance(user_id=user.id, checkin_time=now_utc, date=now_utc, location_id=site.id)
     user.is_present = True
     db.add(attendance)
-    # Create SiteStay for field officers to allow visit uploads and checkout
+
     if user.user_type == 'field_officer':
         db.add(SiteStay(officer_id=user.id, location_id=site.id, entry_time=now_utc))
     db.commit()
-    # clear any outside flag
+    
     if r: r.delete(f"outside:{user.email}")
     return {"status": "success", "message": f"Checked In at {site.name}", "site_name": site.name}
-
 
 @app.post("/api/user/checkout")
 def user_checkout(data: CheckAction, db: Session = Depends(get_db)):
@@ -956,34 +887,27 @@ def user_checkout(data: CheckAction, db: Session = Depends(get_db)):
     att.duration_seconds = int((att.checkout_time - att.checkin_time).total_seconds())
     user.is_present = False
 
-    # set SiteStay exit_time if exists
     active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
     if active_stay:
         active_stay.exit_time = now_utc
 
-    # Mark site as visited until next 18:00 IST so user cannot re-upload/re-checkin for same site
-    try:
-        now_ist = convert_utc_to_ist(now_utc)
-        today_18_ist = now_ist.replace(hour=18, minute=0, second=0, microsecond=0)
-        if now_ist >= today_18_ist:
-            # next day 18:00
-            next_18_ist = today_18_ist + timedelta(days=1)
-        else:
-            next_18_ist = today_18_ist
-        # convert back to UTC for expiry calc
-        next_18_utc = next_18_ist - timedelta(hours=5, minutes=30)
-        expiry_seconds = int((next_18_utc - now_utc).total_seconds())
-        if expiry_seconds > 0 and r:
-            r.set(f"visited:{user.email}:{att.location_id}", "1", ex=expiry_seconds)
-    except Exception:
-        pass
+    now_ist = convert_utc_to_ist(now_utc)
+    today_18_ist = now_ist.replace(hour=18, minute=0, second=0, microsecond=0)
+    if now_ist >= today_18_ist:
+        next_18_ist = today_18_ist + timedelta(days=1)
+    else:
+        next_18_ist = today_18_ist
+
+    next_18_utc = next_18_ist - timedelta(hours=5, minutes=30)
+    expiry_seconds = int((next_18_utc - now_utc).total_seconds())
+    if expiry_seconds > 0 and r:
+        r.set(f"visited:{user.email}:{att.location_id}", "1", ex=expiry_seconds)
 
     db.commit()
     return {"status": "success", "message": "Checked Out"}
 
 @app.post("/api/user/sync-offline-locations")
 async def sync_offline_locations(email: str, locations: List[dict], db: Session = Depends(get_db)):
-    """Sync offline location pings when user comes back online"""
     user = db.query(User).filter(User.email == email.lower().strip()).first()
     if not user:
         raise HTTPException(404, "User not found")
@@ -993,28 +917,24 @@ async def sync_offline_locations(email: str, locations: List[dict], db: Session 
     
     synced = 0
     for loc_data in locations:
-        try:
-            lat, lon = loc_data.get('lat'), loc_data.get('lon')
-            timestamp = loc_data.get('timestamp')
-            if lat and lon:
-                current_site = get_site_at_location(lat, lon, db)
-                # Broadcast to manager
-                if user.manager_id and current_site:
-                    await broadcast_manager_update(user.manager_id, {
-                        "type": "location_update",
-                        "data": {
-                            "email": user.email,
-                            "name": user.full_name,
-                            "lat": lat,
-                            "lon": lon,
-                            "present": True,
-                            "site_name": current_site.name,
-                            "note": "(synced offline)"
-                        }
-                    })
-                synced += 1
-        except Exception as e:
-            print(f"Sync location error: {e}")
+        lat, lon = loc_data.get('lat'), loc_data.get('lon')
+        timestamp = loc_data.get('timestamp')
+        if lat and lon:
+            current_site = get_site_at_location(lat, lon, db)
+            if user.manager_id and current_site:
+                await broadcast_manager_update(user.manager_id, {
+                    "type": "location_update",
+                    "data": {
+                        "email": user.email,
+                        "name": user.full_name,
+                        "lat": lat,
+                        "lon": lon,
+                        "present": True,
+                        "site_name": current_site.name,
+                        "note": "(synced offline)"
+                    }
+                })
+            synced += 1
     
     return {"status": "success", "synced": synced, "message": f"Synced {synced} location pings"}
 
@@ -1022,7 +942,6 @@ async def sync_offline_locations(email: str, locations: List[dict], db: Session 
 async def sync_offline_state(
     email: str, locations: List[dict], attendanceState: dict = None, db: Session = Depends(get_db)
 ):
-    """Sync complete offline state including attendance records and location history"""
     user = db.query(User).filter(User.email == email.lower().strip()).first()
     if not user:
         raise HTTPException(404, "User not found")
@@ -1036,17 +955,12 @@ async def sync_offline_state(
     synced_locations = 0
     current_site = None
     
-    # Process all synced locations
     for loc_data in locations:
-        try:
-            lat, lon = loc_data.get('lat'), loc_data.get('lon')
-            if lat and lon:
-                current_site = get_site_at_location(lat, lon, db)
-                synced_locations += 1
-        except Exception as e:
-            print(f"Sync error: {e}")
+        lat, lon = loc_data.get('lat'), loc_data.get('lon')
+        if lat and lon:
+            current_site = get_site_at_location(lat, lon, db)
+            synced_locations += 1
     
-    # Reconstruct attendance state
     checked_in = False
     site_name = None
     
@@ -1054,7 +968,6 @@ async def sync_offline_state(
         checked_in = attendanceState.get('checkedIn', False)
         site_name = attendanceState.get('currentSite', None)
         
-        # If was checked in offline, create/update attendance record
         if checked_in:
             open_att = db.query(Attendance).filter(
                 Attendance.user_id == user.id,
@@ -1062,7 +975,6 @@ async def sync_offline_state(
             ).first()
             
             if not open_att and current_site:
-                # Create attendance if it doesn't exist
                 att = Attendance(
                     user_id=user.id,
                     checkin_time=now_utc - timedelta(minutes=5),
@@ -1074,7 +986,6 @@ async def sync_offline_state(
                 checked_in = True
                 site_name = current_site.name
     
-    # Broadcast to manager for live tracking
     if user.manager_id and current_site:
         await broadcast_manager_update(user.manager_id, {
             "type": "location_update",
@@ -1097,8 +1008,6 @@ async def sync_offline_state(
         "message": f"Synced {synced_locations} location pings and attendance state"
     }
 
-
-# --- e-KYC EXTRACTION ---
 @app.post("/api/manager/extract-ekyc")
 async def extract_ekyc(file: UploadFile = File(...), share_code: str = Form(...)):
     try:

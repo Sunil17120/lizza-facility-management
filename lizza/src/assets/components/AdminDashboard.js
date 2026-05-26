@@ -13,7 +13,6 @@ import markerShadow from 'leaflet/dist/images/marker-shadow.png';
 let DefaultIcon = L.icon({ iconUrl: markerIcon, shadowUrl: markerShadow, iconSize: [25, 41], iconAnchor: [12, 41] });
 L.Marker.prototype.options.icon = DefaultIcon;
 
-// Helper to create color-coded live tracking icons
 const getStatusIcon = (isPresent) => {
   return L.divIcon({
     html: `<div style="
@@ -30,13 +29,11 @@ const getStatusIcon = (isPresent) => {
   });
 };
 
-// CRASH-PROOF JSON PARSER: Filters out nulls and safely handles undefined inputs
 const safeParseJSON = (jsonStr) => {
     if (!jsonStr || jsonStr === 'null' || jsonStr === 'undefined') return [];
     try {
         const parsed = JSON.parse(jsonStr);
         const arr = Array.isArray(parsed) ? parsed : (typeof parsed === 'object' && parsed !== null ? [parsed] : []);
-        // Remove any nulls that might have snuck into the array
         return arr.filter(item => item !== null && item !== undefined);
     } catch (e) {
         return [];
@@ -44,18 +41,15 @@ const safeParseJSON = (jsonStr) => {
 };
 
 const AdminDashboard = () => {
-  // --- CORE STATES ---
   const [mainTab, setMainTab] = useState('overview');
   const [employees, setEmployees] = useState([]);
   const [locations, setLocations] = useState([]);
   const [liveLocations, setLiveLocations] = useState([]);
   const [loading, setLoading] = useState(true);
   
-  // --- VERIFICATION STATES ---
   const [showNotif, setShowNotif] = useState(false);
   const [selectedStaff, setSelectedStaff] = useState(null);
 
-  // --- UI STATES ---
   const [showAddEmp, setShowAddEmp] = useState(false);
   const [newLoc, setNewLoc] = useState({ name: '', lat: '', lon: '', radius: 200 });
   const [editLocModal, setEditLocModal] = useState(false);
@@ -64,12 +58,11 @@ const AdminDashboard = () => {
   const [editingEmp, setEditingEmp] = useState(null);
   const [empSearchQuery, setEmpSearchQuery] = useState('');
   
-  // --- REPORTS STATES ---
   const [reportMonth, setReportMonth] = useState(new Date().getMonth() + 1);
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
   const [filterRole, setFilterRole] = useState('all');
   const [reportOfficerSearch, setReportOfficerSearch] = useState('');
-  const [showReportSuggestions, setShowReportSuggestions] = useState(false); // Controls the dropdown visibility
+  const [showReportSuggestions, setShowReportSuggestions] = useState(false);
   const [filterSite, setFilterSite] = useState('');
   const [reportsSubTab, setReportsSubTab] = useState('site-visits');
   
@@ -78,13 +71,12 @@ const AdminDashboard = () => {
   const [reportsLoading, setReportsLoading] = useState(false);
   const [attendanceLoading, setAttendanceLoading] = useState(false);
   const [photoPreview, setPhotoPreview] = useState(null);
-  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(false);
+  
+  // Set to true by default to immediately sync reports
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
   
   const adminEmail = localStorage.getItem('userEmail');
 
-  // =========================================================================
-  // --- DATA PROCESSING ---
-  // =========================================================================
   const pending = employees.filter(e => !e?.is_verified && e?.user_type !== 'admin');
   const verified = employees.filter(e => e?.is_verified);
   const reportPersonnel = verified.filter(e => {
@@ -105,7 +97,6 @@ const AdminDashboard = () => {
     return { ...mgr, teamSize };
   });
 
-  // --- 1. CORE DATA FETCHING ---
   const fetchBaseData = useCallback(async () => {
     try {
       const [empRes, locRes, liveRes] = await Promise.all([
@@ -124,14 +115,12 @@ const AdminDashboard = () => {
 
   useEffect(() => { fetchBaseData(); }, [fetchBaseData]);
 
-  // --- 2. REPORTS DATA FETCHING ---
   const fetchReportsData = useCallback(async () => {
     if (mainTab !== 'reports') return;
     setReportsLoading(true);
     try {
       let url = `/api/admin/reports/monthly-field-visits?month=${reportMonth}&year=${reportYear}`;
       
-      // EXPANDED: Now matches by Name, Email, ID, and Phone Number
       if (reportOfficerSearch && employees.length > 0) {
         const matchedOfficer = employees.find(o => 
           o.is_verified &&
@@ -189,18 +178,18 @@ const AdminDashboard = () => {
     fetchAttendanceData();
   }, [fetchAttendanceData]);
 
-  // AUTO-REFRESH ATTENDANCE TABLE EVERY 10 SECONDS
+  // AUTO-REFRESH REPORTS EVERY 10 SECONDS
   useEffect(() => {
-    if (mainTab !== 'reports' || reportsSubTab !== 'attendance') return;
+    if (mainTab !== 'reports' || !autoRefreshEnabled) return;
     
     const refreshInterval = setInterval(() => {
-      fetchAttendanceData();
-    }, 10000); // Refresh every 10 seconds
+      if (reportsSubTab === 'attendance') fetchAttendanceData();
+      if (reportsSubTab === 'site-visits') fetchReportsData();
+    }, 10000); 
     
     return () => clearInterval(refreshInterval);
-  }, [fetchAttendanceData, mainTab, reportsSubTab]);
+  }, [fetchAttendanceData, fetchReportsData, mainTab, reportsSubTab, autoRefreshEnabled]);
 
-  // --- ACTIONS: EMPLOYEES ---
   const handleVerify = async (email) => {
       const res = await fetch(`/api/admin/verify-employee?target_email=${email}&admin_email=${adminEmail}`, { method: 'POST' });
       if (res.ok) { alert("Verified!"); setSelectedStaff(null); fetchBaseData(); }
@@ -265,7 +254,6 @@ const AdminDashboard = () => {
     emp.blockchain_id?.includes(empSearchQuery)
   );
 
-  // --- ACTIONS: BRANCHES ---
   const handleAddBranch = async (e) => {
     e.preventDefault();
     await fetch('/api/admin/add-location', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newLoc) });
@@ -289,7 +277,6 @@ const AdminDashboard = () => {
     }
   };
 
-  // --- EXCEL DOWNLOADER ---
   const downloadExcel = (withPhotos = false) => {
     let tableHtml = `
       <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
@@ -343,7 +330,6 @@ const AdminDashboard = () => {
     try {
       let url = `/api/admin/reports/monthly-attendance?month=${reportMonth}&year=${reportYear}`;
       
-      // EXPANDED: Now matches by Name, Email, ID, and Phone Number
       if (reportOfficerSearch && employees.length > 0) {
         const matchedOfficer = employees.find(o => 
           o.is_verified &&
@@ -410,7 +396,6 @@ const AdminDashboard = () => {
     }
   };
 
-  // --- FULL COMPREHENSIVE PDF GENERATOR ---
   const handlePrintProfile = () => {
     const printWindow = window.open('', '_blank');
     
@@ -548,7 +533,6 @@ const AdminDashboard = () => {
           ${docsHtml || '<p style="text-align: center; color: #777;">No documents uploaded to this profile.</p>'}
           
           <script>
-            // We wait 1.5 seconds to ensure all images load before triggering print
             window.onload = function() {
                 setTimeout(() => { window.print(); window.close(); }, 1500);
             };
@@ -562,7 +546,6 @@ const AdminDashboard = () => {
 
   return (
     <Container className="py-4">
-      {/* --- HEADER --- */}
       <div className="d-flex justify-content-between align-items-center mb-4 border-bottom pb-3">
         <h2 className="fw-bold m-0 d-flex align-items-center"><UserCog className="text-danger me-3" size={32} />System Administration</h2>
         <div className="d-flex gap-2">
@@ -576,9 +559,6 @@ const AdminDashboard = () => {
 
       <Tabs activeKey={mainTab} onSelect={(k) => setMainTab(k)} className="mb-4 shadow-sm bg-white rounded">
         
-        {/* ========================================== */}
-        {/* TAB 1: SYSTEM OVERVIEW                     */}
-        {/* ========================================== */}
         <Tab eventKey="overview" title={<span className="fw-bold px-3">System Overview</span>}>
           
           <Row className="mb-4 text-center">
@@ -588,7 +568,6 @@ const AdminDashboard = () => {
           </Row>
 
           <Row>
-            {/* Branch Management Sidebar */}
             <Col md={4}>
               <Card className="border-0 shadow-sm p-3 mb-4">
                 <h6 className="fw-bold mb-3"><Building2 size={18} className="me-2 text-danger"/>Office Branches</h6>
@@ -617,7 +596,6 @@ const AdminDashboard = () => {
               </Card>
             </Col>
 
-            {/* Live Map */}
             <Col md={8}>
               <Card className="border-0 shadow-sm overflow-hidden mb-4" style={{ height: '380px' }}>
                 <MapContainer center={[22.5726, 88.3639]} zoom={5} style={{ height: '100%' }}>
@@ -650,7 +628,6 @@ const AdminDashboard = () => {
             </Col>
           </Row>
 
-          {/* Employee Directory */}
           <Card className="border-0 shadow-sm">
             <Table responsive hover className="align-middle mb-0 small">
               <thead className="table-light text-uppercase">
@@ -702,7 +679,6 @@ const AdminDashboard = () => {
                             <option value="employee">Employee</option>
                             <option value="field_officer">Field Officer</option>
                             <option value="manager">Manager</option>
-                            <option value="admin">Admin</option>
                         </Form.Select>
                     </td>
 
@@ -721,9 +697,6 @@ const AdminDashboard = () => {
           </Card>
         </Tab>
 
-        {/* ========================================== */}
-        {/* TAB 2: REPORTS & FIELD OPERATIONS          */}
-        {/* ========================================== */}
         <Tab eventKey="reports" title={<span className="fw-bold px-3">Reports & Field Operations</span>}>
             
           <div className="p-3 bg-light border-bottom d-flex flex-wrap gap-4 align-items-center">
@@ -750,7 +723,6 @@ const AdminDashboard = () => {
                 <option value="employee">Normal Employees</option>
               </Form.Select>
               
-              {/* --- NEW: DYNAMIC AUTOCOMPLETE DROPDOWN UI --- */}
               <div style={{width: '250px'}} className="position-relative">
                 <Search size={16} className="position-absolute" style={{top: '8px', left: '10px', color: '#999', pointerEvents: 'none'}} />
                 <Form.Control
@@ -788,7 +760,7 @@ const AdminDashboard = () => {
                         >
                           <div className="fw-bold" style={{ fontSize: '0.85rem' }}>{emp.full_name}</div>
                           <div className="text-muted" style={{ fontSize: '0.75rem' }}>
-                              {emp.blockchain_id || 'ID N/A'} &bull; {emp.email}
+                              {emp.blockchain_id || 'ID N/A'} • {emp.email}
                           </div>
                         </button>
                       ))}
@@ -841,8 +813,27 @@ const AdminDashboard = () => {
 
                 <Card className="border-0 shadow-sm mb-4">
                   <Card.Header className="bg-dark text-white p-3 d-flex justify-content-between align-items-center">
-                    <h6 className="mb-0 fw-bold d-flex align-items-center"><MapPin className="me-2 text-danger" size={18}/> Field Officer Site Visits</h6>
+                    <div className="d-flex gap-2 align-items-center">
+                        <h6 className="mb-0 fw-bold d-flex align-items-center"><MapPin className="me-2 text-danger" size={18}/> Field Officer Site Visits</h6>
+                        {autoRefreshEnabled && (
+                          <Badge bg="success" className="ms-2 d-flex align-items-center">
+                            <span className="spinner-border spinner-border-sm me-1" style={{width: '10px', height: '10px'}}></span>
+                            Auto-Refresh ON
+                          </Badge>
+                        )}
+                    </div>
                     <div className="d-flex gap-2 flex-wrap">
+                      <Button
+                        variant={autoRefreshEnabled ? "warning" : "light"}
+                        size="sm"
+                        className={`fw-bold d-flex align-items-center ${autoRefreshEnabled ? 'text-dark' : ''}`}
+                        onClick={() => setAutoRefreshEnabled(!autoRefreshEnabled)}
+                      >
+                        🔄 {autoRefreshEnabled ? 'Pause Auto-Refresh' : 'Enable Auto-Refresh (10s)'}
+                      </Button>
+                      <Button variant="info" size="sm" className="fw-bold d-flex align-items-center" onClick={() => fetchReportsData()} disabled={reportsLoading}>
+                        {reportsLoading ? <Spinner size="sm" className="me-1" /> : '🔃'} Refresh Now
+                      </Button>
                       <Button variant="light" size="sm" className="fw-bold text-dark d-flex align-items-center" onClick={() => downloadExcel(false)} disabled={fieldReports.length === 0}>
                         <Download size={14} className="me-2 text-success"/> Download Visits Excel
                       </Button>
@@ -1000,9 +991,6 @@ const AdminDashboard = () => {
         </Tab>
       </Tabs>
 
-      {/* --- MODALS --- */}
-
-      {/* Pending Verifications Notif */}
       <Modal show={showNotif} onHide={() => setShowNotif(false)} size="lg" centered>
         <Modal.Header closeButton className="bg-light"><Modal.Title className="h5 fw-bold">Pending Approval</Modal.Title></Modal.Header>
         <Modal.Body className="p-0">
@@ -1020,7 +1008,6 @@ const AdminDashboard = () => {
         </Modal.Body>
       </Modal>
 
-      {/* COMPREHENSIVE EMPLOYEE PROFILE MODAL */}
       <Modal show={!!selectedStaff} onHide={() => setSelectedStaff(null)} size="xl" centered>
         <Modal.Header closeButton className="bg-dark text-white d-flex justify-content-between align-items-center w-100">
           <Modal.Title className="h6 mb-0">Employee Profile: {selectedStaff?.full_name || 'Unknown'}</Modal.Title>
@@ -1031,7 +1018,6 @@ const AdminDashboard = () => {
         
         <Modal.Body className="bg-light p-4">
           <Row>
-            {/* Left Sidebar Profile Info */}
             <Col md={3}>
               <Card className="p-3 shadow-sm border-0 mb-3 text-center">
                 <img src={selectedStaff?.profile_photo_path || "https://via.placeholder.com/150"} alt="Profile" className="img-fluid rounded-circle mb-3 mx-auto" style={{width: '130px', height: '130px', objectFit: 'cover', border: '3px solid #0d6efd'}} />
@@ -1054,12 +1040,10 @@ const AdminDashboard = () => {
               </Card>
             </Col>
             
-            {/* Right Detailed Tabs */}
             <Col md={9}>
               <Card className="border-0 shadow-sm p-3 h-100 overflow-auto">
                  <Tabs defaultActiveKey="identity" className="mb-4">
                     
-                    {/* TAB: IDENTITY */}
                     <Tab eventKey="identity" title="Identity">
                         <h6 className="fw-bold border-bottom pb-2 mb-3 text-primary mt-2">Personal Information</h6>
                         <Row>
@@ -1081,7 +1065,6 @@ const AdminDashboard = () => {
                         </Row>
                     </Tab>
 
-                    {/* TAB: ADDRESS */}
                     <Tab eventKey="address" title="Addresses">
                         <Row className="mt-2">
                             <Col md={6}>
@@ -1101,7 +1084,6 @@ const AdminDashboard = () => {
                         </Row>
                     </Tab>
 
-                    {/* TAB: WORK & BANK */}
                     <Tab eventKey="work" title="Work & Bank">
                         <h6 className="fw-bold border-bottom pb-2 mb-3 text-primary mt-2">Work Allocation</h6>
                         <Row>
@@ -1121,7 +1103,6 @@ const AdminDashboard = () => {
                         </Row>
                     </Tab>
 
-                    {/* TAB: BACKGROUND (JSON ARRAYS) */}
                     <Tab eventKey="background" title="Background Data">
                         <h6 className="fw-bold border-bottom pb-2 mb-3 text-primary mt-2">Education History</h6>
                         <Table size="sm" bordered hover className="mb-4 small">
@@ -1154,7 +1135,6 @@ const AdminDashboard = () => {
                         </Table>
                     </Tab>
 
-                    {/* TAB: DOCUMENTS & KYC */}
                     <Tab eventKey="documents" title="KYC Documents">
                         <h6 className="fw-bold border-bottom pb-2 mb-3 text-primary mt-2">Government IDs & KYC</h6>
                         <Row className="mb-4">
@@ -1220,7 +1200,6 @@ const AdminDashboard = () => {
                                 </Col>
                             )}
                             
-                            {/* NEW: EXTRA DOCUMENTS RENDERER */}
                             {safeParseJSON(selectedStaff?.extra_documents_json).map((doc, idx) => (
                                 doc?.path && (
                                     <Col md={6} className="mb-3 text-center" key={idx}>
@@ -1240,7 +1219,6 @@ const AdminDashboard = () => {
         </Modal.Body>
       </Modal>
 
-      {/* Onboarding Modal */}
       <Modal show={showAddEmp} onHide={() => setShowAddEmp(false)} size="lg" centered>
           <Modal.Header closeButton className="bg-light"><Modal.Title className="h5 fw-bold">Onboard New Employee</Modal.Title></Modal.Header>
           <Modal.Body className="p-4">
@@ -1248,7 +1226,6 @@ const AdminDashboard = () => {
           </Modal.Body>
       </Modal>
 
-      {/* Edit Branch Modal */}
       <Modal show={editLocModal} onHide={() => setEditLocModal(false)} centered>
           <Modal.Header closeButton><Modal.Title className="h6 fw-bold">Edit Branch Location</Modal.Title></Modal.Header>
           <Modal.Body>
@@ -1266,7 +1243,6 @@ const AdminDashboard = () => {
           </Modal.Body>
       </Modal>
 
-      {/* Edit Employee Details Modal */}
       <Modal show={editEmpModal} onHide={() => setEditEmpModal(false)} size="lg" centered>
         <Modal.Header closeButton className="bg-info text-white"><Modal.Title className="h6 fw-bold"><Edit2 className="me-2" size={18}/>Edit Employee Details</Modal.Title></Modal.Header>
         <Modal.Body className="p-4">
@@ -1354,7 +1330,6 @@ const AdminDashboard = () => {
                       <option value="employee">Employee</option>
                       <option value="field_officer">Field Officer</option>
                       <option value="manager">Manager</option>
-                      <option value="admin">Admin</option>
                     </Form.Select>
                   </Form.Group>
                 </Col>
@@ -1422,7 +1397,6 @@ const AdminDashboard = () => {
         </Modal.Body>
       </Modal>
 
-      {/* Geotag Photo Viewer */}
       <Modal show={!!photoPreview} onHide={() => setPhotoPreview(null)} centered size="lg">
         <Modal.Header closeButton className="bg-dark text-white border-0"><Modal.Title className="h6 fw-bold">Geotagged Evidence</Modal.Title></Modal.Header>
         <Modal.Body className="p-0 text-center bg-dark">
