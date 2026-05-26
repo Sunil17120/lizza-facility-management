@@ -10,7 +10,7 @@ const UserDashboard = () => {
   const navigate = useNavigate(); 
   const [dbUser, setDbUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [status, setStatus] = useState({ type: 'info', msg: 'Initializing...', code: 'normal' });
+  const [status, setStatus] = useState({ type: 'info', msg: 'Initializing...', code: 'off_duty' });
   const [violationTime, setViolationTime] = useState(null);
   const [showPassModal, setShowPassModal] = useState(false);
   const [isForceChange, setIsForceChange] = useState(false);
@@ -18,7 +18,7 @@ const UserDashboard = () => {
   const [passError, setPassError] = useState('');
   const [checkedIn, setCheckedIn] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
-  
+  const [currentSite, setCurrentSite] = useState(null);
   const userEmail = localStorage.getItem('userEmail');
 
   useEffect(() => {
@@ -45,13 +45,16 @@ const UserDashboard = () => {
       const data = await res.json();
 
       if (data.is_inside) {
+        setCurrentSite(data.site_name || null);
         setViolationTime(null);
         setStatus({ type: 'success', msg: data.message || 'Inside Geofence', code: 'inside' });
       } else {
+        setCurrentSite(null);
         setViolationTime(null);
-        setStatus({ type: 'warning', msg: 'Outside Geofence', code: 'outside' });
+        setStatus({ type: 'warning', msg: data.message || 'Outside Geofence', code: 'outside' });
       }
     } catch (err) {
+      setCurrentSite(null);
       setStatus({ type: 'danger', msg: 'Sync Error', code: 'error' });
     }
   }, [userEmail]);
@@ -73,7 +76,8 @@ const UserDashboard = () => {
       const data = await res.json();
       if (res.ok) {
         setCheckedIn(true);
-        setStatus({ type: 'success', msg: data.message || 'Checked In', code: 'inside' });
+        setCurrentSite(data.site_name || currentSite);
+        setStatus({ type: 'success', msg: data.message || `Checked In at ${data.site_name || 'current geofence'}`, code: 'inside' });
         if (data.updated_user) setDbUser(data.updated_user);
       } else {
         setStatus({ type: 'danger', msg: data.detail || data.message || 'Check-in failed', code: 'error' });
@@ -85,7 +89,7 @@ const UserDashboard = () => {
   };
 
   const handleCheckOut = async () => {
-    if (actionLoading || status.code !== 'inside') return;
+    if (actionLoading || !checkedIn) return;
     setActionLoading(true);
     try {
       if (!navigator.geolocation) throw new Error('Location access is required for geofence validation.');
@@ -101,8 +105,8 @@ const UserDashboard = () => {
       const data = await res.json();
       if (res.ok) {
         setCheckedIn(false);
-        const statusCode = data.is_inside ? 'inside' : 'outside';
-        setStatus({ type: 'secondary', msg: data.message || 'Checked Out', code: statusCode });
+        setCurrentSite(null);
+        setStatus({ type: 'secondary', msg: data.message || 'Checked Out', code: 'off_duty' });
         if (data.updated_user) setDbUser(data.updated_user);
       } else {
         setStatus({ type: 'danger', msg: data.detail || data.message || 'Check-out failed', code: 'error' });
@@ -158,6 +162,10 @@ const UserDashboard = () => {
     } catch (err) { setPassError("Network error."); }
   };
 
+  const isOnDuty = checkedIn && status.code === 'inside';
+  const dutyLabel = isOnDuty ? 'ON DUTY' : (!checkedIn && status.code === 'inside') ? 'READY TO CHECK IN' : status.code === 'off_duty' ? 'OFF DUTY (Privacy Active)' : status.code === 'warning' ? 'OFF DUTY / OUTSIDE' : status.code === 'error' ? 'ERROR' : 'OFF DUTY / OUTSIDE';
+  const dutyDotClass = isOnDuty ? 'bg-success' : 'bg-secondary';
+
   if (loading) return <div className="text-center py-5"><Spinner animation="border" variant="danger" /></div>;
 
   return (
@@ -191,15 +199,19 @@ const UserDashboard = () => {
                 {status.msg}
               </Alert>
 
+              <div className="p-3 bg-light rounded-3 border mb-4 text-start">
+                <p className="small text-muted mb-2">Current Site</p>
+                <div className="fw-bold">{currentSite || (status.code === 'inside' ? 'Inside geofence area' : 'Outside geofence')}</div>
+                <div className="small text-muted">
+                  {checkedIn ? (isOnDuty ? 'On duty in current geofence' : 'Checked in but outside geofence') : (status.code === 'inside' ? 'Ready to check in' : 'You must be inside a geofence to mark attendance')}
+                </div>
+              </div>
+
               <div className="p-3 bg-light rounded-3 border mb-4">
                 <p className="small text-muted mb-2">Duty Status</p>
                 <div className="d-flex align-items-center justify-content-center gap-2">
-                  <div className={`rounded-circle ${status.code === 'inside' ? 'bg-success' : status.code === 'off_duty' ? 'bg-secondary' : 'bg-secondary'}`} style={{width: 10, height: 10}}></div>
-                  <span className="fw-bold">
-                    {status.code === 'inside' ? "ON DUTY" : 
-                     status.code === 'off_duty' ? "OFF DUTY (Privacy Active)" : 
-                     (status.code === 'violation' ? "ABSENT (VIOLATION)" : "OFF DUTY / OUTSIDE")}
-                  </span>
+                  <div className={`rounded-circle ${dutyDotClass}`} style={{width: 10, height: 10}}></div>
+                  <span className="fw-bold">{dutyLabel}</span>
                 </div>
               </div>
 
@@ -207,7 +219,7 @@ const UserDashboard = () => {
                 <Button variant="success" className="fw-bold flex-fill d-flex align-items-center justify-content-center" onClick={handleCheckIn} disabled={status.code !== 'inside' || checkedIn || actionLoading}>
                   {actionLoading && <Spinner animation="border" size="sm" className="me-2" />}<MapPin size={16} className="me-2" />{checkedIn ? 'Checked In' : 'Check In'}
                 </Button>
-                <Button variant="outline-danger" className="fw-bold flex-fill d-flex align-items-center justify-content-center" onClick={handleCheckOut} disabled={status.code !== 'inside' || !checkedIn || actionLoading}>
+                <Button variant="outline-danger" className="fw-bold flex-fill d-flex align-items-center justify-content-center" onClick={handleCheckOut} disabled={!checkedIn || actionLoading}>
                   {actionLoading && <Spinner animation="border" size="sm" className="me-2" /> }Check Out
                 </Button>
               </div>
