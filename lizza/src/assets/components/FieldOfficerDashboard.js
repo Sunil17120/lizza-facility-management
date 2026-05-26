@@ -5,9 +5,45 @@ import { MapPin, Camera, Navigation, UserPlus, CheckCircle, FileText, Map as Map
 import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 import EmployeeOnboardForm from './EmployeeOnboardForm'; 
 
-// CAPACITOR NATIVE IMPORT (Safe for Vercel Webpack)
+// CAPACITOR NATIVE IMPORT
 import { registerPlugin } from '@capacitor/core';
 const BackgroundGeolocation = registerPlugin('BackgroundGeolocation');
+
+// ==========================================
+// IMAGE COMPRESSION HELPER (Fixes 413 Error)
+// ==========================================
+const compressImage = async (file, maxWidth = 1000, quality = 0.7) => {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = (event) => {
+      const img = new Image();
+      img.src = event.target.result;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+
+        if (width > maxWidth) {
+          height = Math.round((height * maxWidth) / width);
+          width = maxWidth;
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+
+        canvas.toBlob((blob) => {
+          resolve(new File([blob], file.name, {
+            type: 'image/jpeg',
+            lastModified: Date.now(),
+          }));
+        }, 'image/jpeg', quality);
+      };
+    };
+  });
+};
 
 const FieldOfficerDashboard = () => {
   const [locations, setLocations] = useState([]);
@@ -17,6 +53,7 @@ const FieldOfficerDashboard = () => {
   
   // State to hold sites sorted by distance
   const [nearbySites, setNearbySites] = useState([]);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
   
   // Form State
   const [purpose, setPurpose] = useState('');
@@ -41,6 +78,41 @@ const FieldOfficerDashboard = () => {
   }, [userEmail]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  // Handle online/offline sync (Fixes 422 Error with || [])
+  useEffect(() => {
+    const handleOnline = async () => {
+      setIsOnline(true);
+      const offlineLocations = JSON.parse(localStorage.getItem('offlineLocations') || '[]');
+      if (offlineLocations.length > 0) {
+        try {
+          const res = await fetch('/api/user/sync-offline-locations', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+                email: userEmail, 
+                locations: offlineLocations || [] // Safely pass empty array
+            })
+          });
+          if (res.ok) {
+            localStorage.removeItem('offlineLocations');
+          }
+        } catch (err) {
+          console.error('Offline sync error', err);
+        }
+      }
+    };
+    
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [userEmail]);
 
   const getDistance = (lat1, lon1, lat2, lon2) => {
     const R = 6371e3;
@@ -69,11 +141,21 @@ const FieldOfficerDashboard = () => {
     setNearbySites(sitesWithDistance);
     setActiveSite(insideSite);
     
-    // Ping backend
+    // Ping backend or store offline
     if (userEmail) {
-      fetch(`/api/user/update-location?email=${userEmail}&lat=${lat}&lon=${lon}`, { method: 'POST' }).catch(e => console.error("Ping error", e));
+      const locData = { lat, lon, timestamp: new Date().toISOString() };
+      
+      if (!isOnline) {
+        // Store offline
+        const offlineLocations = JSON.parse(localStorage.getItem('offlineLocations') || '[]');
+        offlineLocations.push(locData);
+        localStorage.setItem('offlineLocations', JSON.stringify(offlineLocations));
+      } else {
+        // Ping live
+        fetch(`/api/user/update-location?email=${userEmail}&lat=${lat}&lon=${lon}`, { method: 'POST' }).catch(e => console.error("Ping error", e));
+      }
     }
-  }, [locations, userEmail]);
+  }, [locations, userEmail, isOnline]);
 
   // 1. NATIVE BACKGROUND TRACKING (Runs on Android/iOS)
   useEffect(() => {
@@ -108,44 +190,48 @@ const FieldOfficerDashboard = () => {
     startTracking();
 
     return () => {
-      try {
-        BackgroundGeolocation.removeWatcher();
-      } catch (e) {}
+      try { BackgroundGeolocation.removeWatcher(); } catch (e) {}
     };
   }, [userEmail, processNewLocation]);
 
-  // 2. WEB GEOLOCATION FALLBACK (Runs instantly on Vercel)
+  // 2. WEB GEOLOCATION FALLBACK
   useEffect(() => {
     if ("geolocation" in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          processNewLocation(position.coords.latitude, position.coords.longitude);
-        },
-        (error) => {
-          console.error("Web GPS Error - Please enable browser location permissions:", error);
-        },
-        { enableHighAccuracy: true }
-      );
+      const pingLocation = () => {
+        navigator.geolocation.getCurrentPosition(
+          (position) => processNewLocation(position.coords.latitude, position.coords.longitude),
+          (error) => console.error("Web GPS Error:", error),
+          { enableHighAccuracy: true }
+        );
+      };
+      pingLocation();
+      const intervalId = setInterval(pingLocation, 300000);
+      return () => clearInterval(intervalId);
     }
   }, [processNewLocation]);
 
-  // --- NEW: MANUAL SYNC (CHECK IN / CHECK OUT) ---
+  // --- MANUAL SYNC (CHECK IN / CHECK OUT) ---
   const handleManualSync = async (type) => {
     if (!activeSite || !myLoc) return alert("Geofence error: You must be inside the site boundary.");
     setIsSubmitting(true);
     
+    // Capture exact time of click
+    const exactTimestamp = new Date().toISOString();
+    const formattedLocalTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
     const formData = new FormData();
     formData.append('email', userEmail);
     formData.append('location_id', activeSite.id);
     formData.append('type', type);
     formData.append('lat', myLoc.lat);
     formData.append('lon', myLoc.lon);
+    formData.append('timestamp', exactTimestamp); // Send precise time to backend
 
     try {
       const res = await fetch('/api/field-officer/manual-sync', { method: 'POST', body: formData });
       const data = await res.json();
       if (res.ok) {
-        setAlertMsg({ type: 'success', text: `Successfully Checked ${type === 'in' ? 'In' : 'Out'} at ${new Date().toLocaleTimeString()}` });
+        setAlertMsg({ type: 'success', text: `Successfully Checked ${type === 'in' ? 'In' : 'Out'} at ${formattedLocalTime}` });
         fetchData();
       } else {
         setAlertMsg({ type: 'danger', text: data.detail || `Failed to check ${type}.` });
@@ -156,24 +242,34 @@ const FieldOfficerDashboard = () => {
     setIsSubmitting(false);
   };
 
+  // --- LOG VISIT REPORT ---
   const handleVisitSubmit = async (e) => {
     e.preventDefault();
     if (!photo) return alert("You must capture a geotagged photo to log the visit.");
     if (!activeSite || !myLoc) return alert("Geofence error: You must be inside the site boundary.");
 
     setIsSubmitting(true);
-    const formData = new FormData();
-    formData.append('email', userEmail);
-    formData.append('location_id', activeSite.id);
-    formData.append('purpose', purpose);
-    formData.append('remarks', remarks);
-    formData.append('lat', myLoc.lat);
-    formData.append('lon', myLoc.lon);
-    formData.append('photo', photo);
-
+    
     try {
+      // 1. COMPRESS THE IMAGE TO BYPASS 4.5MB VERCEL LIMIT
+      const compressedPhoto = await compressImage(photo);
+      const exactTimestamp = new Date().toISOString();
+
+      // 2. APPEND TO FORM DATA
+      const formData = new FormData();
+      formData.append('email', userEmail);
+      formData.append('location_id', activeSite.id);
+      formData.append('purpose', purpose);
+      formData.append('remarks', remarks);
+      formData.append('lat', myLoc.lat);
+      formData.append('lon', myLoc.lon);
+      formData.append('timestamp', exactTimestamp);
+      formData.append('photo', compressedPhoto); // Using the shrunk image!
+
+      // 3. SEND REQUEST
       const res = await fetch('/api/field-officer/log-visit', { method: 'POST', body: formData });
       const data = await res.json();
+      
       if (res.ok) {
         setAlertMsg({ type: 'success', text: 'Visit logged successfully!' });
         setPurpose(''); setRemarks(''); setPhoto(null);
@@ -185,6 +281,7 @@ const FieldOfficerDashboard = () => {
     } catch (err) {
       setAlertMsg({ type: 'danger', text: 'Network error submitting report.' });
     }
+    
     setIsSubmitting(false);
   };
 
@@ -229,7 +326,7 @@ const FieldOfficerDashboard = () => {
                       <CheckCircle className="me-2"/> At Site: {activeSite.name}
                     </Alert>
                     
-                    {/* NEW: MANUAL SYNC BUTTONS */}
+                    {/* MANUAL SYNC BUTTONS */}
                     <div className="d-flex gap-2 mb-3">
                       <Button variant="success" className="w-50 fw-bold d-flex align-items-center justify-content-center" disabled={!activeSite || isSubmitting} onClick={() => handleManualSync('in')}>
                         <LogIn className="me-2" size={16}/> Check In
@@ -275,7 +372,7 @@ const FieldOfficerDashboard = () => {
                           required 
                       />
                       <Form.Text className="text-muted" style={{fontSize: '0.7rem'}}>
-                          *Photo will be geotagged using your current GPS coordinates.
+                          *Photo will be optimized and geotagged.
                       </Form.Text>
                     </Form.Group>
 
