@@ -146,7 +146,7 @@ const UserDashboard = () => {
       }
     };
     pingLocation();
-    const intervalId = setInterval(pingLocation, 60000); 
+    const intervalId = setInterval(pingLocation, 300000);
     return () => clearInterval(intervalId);
   }, [dbUser, syncLocation]);
 

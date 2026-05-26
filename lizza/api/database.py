@@ -144,6 +144,7 @@ class Attendance(Base):
     __tablename__ = "attendances"
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
+    location_id = Column(Integer, ForeignKey("office_locations.id"), nullable=True)
     checkin_time = Column(DateTime, default=datetime.utcnow)
     checkout_time = Column(DateTime, nullable=True)
     duration_seconds = Column(Integer, nullable=True)
@@ -188,5 +189,12 @@ def init_db():
             try:
                 conn.execute(text(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}"))
                 conn.commit()
-            except Exception: 
+            except Exception:
                 conn.rollback()
+
+        # Add attendance location tracking if missing
+        try:
+            conn.execute(text("ALTER TABLE attendances ADD COLUMN location_id INTEGER"))
+            conn.commit()
+        except Exception:
+            conn.rollback()

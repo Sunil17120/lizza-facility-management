@@ -117,15 +117,21 @@ const FieldOfficerDashboard = () => {
   // 2. WEB GEOLOCATION FALLBACK (Runs instantly on Vercel)
   useEffect(() => {
     if ("geolocation" in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          processNewLocation(position.coords.latitude, position.coords.longitude);
-        },
-        (error) => {
-          console.error("Web GPS Error - Please enable browser location permissions:", error);
-        },
-        { enableHighAccuracy: true }
-      );
+      const pingLocation = () => {
+        navigator.geolocation.getCurrentPosition(
+          (position) => {
+            processNewLocation(position.coords.latitude, position.coords.longitude);
+          },
+          (error) => {
+            console.error("Web GPS Error - Please enable browser location permissions:", error);
+          },
+          { enableHighAccuracy: true }
+        );
+      };
+
+      pingLocation();
+      const intervalId = setInterval(pingLocation, 300000);
+      return () => clearInterval(intervalId);
     }
   }, [processNewLocation]);
 
