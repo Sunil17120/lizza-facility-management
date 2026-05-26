@@ -78,6 +78,30 @@ const AdminDashboard = () => {
   
   const adminEmail = localStorage.getItem('userEmail');
 
+  // =========================================================================
+  // --- DATA PROCESSING (MOVED HERE TO FIX REFERENCE ERROR / BLANK SCREEN) ---
+  // =========================================================================
+  const pending = employees.filter(e => !e?.is_verified && e?.user_type !== 'admin');
+  const verified = employees.filter(e => e?.is_verified);
+  const reportPersonnel = verified.filter(e => {
+    if (filterRole === 'all') return ['field_officer', 'employee'].includes(e?.user_type);
+    return e?.user_type === filterRole;
+  });
+  const fieldOfficers = verified.filter(e => e?.user_type === 'field_officer');
+  
+  const groupedReports = fieldReports.reduce((acc, visit) => {
+    if (!visit?.date) return acc;
+    if (!acc[visit.date]) acc[visit.date] = [];
+    acc[visit.date].push(visit);
+    return acc;
+  }, {});
+
+  const managerStats = verified.filter(e => e?.user_type === 'manager').map(mgr => {
+    const teamSize = verified.filter(emp => emp?.manager_id === mgr?.id).length;
+    return { ...mgr, teamSize };
+  });
+
+
   // --- 1. CORE DATA FETCHING ---
   const fetchBaseData = useCallback(async () => {
     try {
@@ -455,27 +479,6 @@ const AdminDashboard = () => {
     `);
     printWindow.document.close();
   };
-
-  // --- DATA PROCESSING ---
-  const pending = employees.filter(e => !e?.is_verified && e?.user_type !== 'admin');
-  const verified = employees.filter(e => e?.is_verified);
-  const reportPersonnel = verified.filter(e => {
-    if (filterRole === 'all') return ['field_officer', 'employee'].includes(e?.user_type);
-    return e?.user_type === filterRole;
-  });
-  const fieldOfficers = verified.filter(e => e?.user_type === 'field_officer');
-  
-  const groupedReports = fieldReports.reduce((acc, visit) => {
-    if (!visit?.date) return acc;
-    if (!acc[visit.date]) acc[visit.date] = [];
-    acc[visit.date].push(visit);
-    return acc;
-  }, {});
-
-  const managerStats = verified.filter(e => e?.user_type === 'manager').map(mgr => {
-    const teamSize = verified.filter(emp => emp?.manager_id === mgr?.id).length;
-    return { ...mgr, teamSize };
-  });
 
   if (loading) return <div className="text-center py-5"><Spinner animation="border" variant="danger" /></div>;
 
