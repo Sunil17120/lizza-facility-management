@@ -69,6 +69,7 @@ const AdminDashboard = () => {
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
   const [filterRole, setFilterRole] = useState('all');
   const [filterOfficer, setFilterOfficer] = useState('');
+  const [reportOfficerSearch, setReportOfficerSearch] = useState('');
   const [filterSite, setFilterSite] = useState('');
   
   const [fieldReports, setFieldReports] = useState([]);
@@ -102,7 +103,14 @@ const AdminDashboard = () => {
     setReportsLoading(true);
     try {
       let url = `/api/admin/reports/monthly-field-visits?month=${reportMonth}&year=${reportYear}`;
-      if (filterOfficer) url += `&officer_id=${filterOfficer}`;
+      // Convert search query to officer ID
+      if (reportOfficerSearch && reportPersonnel.length > 0) {
+        const matchedOfficer = reportPersonnel.find(o => 
+          o.full_name.toLowerCase().includes(reportOfficerSearch.toLowerCase()) ||
+          o.email.toLowerCase().includes(reportOfficerSearch.toLowerCase())
+        );
+        if (matchedOfficer) url += `&officer_id=${matchedOfficer.id}`;
+      }
       if (filterSite) url += `&location_id=${filterSite}`;
       if (filterRole && filterRole !== 'all') url += `&user_type=${filterRole}`;
       
@@ -110,7 +118,7 @@ const AdminDashboard = () => {
       if (res.ok) setFieldReports(await res.json());
     } catch (err) { console.error("Report fetch error", err); }
     setReportsLoading(false);
-  }, [reportMonth, reportYear, filterOfficer, filterSite, filterRole, mainTab]);
+  }, [reportMonth, reportYear, reportOfficerSearch, filterSite, filterRole, mainTab, reportPersonnel]);
 
   useEffect(() => { fetchReportsData(); }, [fetchReportsData]);
 
@@ -230,7 +238,7 @@ const AdminDashboard = () => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    const employeeSegment = filterOfficer ? `_Employee_${filterOfficer}` : '';
+    const employeeSegment = reportOfficerSearch ? `_Employee_${reportOfficerSearch}` : '';
     const siteSegment = filterSite ? `_Site_${filterSite}` : '';
     const roleSegment = filterRole !== 'all' ? `_${filterRole}` : '';
     link.download = `Visits_${reportMonth}_${reportYear}${roleSegment}${siteSegment}${employeeSegment}.xls`;
@@ -242,7 +250,8 @@ const AdminDashboard = () => {
   const downloadAttendanceExcel = async () => {
     try {
       let url = `/api/admin/reports/monthly-attendance?month=${reportMonth}&year=${reportYear}`;
-      if (filterOfficer) url += `&user_id=${filterOfficer}`;
+      const officerId = reportPersonnel.find(o => o.full_name.toLowerCase().includes(reportOfficerSearch.toLowerCase()) || o.email.toLowerCase().includes(reportOfficerSearch.toLowerCase()))?.id;
+      if (officerId) url += `&user_id=${officerId}`;
       if (filterSite) url += `&location_id=${filterSite}`;
       if (filterRole && filterRole !== 'all') url += `&user_type=${filterRole}`;
 
@@ -665,8 +674,8 @@ const AdminDashboard = () => {
                   size="sm"
                   type="text"
                   placeholder="Search employee..."
-                  value={filterOfficer}
-                  onChange={e => setFilterOfficer(e.target.value)}
+                  value={reportOfficerSearch}
+                  onChange={e => setReportOfficerSearch(e.target.value)}
                   style={{paddingLeft: '32px'}}
                 />
               </div>
