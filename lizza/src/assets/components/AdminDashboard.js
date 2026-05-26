@@ -1216,7 +1216,7 @@ const AdminDashboard = () => {
         </Modal.Body>
       </Modal>
 
-    </Container>
+    
   );
 };
 
