@@ -59,6 +59,12 @@ const FieldOfficerDashboard = () => {
   const [checkoutTime, setCheckoutTime] = useState(null);
   const [reportSubmitted, setReportSubmitted] = useState(false);
   
+  // Auto-checkout tracking
+  const [timeOutsideGeofence, setTimeOutsideGeofence] = useState(0);
+  const [autoCheckoutCountdown, setAutoCheckoutCountdown] = useState(null);
+  const outOfGeofenceTimerRef = useRef(null);
+  const autocheckoutTimerRef = useRef(null);
+  
   // Form State
   const [purpose, setPurpose] = useState('');
   const [remarks, setRemarks] = useState('');
@@ -110,6 +116,28 @@ const FieldOfficerDashboard = () => {
           console.error('Offline sync error', err);
         }
       }
+
+      // SYNC PENDING AUTO-CHECKOUT
+      const pendingAutoCheckout = localStorage.getItem(`pendingAutoCheckout:${userEmail}`);
+      if (pendingAutoCheckout && checkedIn) {
+        try {
+          const checkoutData = JSON.parse(pendingAutoCheckout);
+          const res = await fetch('/api/user/checkout', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(checkoutData)
+          });
+          if (res.ok) {
+            localStorage.removeItem(`pendingAutoCheckout:${userEmail}`);
+            setCheckedIn(false);
+            setCheckoutTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+            setAlertMsg({ type: 'warning', text: '⏱️ Auto-checked out after leaving site for 5 minutes.' });
+            fetchData();
+          }
+        } catch (err) {
+          console.error('Auto-checkout sync error', err);
+        }
+      }
     };
     
     const handleOffline = () => setIsOnline(false);
@@ -121,7 +149,7 @@ const FieldOfficerDashboard = () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
-  }, [userEmail]);
+  }, [userEmail, checkedIn, fetchData]);
 
   const getDistance = (lat1, lon1, lat2, lon2) => {
     const R = 6371e3;
@@ -150,6 +178,92 @@ const FieldOfficerDashboard = () => {
     setNearbySites(sitesWithDistance);
     setActiveSite(insideSite);
     
+    // TRACK TIME OUTSIDE GEOFENCE FOR AUTO-CHECKOUT
+    if (!insideSite && checkedIn) {
+      // User is outside geofence while checked in
+      if (timeOutsideGeofence === 0) {
+        // First time going outside - start timer
+        setTimeOutsideGeofence(1);
+        
+        // Update every second
+        if (outOfGeofenceTimerRef.current) clearInterval(outOfGeofenceTimerRef.current);
+        outOfGeofenceTimerRef.current = setInterval(() => {
+          setTimeOutsideGeofence(prev => {
+            const newTime = prev + 1;
+            
+            // At 240 seconds (4 mins): show warning
+            if (newTime === 240) {
+              setAlertMsg({ 
+                type: 'warning', 
+                text: '⚠️ You\'ve been outside the site for 4 minutes. Will auto-checkout in 60 seconds.' 
+              });
+            }
+            
+            // At 300 seconds (5 mins): trigger auto-checkout
+            if (newTime === 300) {
+              clearInterval(outOfGeofenceTimerRef.current);
+              outOfGeofenceTimerRef.current = null;
+              
+              // AUTO-CHECKOUT LOGIC
+              const autoCheckout = async () => {
+                if (!myLoc) return;
+                try {
+                  if (isOnline) {
+                    // Online: directly call checkout
+                    const res = await fetch('/api/user/checkout', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ email: userEmail, lat: myLoc.lat, lon: myLoc.lon })
+                    });
+                    if (res.ok) {
+                      setCheckedIn(false);
+                      setCheckoutTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+                      setTimeOutsideGeofence(0);
+                      setReportSubmitted(false);
+                      setAlertMsg({ type: 'warning', text: '⏱️ Auto-checked out after leaving site for 5 minutes.' });
+                      fetchData();
+                    }
+                  } else {
+                    // Offline: queue auto-checkout
+                    localStorage.setItem(
+                      `pendingAutoCheckout:${userEmail}`,
+                      JSON.stringify({ email: userEmail, lat: myLoc.lat, lon: myLoc.lon })
+                    );
+                    setCheckedIn(false);
+                    setCheckoutTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+                    setTimeOutsideGeofence(0);
+                    setReportSubmitted(false);
+                    setAlertMsg({ type: 'warning', text: '⏱️ Auto-checked out (offline). Will sync when online.' });
+                  }
+                } catch (err) {
+                  console.error('Auto-checkout error:', err);
+                }
+              };
+              
+              autoCheckout();
+              return prev;
+            }
+            
+            // Update countdown every second
+            setAutoCheckoutCountdown(300 - newTime);
+            return newTime;
+          });
+        }, 1000);
+      }
+    } else {
+      // User is back inside or manually checked out - reset timers
+      if (outOfGeofenceTimerRef.current) {
+        clearInterval(outOfGeofenceTimerRef.current);
+        outOfGeofenceTimerRef.current = null;
+      }
+      if (autocheckoutTimerRef.current) {
+        clearInterval(autocheckoutTimerRef.current);
+        autocheckoutTimerRef.current = null;
+      }
+      setTimeOutsideGeofence(0);
+      setAutoCheckoutCountdown(null);
+    }
+    
     // Ping backend or store offline
     if (userEmail) {
       const locData = { lat, lon, timestamp: new Date().toISOString() };
@@ -164,7 +278,7 @@ const FieldOfficerDashboard = () => {
         fetch(`/api/user/update-location?email=${userEmail}&lat=${lat}&lon=${lon}`, { method: 'POST' }).catch(e => console.error("Ping error", e));
       }
     }
-  }, [locations, userEmail, isOnline]);
+  }, [locations, userEmail, isOnline, checkedIn, myLoc, fetchData]);
 
   // 1. NATIVE BACKGROUND TRACKING (Runs on Android/iOS)
   useEffect(() => {
@@ -200,6 +314,9 @@ const FieldOfficerDashboard = () => {
 
     return () => {
       try { BackgroundGeolocation.removeWatcher(); } catch (e) {}
+      // Cleanup timers on component unmount
+      if (outOfGeofenceTimerRef.current) clearInterval(outOfGeofenceTimerRef.current);
+      if (autocheckoutTimerRef.current) clearInterval(autocheckoutTimerRef.current);
     };
   }, [userEmail, processNewLocation]);
 
@@ -219,43 +336,68 @@ const FieldOfficerDashboard = () => {
     }
   }, [processNewLocation]);
 
-  // --- MANUAL SYNC (CHECK IN / CHECK OUT) ---
-  const handleManualSync = async (type) => {
+  // --- CHECK IN / CHECK OUT ---
+  const handleCheckIn = async () => {
     if (!activeSite || !myLoc) return alert("Geofence error: You must be inside the site boundary.");
     setIsSubmitting(true);
     
-    // Capture exact time of click
-    const exactTimestamp = new Date().toISOString();
     const formattedLocalTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-    const formData = new FormData();
-    formData.append('email', userEmail);
-    formData.append('location_id', activeSite.id);
-    formData.append('type', type);
-    formData.append('lat', myLoc.lat);
-    formData.append('lon', myLoc.lon);
-    formData.append('timestamp', exactTimestamp); // Send precise time to backend
-
     try {
-        const res = await fetch('/api/field-officer/manual-sync', { method: 'POST', body: formData });
+      const res = await fetch('/api/user/checkin', { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ email: userEmail, lat: myLoc.lat, lon: myLoc.lon }) 
+      });
       const data = await res.json();
+      
       if (res.ok) {
-        setAlertMsg({ type: 'success', text: `Successfully Checked ${type === 'in' ? 'In' : 'Out'} at ${formattedLocalTime}` });
-        if (type === 'in') {
-          setCheckedIn(true);
-          setCheckinTime(formattedLocalTime);
-          setReportSubmitted(false);
-          setCheckoutTime(null);
-        } else {
-          setCheckedIn(false);
-          setCheckoutTime(formattedLocalTime);
-        }
-        fetchData();
+        setAlertMsg({ type: 'success', text: `Successfully Checked In at ${formattedLocalTime}` });
+        setCheckedIn(true);
+        setCheckinTime(formattedLocalTime);
+        setReportSubmitted(false);
+        setCheckoutTime(null);
       } else {
-        setAlertMsg({ type: 'danger', text: data.detail || `Failed to check ${type}.` });
+        setAlertMsg({ type: 'danger', text: data.detail || 'Failed to check in.' });
       }
     } catch (err) {
-      setAlertMsg({ type: 'danger', text: 'Network error submitting manual sync.' });
+      setAlertMsg({ type: 'danger', text: 'Network error during check-in.' });
+    }
+    setIsSubmitting(false);
+  };
+
+  const handleCheckOut = async () => {
+    if (!activeSite || !myLoc) return alert("Geofence error: You must be inside the site boundary.");
+    setIsSubmitting(true);
+    
+    // Clear any pending auto-checkout timers
+    if (outOfGeofenceTimerRef.current) clearInterval(outOfGeofenceTimerRef.current);
+    if (autocheckoutTimerRef.current) clearInterval(autocheckoutTimerRef.current);
+    setTimeOutsideGeofence(0);
+    setAutoCheckoutCountdown(null);
+    localStorage.removeItem(`pendingAutoCheckout:${userEmail}`);
+    
+    const formattedLocalTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    try {
+      const res = await fetch('/api/user/checkout', { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ email: userEmail, lat: myLoc.lat, lon: myLoc.lon }) 
+      });
+      const data = await res.json();
+      
+      if (res.ok) {
+        setAlertMsg({ type: 'success', text: `Successfully Checked Out at ${formattedLocalTime}` });
+        setCheckedIn(false);
+        setCheckoutTime(formattedLocalTime);
+        setReportSubmitted(false);
+        fetchData();
+      } else {
+        setAlertMsg({ type: 'danger', text: data.detail || 'Failed to check out.' });
+      }
+    } catch (err) {
+      setAlertMsg({ type: 'danger', text: 'Network error during check-out.' });
     }
     setIsSubmitting(false);
   };
@@ -344,21 +486,28 @@ const FieldOfficerDashboard = () => {
                   </Alert>
                 )}
                 
+                {/* AUTO-CHECKOUT COUNTDOWN WARNING */}
+                {autoCheckoutCountdown !== null && (
+                  <Alert variant="danger" className="mb-3 small fw-bold d-flex align-items-center">
+                    ⏱️ Auto-checkout in {autoCheckoutCountdown} seconds...
+                  </Alert>
+                )}
+                
                 {activeSite ? (
                   <>
                     <Alert variant="success" className="d-flex align-items-center fw-bold mb-3">
                       <CheckCircle className="me-2"/> At Site: {activeSite.name}
                     </Alert>
                     
-                    {/* MANUAL SYNC BUTTONS */}
+                    {/* CHECK IN / CHECK OUT BUTTONS */}
                     <div className="d-flex gap-2 mb-3">
                       {!checkedIn && (
-                        <Button variant="success" className="w-50 fw-bold d-flex align-items-center justify-content-center" disabled={!activeSite || isSubmitting} onClick={() => handleManualSync('in')}>
+                        <Button variant="success" className="w-50 fw-bold d-flex align-items-center justify-content-center" disabled={!activeSite || isSubmitting} onClick={handleCheckIn}>
                           <LogIn className="me-2" size={16}/> Check In
                         </Button>
                       )}
                       {checkedIn && reportSubmitted && (
-                        <Button variant="danger" className="w-50 fw-bold d-flex align-items-center justify-content-center" disabled={!activeSite || isSubmitting} onClick={() => handleManualSync('out')}>
+                        <Button variant="danger" className="w-50 fw-bold d-flex align-items-center justify-content-center" disabled={!activeSite || isSubmitting} onClick={handleCheckOut}>
                           <LogOut className="me-2" size={16}/> Check Out
                         </Button>
                       )}
