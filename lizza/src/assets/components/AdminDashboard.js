@@ -78,6 +78,7 @@ const AdminDashboard = () => {
   const [reportsLoading, setReportsLoading] = useState(false);
   const [attendanceLoading, setAttendanceLoading] = useState(false);
   const [photoPreview, setPhotoPreview] = useState(null);
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(false);
   
   const adminEmail = localStorage.getItem('userEmail');
 
@@ -187,6 +188,17 @@ const AdminDashboard = () => {
     if (mainTab !== 'reports') return;
     fetchAttendanceData();
   }, [fetchAttendanceData]);
+
+  // AUTO-REFRESH ATTENDANCE TABLE EVERY 10 SECONDS
+  useEffect(() => {
+    if (mainTab !== 'reports' || reportsSubTab !== 'attendance') return;
+    
+    const refreshInterval = setInterval(() => {
+      fetchAttendanceData();
+    }, 10000); // Refresh every 10 seconds
+    
+    return () => clearInterval(refreshInterval);
+  }, [fetchAttendanceData, mainTab, reportsSubTab]);
 
   // --- ACTIONS: EMPLOYEES ---
   const handleVerify = async (email) => {
@@ -902,10 +914,37 @@ const AdminDashboard = () => {
               <Tab eventKey="attendance" title="Attendance">
                 <Card className="border-0 shadow-sm mb-4">
                   <Card.Header className="bg-dark text-white p-3 d-flex justify-content-between align-items-center">
-                    <h6 className="mb-0 fw-bold d-flex align-items-center"><Calendar className="me-2 text-warning" size={18}/> Attendance Records</h6>
-                    <Button variant="warning" size="sm" className="fw-bold text-dark d-flex align-items-center" onClick={downloadAttendanceExcel} disabled={attendanceRecords.length === 0}>
-                      <Download size={14} className="me-2 text-dark"/> Download Attendance Excel
-                    </Button>
+                    <div className="d-flex gap-2 align-items-center">
+                      <h6 className="mb-0 fw-bold d-flex align-items-center"><Calendar className="me-2 text-warning" size={18}/> Attendance Records</h6>
+                      {autoRefreshEnabled && (
+                        <Badge bg="success" className="ms-2 d-flex align-items-center">
+                          <span className="spinner-border spinner-border-sm me-1" style={{width: '10px', height: '10px'}}></span>
+                          Auto-Refresh ON
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="d-flex gap-2">
+                      <Button 
+                        variant={autoRefreshEnabled ? "warning" : "light"} 
+                        size="sm" 
+                        className={`fw-bold d-flex align-items-center ${autoRefreshEnabled ? 'text-dark' : ''}`}
+                        onClick={() => setAutoRefreshEnabled(!autoRefreshEnabled)}
+                      >
+                        🔄 {autoRefreshEnabled ? 'Pause Auto-Refresh' : 'Enable Auto-Refresh (10s)'}
+                      </Button>
+                      <Button 
+                        variant="info" 
+                        size="sm" 
+                        className="fw-bold d-flex align-items-center"
+                        onClick={() => fetchAttendanceData()}
+                        disabled={attendanceLoading}
+                      >
+                        {attendanceLoading ? <Spinner size="sm" className="me-1" /> : '🔃'} Refresh Now
+                      </Button>
+                      <Button variant="warning" size="sm" className="fw-bold text-dark d-flex align-items-center" onClick={downloadAttendanceExcel} disabled={attendanceRecords.length === 0}>
+                        <Download size={14} className="me-2 text-dark"/> Download Excel
+                      </Button>
+                    </div>
                   </Card.Header>
                   <Card.Body className="p-0">
                     {attendanceLoading ? (
@@ -917,27 +956,39 @@ const AdminDashboard = () => {
                         <thead className="table-secondary">
                           <tr>
                             <th>Date</th><th>Employee ID</th><th>Name</th><th>Role</th><th>Site</th>
-                            <th>Check-In</th><th>Check-Out</th><th>Duration</th><th>Action</th>
+                            <th>Check-In</th><th>Check-Out</th><th>Duration</th><th>Status</th><th>Action</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {attendanceRecords.map((record, idx) => (
-                            <tr key={idx}>
-                              <td>{record.date || 'N/A'}</td>
-                              <td>{record.employee_id || 'N/A'}</td>
-                              <td>{record.employee_name || 'N/A'}</td>
-                              <td>{record.user_type || 'N/A'}</td>
-                              <td>{record.site_name || 'N/A'}</td>
-                              <td>{record.checkin_time || 'N/A'}</td>
-                              <td>{record.checkout_time || 'N/A'}</td>
-                              <td>{record.duration || 'N/A'}</td>
-                              <td>
-                                <Button variant="outline-danger" size="sm" onClick={() => handleDeleteAttendance(record.attendance_id)}>
-                                  <Trash2 size={14} className="me-1"/> Delete
-                                </Button>
-                              </td>
-                            </tr>
-                          ))}
+                          {attendanceRecords.map((record, idx) => {
+                            const isCheckedOut = record.checkout_time && record.checkout_time !== 'N/A';
+                            return (
+                              <tr key={idx} className={!isCheckedOut ? 'table-info' : ''}>
+                                <td>{record.date || 'N/A'}</td>
+                                <td>{record.employee_id || 'N/A'}</td>
+                                <td><strong>{record.employee_name || 'N/A'}</strong></td>
+                                <td>{record.user_type || 'N/A'}</td>
+                                <td>{record.site_name || 'N/A'}</td>
+                                <td><strong>{record.checkin_time || 'N/A'}</strong></td>
+                                <td className={!isCheckedOut ? 'text-danger fw-bold' : 'text-success'}>{record.checkout_time || '⏱️ Pending'}</td>
+                                <td>
+                                  <Badge bg={record.duration && record.duration !== 'N/A' ? 'success' : 'secondary'}>
+                                    {record.duration || '--'}
+                                  </Badge>
+                                </td>
+                                <td>
+                                  <Badge bg={isCheckedOut ? 'success' : 'warning'} className="text-dark">
+                                    {isCheckedOut ? '✓ Completed' : '⏳ Active'}
+                                  </Badge>
+                                </td>
+                                <td>
+                                  <Button variant="outline-danger" size="sm" onClick={() => handleDeleteAttendance(record.attendance_id)}>
+                                    <Trash2 size={14} className="me-1"/> Delete
+                                  </Button>
+                                </td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </Table>
                     )}
