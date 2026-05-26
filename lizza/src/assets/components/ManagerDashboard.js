@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Container, Card, Row, Col, Badge, Table, Modal, Spinner, InputGroup, Form, Button, Alert } from 'react-bootstrap';
 import { Users, Map as MapIcon, ShieldCheck, Search, UserPlus, AlertTriangle } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
@@ -67,6 +67,30 @@ const ManagerDashboard = () => {
   }, [managerId]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  const wsRef = useRef(null);
+  useEffect(() => {
+    if (!managerId) return;
+    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const ws = new WebSocket(`${protocol}://${window.location.host}/ws/manager-tracking?manager_id=${managerId}`);
+
+    ws.onopen = () => console.log('Manager websocket connected');
+    ws.onmessage = (event) => {
+      try {
+        const message = JSON.parse(event.data);
+        if (message.type === 'location_update' && message.data?.email) {
+          setLiveStaff(prev => ({ ...prev, [message.data.email]: message.data }));
+        }
+      } catch (err) {
+        console.error('WebSocket parse error', err);
+      }
+    };
+    ws.onclose = () => console.log('Manager websocket closed');
+    ws.onerror = (err) => console.error('Manager websocket error', err);
+
+    wsRef.current = ws;
+    return () => { ws.close(); };
+  }, [managerId]);
 
   // Handle Loading State
   if (loading) {

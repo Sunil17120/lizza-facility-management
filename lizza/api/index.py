@@ -24,6 +24,16 @@ except ImportError:
 app = FastAPI()
 redis_url = os.environ.get("REDIS_URL") or os.environ.get("KV_URL")
 r = None
+manager_connections = {}
+
+async def broadcast_manager_update(manager_id: int, payload: dict):
+    connections = manager_connections.get(manager_id, set()).copy()
+    for ws in connections:
+        try:
+            await ws.send_json(payload)
+        except Exception:
+            manager_connections.get(manager_id, set()).discard(ws)
+
 class SafeRedisClient:
     def __init__(self, client):
         self._client = client
@@ -371,6 +381,19 @@ def get_manager_live_tracking(manager_id: int, db: Session = Depends(get_db)):
         results.append({"email": m.email, "name": m.full_name, "lat": lat, "lon": lon, "present": m.is_present})
     return results
 
+@app.websocket("/ws/manager-tracking")
+async def manager_tracking_ws(websocket: WebSocket, manager_id: int):
+    await websocket.accept()
+    connections = manager_connections.setdefault(manager_id, set())
+    connections.add(websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        manager_connections.get(manager_id, set()).discard(websocket)
+
 # --- ADMIN ROUTES ---
 @app.post("/api/admin/verify-employee")
 def verify_employee(target_email: str, admin_email: str, db: Session = Depends(get_db)):
@@ -591,10 +614,10 @@ def get_monthly_attendance(
     except ImportError:
         from database import Attendance
 
-    query = db.query(Attendance, User, OfficeLocation).join(User, Attendance.user_id == User.id).outerjoin(OfficeLocation, User.location_id == OfficeLocation.id)
+    query = db.query(Attendance, User, OfficeLocation).join(User, Attendance.user_id == User.id).outerjoin(OfficeLocation, Attendance.location_id == OfficeLocation.id)
     query = query.filter(Attendance.date >= start_utc, Attendance.date <= end_utc)
     if user_id: query = query.filter(User.id == user_id)
-    if location_id: query = query.filter(User.location_id == location_id)
+    if location_id: query = query.filter(Attendance.location_id == location_id)
     if user_type: query = query.filter(User.user_type == user_type)
     results = query.order_by(Attendance.date.asc()).all()
 
@@ -683,20 +706,46 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
                 active_stay.exit_time = now_utc
                 db.commit()
 
-        return {
+        response = {
             "is_inside": current_site is not None,
             "status": "inside" if current_site is not None else "outside",
             "message": "Inside Geofence" if current_site is not None else "Outside Geofence",
             "site_name": current_site.name if current_site else None
         }
+        if user.manager_id:
+            await broadcast_manager_update(user.manager_id, {
+                "type": "location_update",
+                "data": {
+                    "email": user.email,
+                    "name": user.full_name,
+                    "lat": lat,
+                    "lon": lon,
+                    "present": current_site is not None,
+                    "site_name": current_site.name if current_site else None
+                }
+            })
+        return response
 
     current_site = get_site_at_location(lat, lon, db)
-    return {
+    response = {
         "is_inside": current_site is not None,
         "status": "inside" if current_site is not None else "outside",
         "message": "Inside Geofence" if current_site is not None else "Outside Geofence",
         "site_name": current_site.name if current_site else None
     }
+    if user.manager_id:
+        await broadcast_manager_update(user.manager_id, {
+            "type": "location_update",
+            "data": {
+                "email": user.email,
+                "name": user.full_name,
+                "lat": lat,
+                "lon": lon,
+                "present": current_site is not None,
+                "site_name": current_site.name if current_site else None
+            }
+        })
+    return response
 
 
 @app.post("/api/user/checkin")
@@ -707,6 +756,8 @@ def user_checkin(data: CheckAction, db: Session = Depends(get_db)):
         raise HTTPException(400, "You are not inside any valid geofence area.")
 
     user = db.query(User).filter(User.email == data.email.lower().strip()).first()
+    if not user:
+        raise HTTPException(404, "User not found")
     
     # Check if already checked in
     from .database import Attendance
@@ -726,6 +777,8 @@ def user_checkin(data: CheckAction, db: Session = Depends(get_db)):
 @app.post("/api/user/checkout")
 def user_checkout(data: CheckAction, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == data.email.lower().strip()).first()
+    if not user:
+        raise HTTPException(404, "User not found")
     
     from .database import Attendance
     att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
