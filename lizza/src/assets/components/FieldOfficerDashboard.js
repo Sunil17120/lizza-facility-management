@@ -17,6 +17,7 @@ const FieldOfficerDashboard = () => {
   
   // State to hold sites sorted by distance
   const [nearbySites, setNearbySites] = useState([]);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
   
   // Form State
   const [purpose, setPurpose] = useState('');
@@ -41,6 +42,38 @@ const FieldOfficerDashboard = () => {
   }, [userEmail]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  // Handle online/offline sync
+  useEffect(() => {
+    const handleOnline = async () => {
+      setIsOnline(true);
+      const offlineLocations = JSON.parse(localStorage.getItem('offlineLocations') || '[]');
+      if (offlineLocations.length > 0) {
+        try {
+          const res = await fetch('/api/user/sync-offline-locations', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: userEmail, locations: offlineLocations })
+          });
+          if (res.ok) {
+            localStorage.removeItem('offlineLocations');
+          }
+        } catch (err) {
+          console.error('Offline sync error', err);
+        }
+      }
+    };
+    
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [userEmail]);
 
   const getDistance = (lat1, lon1, lat2, lon2) => {
     const R = 6371e3;
@@ -69,11 +102,21 @@ const FieldOfficerDashboard = () => {
     setNearbySites(sitesWithDistance);
     setActiveSite(insideSite);
     
-    // Ping backend
+    // Ping backend or store offline
     if (userEmail) {
-      fetch(`/api/user/update-location?email=${userEmail}&lat=${lat}&lon=${lon}`, { method: 'POST' }).catch(e => console.error("Ping error", e));
+      const locData = { lat, lon, timestamp: new Date().toISOString() };
+      
+      if (!isOnline) {
+        // Store offline
+        const offlineLocations = JSON.parse(localStorage.getItem('offlineLocations') || '[]');
+        offlineLocations.push(locData);
+        localStorage.setItem('offlineLocations', JSON.stringify(offlineLocations));
+      } else {
+        // Ping live
+        fetch(`/api/user/update-location?email=${userEmail}&lat=${lat}&lon=${lon}`, { method: 'POST' }).catch(e => console.error("Ping error", e));
+      }
     }
-  }, [locations, userEmail]);
+  }, [locations, userEmail, isOnline]);
 
   // 1. NATIVE BACKGROUND TRACKING (Runs on Android/iOS)
   useEffect(() => {
