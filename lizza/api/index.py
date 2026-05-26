@@ -87,8 +87,16 @@ def is_time_between(start_str, end_str, check_str):
     else: 
         return start_str <= check_str or check_str <= end_str
 def get_site_at_location(lat, lon, db):
+    # Fetch all offices and apply a fast bounding-box filter before precise distance
     offices = db.query(OfficeLocation).all()
     for office in offices:
+        # approximate degree differences for given radius (meters -> degrees)
+        # 1 degree latitude ~= 111320 meters
+        lat_diff = office.radius / 111320.0
+        # longitude degree size varies with latitude
+        lon_diff = office.radius / (111320.0 * max(0.000001, math.cos(math.radians(office.lat))))
+        if abs(lat - office.lat) > lat_diff or abs(lon - office.lon) > lon_diff:
+            continue
         distance = get_distance(lat, lon, office.lat, office.lon)
         if distance <= office.radius:
             return office
@@ -558,13 +566,16 @@ async def log_site_visit(
     distance = get_distance(lat, lon, site.lat, site.lon)
     if distance > site.radius: raise HTTPException(400, f"Geotag validation failed. You are {int(distance)}m away from the site. Must be within {site.radius}m.")
 
-    # --- FIX 1: Auto-start SiteStay if the background ping missed it ---
+    # Require an active SiteStay (i.e., user must Check-In first) before allowing photo upload.
     now_utc = datetime.utcnow()
     active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
-    
     if not active_stay or active_stay.location_id != site.id:
-        if active_stay: active_stay.exit_time = now_utc
-        db.add(SiteStay(officer_id=user.id, location_id=site.id, entry_time=now_utc))
+        raise HTTPException(400, "You must Check-In at the site before uploading a visit photo.")
+
+    # Prevent uploads after user has already checked out and visited the same site for the day
+    visited_key = f"visited:{user.email}:{site.id}"
+    if r and r.get(visited_key):
+        raise HTTPException(400, "This site has already been visited. Next visit allowed after 18:00.")
 
     photo_url = upload_to_cloud(photo)
     visit = SiteVisit(officer_id=user.id, location_id=site.id, purpose=purpose, remarks=remarks, photo_path=photo_url)
@@ -726,8 +737,7 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
         else: r.set(f"loc:{email}", f"{lat},{lon}", ex=360)
 
     if user.user_type == 'field_officer':
-        offices = db.query(OfficeLocation).all()
-        current_site = next((o for o in offices if get_distance(lat, lon, o.lat, o.lon) <= o.radius), None)
+        current_site = get_site_at_location(lat, lon, db)
         active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
 
         if current_site:
@@ -754,13 +764,16 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
                         outside_time = datetime.fromisoformat(outside_time_str)
                         outside_duration = (now_utc - outside_time).total_seconds()
                         if outside_duration > 300:  # 5 minutes
-                            # Auto-checkout
+                            # Auto-checkout: set attendance checkout and SiteStay exit_time
                             from .database import Attendance
                             att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
                             if att:
                                 att.checkout_time = now_utc
                                 att.duration_seconds = int((att.checkout_time - att.checkin_time).total_seconds())
                                 user.is_present = False
+                                # set SiteStay exit_time if present
+                                if active_stay:
+                                    active_stay.exit_time = now_utc
                                 db.commit()
                                 r.delete(outside_key)
                     except Exception as e:
@@ -852,11 +865,32 @@ def user_checkin(data: CheckAction, db: Session = Depends(get_db)):
         return {"status": "success", "message": "Already checked in.", "checked_in": True}
 
     now_utc = datetime.utcnow()
-    # Store the location_id of the site they checked into
+
+    # Prevent re-checkin at same site until 18:00 local if already visited earlier
+    now_ist = convert_utc_to_ist(now_utc)
+    visited_key = f"visited:{user.email}:{site.id}"
+    if r and r.get(visited_key):
+        raise HTTPException(400, "This site was already visited. Next visit allowed after 18:00.")
+    # Fallback DB check if Redis not available
+    try:
+        last_visit = db.query(SiteVisit).filter(SiteVisit.officer_id == user.id, SiteVisit.location_id == site.id).order_by(SiteVisit.visit_time.desc()).first()
+        if last_visit:
+            last_visit_ist = convert_utc_to_ist(last_visit.visit_time)
+            if last_visit_ist and last_visit_ist.date() == now_ist.date() and now_ist.hour < 18:
+                raise HTTPException(400, "This site was already visited today. Next visit allowed after 18:00.")
+    except Exception:
+        pass
+
+    # Store the location_id of the site they checked into and create SiteStay for field officers
     attendance = Attendance(user_id=user.id, checkin_time=now_utc, date=now_utc, location_id=site.id)
     user.is_present = True
     db.add(attendance)
+    # Create SiteStay for field officers to allow visit uploads and checkout
+    if user.user_type == 'field_officer':
+        db.add(SiteStay(officer_id=user.id, location_id=site.id, entry_time=now_utc))
     db.commit()
+    # clear any outside flag
+    if r: r.delete(f"outside:{user.email}")
     return {"status": "success", "message": f"Checked In at {site.name}", "site_name": site.name}
 
 
@@ -871,9 +905,33 @@ def user_checkout(data: CheckAction, db: Session = Depends(get_db)):
     if not att:
         raise HTTPException(400, "No active check-in found.")
 
-    att.checkout_time = datetime.utcnow()
+    now_utc = datetime.utcnow()
+    att.checkout_time = now_utc
     att.duration_seconds = int((att.checkout_time - att.checkin_time).total_seconds())
     user.is_present = False
+
+    # set SiteStay exit_time if exists
+    active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
+    if active_stay:
+        active_stay.exit_time = now_utc
+
+    # Mark site as visited until next 18:00 IST so user cannot re-upload/re-checkin for same site
+    try:
+        now_ist = convert_utc_to_ist(now_utc)
+        today_18_ist = now_ist.replace(hour=18, minute=0, second=0, microsecond=0)
+        if now_ist >= today_18_ist:
+            # next day 18:00
+            next_18_ist = today_18_ist + timedelta(days=1)
+        else:
+            next_18_ist = today_18_ist
+        # convert back to UTC for expiry calc
+        next_18_utc = next_18_ist - timedelta(hours=5, minutes=30)
+        expiry_seconds = int((next_18_utc - now_utc).total_seconds())
+        if expiry_seconds > 0 and r:
+            r.set(f"visited:{user.email}:{att.location_id}", "1", ex=expiry_seconds)
+    except Exception:
+        pass
+
     db.commit()
     return {"status": "success", "message": "Checked Out"}
 

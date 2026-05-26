@@ -54,6 +54,10 @@ const FieldOfficerDashboard = () => {
   // State to hold sites sorted by distance
   const [nearbySites, setNearbySites] = useState([]);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [checkedIn, setCheckedIn] = useState(false);
+  const [checkinTime, setCheckinTime] = useState(null);
+  const [checkoutTime, setCheckoutTime] = useState(null);
+  const [reportSubmitted, setReportSubmitted] = useState(false);
   
   // Form State
   const [purpose, setPurpose] = useState('');
@@ -68,12 +72,17 @@ const FieldOfficerDashboard = () => {
 
   const fetchData = useCallback(async () => {
     try {
-      const [locRes, histRes] = await Promise.all([
+      const [locRes, histRes, profileRes] = await Promise.all([
         fetch(`/api/admin/locations`),
-        fetch(`/api/field-officer/my-visits?email=${userEmail}`)
+        fetch(`/api/field-officer/my-visits?email=${userEmail}`),
+        fetch(`/api/user/profile?email=${userEmail}`)
       ]);
       if (locRes.ok) setLocations(await locRes.json());
       if (histRes.ok) setVisitHistory(await histRes.json());
+      if (profileRes.ok) {
+        const profileData = await profileRes.json();
+        setCheckedIn(Boolean(profileData.checked_in));
+      }
     } catch (err) { console.error("Data fetch error", err); }
   }, [userEmail]);
 
@@ -228,10 +237,19 @@ const FieldOfficerDashboard = () => {
     formData.append('timestamp', exactTimestamp); // Send precise time to backend
 
     try {
-      const res = await fetch('/api/field-officer/manual-sync', { method: 'POST', body: formData });
+        const res = await fetch('/api/field-officer/manual-sync', { method: 'POST', body: formData });
       const data = await res.json();
       if (res.ok) {
         setAlertMsg({ type: 'success', text: `Successfully Checked ${type === 'in' ? 'In' : 'Out'} at ${formattedLocalTime}` });
+        if (type === 'in') {
+          setCheckedIn(true);
+          setCheckinTime(formattedLocalTime);
+          setReportSubmitted(false);
+          setCheckoutTime(null);
+        } else {
+          setCheckedIn(false);
+          setCheckoutTime(formattedLocalTime);
+        }
         fetchData();
       } else {
         setAlertMsg({ type: 'danger', text: data.detail || `Failed to check ${type}.` });
@@ -273,6 +291,7 @@ const FieldOfficerDashboard = () => {
       if (res.ok) {
         setAlertMsg({ type: 'success', text: 'Visit logged successfully!' });
         setPurpose(''); setRemarks(''); setPhoto(null);
+        setReportSubmitted(true);
         if(fileInputRef.current) fileInputRef.current.value = "";
         fetchData();
       } else {
@@ -328,19 +347,27 @@ const FieldOfficerDashboard = () => {
                     
                     {/* MANUAL SYNC BUTTONS */}
                     <div className="d-flex gap-2 mb-3">
-                      <Button variant="success" className="w-50 fw-bold d-flex align-items-center justify-content-center" disabled={!activeSite || isSubmitting} onClick={() => handleManualSync('in')}>
-                        <LogIn className="me-2" size={16}/> Check In
-                      </Button>
-                      <Button variant="danger" className="w-50 fw-bold d-flex align-items-center justify-content-center" disabled={!activeSite || isSubmitting} onClick={() => handleManualSync('out')}>
-                        <LogOut className="me-2" size={16}/> Check Out
-                      </Button>
+                      {!checkedIn && (
+                        <Button variant="success" className="w-50 fw-bold d-flex align-items-center justify-content-center" disabled={!activeSite || isSubmitting} onClick={() => handleManualSync('in')}>
+                          <LogIn className="me-2" size={16}/> Check In
+                        </Button>
+                      )}
+                      {checkedIn && reportSubmitted && (
+                        <Button variant="danger" className="w-50 fw-bold d-flex align-items-center justify-content-center" disabled={!activeSite || isSubmitting} onClick={() => handleManualSync('out')}>
+                          <LogOut className="me-2" size={16}/> Check Out
+                        </Button>
+                      )}
+                    </div>
+                    <div className="small text-muted mb-2">
+                      {checkedIn ? `Checked in at: ${checkinTime || 'Pending...'}` : 'Not checked in yet.'}
+                      {checkoutTime ? ` | Last checkout at: ${checkoutTime}` : ''}
                     </div>
                   </>
                 ) : (
                   <Alert variant="warning" className="mb-0">Searching for nearby sites... Drive to a geofence to log a visit.</Alert>
                 )}
 
-                {activeSite && (
+                {activeSite && checkedIn && !reportSubmitted && (
                   <Form onSubmit={handleVisitSubmit} className="mt-2 border-top pt-3">
                     <h6 className="fw-bold mb-3"><FileText className="me-2" size={18}/>Log Visit Report</h6>
                     {alertMsg && <Alert variant={alertMsg.type} className="small">{alertMsg.text}</Alert>}
@@ -380,6 +407,11 @@ const FieldOfficerDashboard = () => {
                       {isSubmitting ? <Spinner size="sm" /> : "SUBMIT REPORT"}
                     </Button>
                   </Form>
+                )}
+                {activeSite && checkedIn && reportSubmitted && (
+                  <Alert variant="info" className="mt-3 mb-0 small">
+                    Report uploaded. You may now check out.
+                  </Alert>
                 )}
               </Card.Body>
             </Card>
