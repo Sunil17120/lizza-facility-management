@@ -414,11 +414,31 @@ def get_live_tracking(admin_email: str, db: Session = Depends(get_db)):
 
 @app.post("/api/admin/update-employee-inline")
 def update_employee_inline(data: dict, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == data.get("email")).first()
+    # Best practice: Look up by ID to allow email edits. Fallback to email if ID is missing.
+    user_id = data.get("id")
+    if user_id:
+        user = db.query(User).filter(User.id == user_id).first()
+    else:
+        user = db.query(User).filter(User.email == data.get("email")).first()
+        
     if not user: raise HTTPException(404, "User not found")
-    user.location_id, user.shift_start, user.shift_end, user.user_type = data.get("location_id"), data.get("shift_start"), data.get("shift_end"), data.get("user_type")
+    
+    # Update all possible fields sent from the frontend Edit Modal
+    if "full_name" in data: user.full_name = data.get("full_name")
+    if "email" in data: user.email = data.get("email")
+    if "phone_number" in data: user.phone_number = data.get("phone_number")
+    if "designation" in data: user.designation = data.get("designation")
+    if "department" in data: user.department = data.get("department")
+    if "user_type" in data: user.user_type = data.get("user_type")
+    if "personal_email" in data: user.personal_email = data.get("personal_email")
+    if "dob" in data: user.dob = data.get("dob")
+    if "location_id" in data: user.location_id = data.get("location_id")
     if "manager_id" in data: user.manager_id = data.get("manager_id")
-    db.commit(); return {"status": "updated"}
+    if "shift_start" in data: user.shift_start = data.get("shift_start")
+    if "shift_end" in data: user.shift_end = data.get("shift_end")
+
+    db.commit()
+    return {"status": "updated"}
 
 @app.delete("/api/admin/delete-employee/{user_id}")
 def delete_employee(user_id: int, db: Session = Depends(get_db)):
