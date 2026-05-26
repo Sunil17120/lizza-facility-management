@@ -68,7 +68,6 @@ const AdminDashboard = () => {
   const [reportMonth, setReportMonth] = useState(new Date().getMonth() + 1);
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
   const [filterRole, setFilterRole] = useState('all');
-  const [filterOfficer, setFilterOfficer] = useState('');
   const [reportOfficerSearch, setReportOfficerSearch] = useState('');
   const [filterSite, setFilterSite] = useState('');
   
@@ -79,7 +78,7 @@ const AdminDashboard = () => {
   const adminEmail = localStorage.getItem('userEmail');
 
   // =========================================================================
-  // --- DATA PROCESSING (Moved up to prevent ReferenceError / Blank Screen) ---
+  // --- DATA PROCESSING ---
   // =========================================================================
   const pending = employees.filter(e => !e?.is_verified && e?.user_type !== 'admin');
   const verified = employees.filter(e => e?.is_verified);
@@ -120,14 +119,13 @@ const AdminDashboard = () => {
 
   useEffect(() => { fetchBaseData(); }, [fetchBaseData]);
 
-  // --- 2. REPORTS DATA FETCHING (Fixed infinite render loop) ---
+  // --- 2. REPORTS DATA FETCHING ---
   const fetchReportsData = useCallback(async () => {
     if (mainTab !== 'reports') return;
     setReportsLoading(true);
     try {
       let url = `/api/admin/reports/monthly-field-visits?month=${reportMonth}&year=${reportYear}`;
       
-      // Use the stable 'employees' array to find the matched officer
       if (reportOfficerSearch && employees.length > 0) {
         const matchedOfficer = employees.find(o => 
           o.is_verified &&
@@ -277,8 +275,17 @@ const AdminDashboard = () => {
   const downloadAttendanceExcel = async () => {
     try {
       let url = `/api/admin/reports/monthly-attendance?month=${reportMonth}&year=${reportYear}`;
-      const officerId = reportPersonnel.find(o => o.full_name.toLowerCase().includes(reportOfficerSearch.toLowerCase()) || o.email.toLowerCase().includes(reportOfficerSearch.toLowerCase()))?.id;
-      if (officerId) url += `&user_id=${officerId}`;
+      
+      // FIXED: Only search for a specific officer if the search box is not empty
+      if (reportOfficerSearch && employees.length > 0) {
+        const matchedOfficer = employees.find(o => 
+          o.is_verified &&
+          (o.full_name?.toLowerCase().includes(reportOfficerSearch.toLowerCase()) || 
+           o.email?.toLowerCase().includes(reportOfficerSearch.toLowerCase()))
+        );
+        if (matchedOfficer) url += `&user_id=${matchedOfficer.id}`;
+      }
+
       if (filterSite) url += `&location_id=${filterSite}`;
       if (filterRole && filterRole !== 'all') url += `&user_type=${filterRole}`;
 
@@ -321,7 +328,7 @@ const AdminDashboard = () => {
       const urlBlob = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = urlBlob;
-      const employeeSegment = filterOfficer ? `_Employee_${filterOfficer}` : '';
+      const employeeSegment = reportOfficerSearch ? `_Employee_${reportOfficerSearch}` : '';
       const siteSegment = filterSite ? `_Site_${filterSite}` : '';
       const roleSegment = filterRole !== 'all' ? `_${filterRole}` : '';
       link.download = `Attendance_${reportMonth}_${reportYear}${roleSegment}${siteSegment}${employeeSegment}.xls`;
@@ -352,7 +359,6 @@ const AdminDashboard = () => {
     addDoc('Left Hand Fingerprints', selectedStaff?.fingerprints_left_path);
     addDoc('Right Hand Fingerprints', selectedStaff?.fingerprints_right_path);
 
-    // Safely parse and add EXTRA documents
     const extraDocs = safeParseJSON(selectedStaff?.extra_documents_json);
     extraDocs.forEach(doc => {
       if (doc?.path) addDoc(doc?.title || 'Additional Document', doc.path);
@@ -669,7 +675,7 @@ const AdminDashboard = () => {
 
             <div className="d-flex gap-2 align-items-center border-start ps-4 flex-wrap">
               <span className="small fw-bold text-muted text-uppercase">Specific Data:</span>
-              <Form.Select size="sm" value={filterRole} onChange={e => { setFilterRole(e.target.value); setFilterOfficer(''); }} style={{width: '170px'}}>
+              <Form.Select size="sm" value={filterRole} onChange={e => { setFilterRole(e.target.value); setReportOfficerSearch(''); }} style={{width: '170px'}}>
                 <option value="all">All Employees</option>
                 <option value="field_officer">Field Officers</option>
                 <option value="employee">Normal Employees</option>
