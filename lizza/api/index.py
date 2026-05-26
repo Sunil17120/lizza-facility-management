@@ -732,10 +732,17 @@ def user_checkout(data: CheckAction, db: Session = Depends(get_db)):
     user.is_present = False
     db.commit()
 
+    # Calculate actual geofence status
+    is_inside = True
+    if office and lat is not None and lon is not None:
+        distance = get_distance(lat, lon, office.lat, office.lon)
+        is_inside = distance <= office.radius
+
     return {
         "status": "success", "message": "Checked Out",
         "duration_seconds": att.duration_seconds,
         "checked_in": False,
+        "is_inside": is_inside,
         "updated_user": {"id": user.id, "email": user.email, "is_present": user.is_present, "shift_start": user.shift_start, "shift_end": user.shift_end, "location_id": user.location_id, "blockchain_id": user.blockchain_id}
     }
 

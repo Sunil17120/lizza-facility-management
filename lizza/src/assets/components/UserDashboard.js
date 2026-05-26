@@ -101,7 +101,8 @@ const UserDashboard = () => {
       const data = await res.json();
       if (res.ok) {
         setCheckedIn(false);
-        setStatus({ type: 'secondary', msg: data.message || 'Checked Out', code: 'outside' });
+        const statusCode = data.is_inside ? 'inside' : 'outside';
+        setStatus({ type: 'secondary', msg: data.message || 'Checked Out', code: statusCode });
         if (data.updated_user) setDbUser(data.updated_user);
       } else {
         setStatus({ type: 'danger', msg: data.detail || data.message || 'Check-out failed', code: 'error' });
