@@ -24,6 +24,16 @@ except ImportError:
 app = FastAPI()
 redis_url = os.environ.get("REDIS_URL") or os.environ.get("KV_URL")
 r = None
+manager_connections = {}
+
+async def broadcast_manager_update(manager_id: int, payload: dict):
+    connections = manager_connections.get(manager_id, set()).copy()
+    for ws in connections:
+        try:
+            await ws.send_json(payload)
+        except Exception:
+            manager_connections.get(manager_id, set()).discard(ws)
+
 class SafeRedisClient:
     def __init__(self, client):
         self._client = client
@@ -76,7 +86,13 @@ def is_time_between(start_str, end_str, check_str):
         return start_str <= check_str <= end_str
     else: 
         return start_str <= check_str or check_str <= end_str
-
+def get_site_at_location(lat, lon, db):
+    offices = db.query(OfficeLocation).all()
+    for office in offices:
+        distance = get_distance(lat, lon, office.lat, office.lon)
+        if distance <= office.radius:
+            return office
+    return None
 class AuthRequest(BaseModel): 
     email: str
     password: str
@@ -365,6 +381,19 @@ def get_manager_live_tracking(manager_id: int, db: Session = Depends(get_db)):
         results.append({"email": m.email, "name": m.full_name, "lat": lat, "lon": lon, "present": m.is_present})
     return results
 
+@app.websocket("/ws/manager-tracking")
+async def manager_tracking_ws(websocket: WebSocket, manager_id: int):
+    await websocket.accept()
+    connections = manager_connections.setdefault(manager_id, set())
+    connections.add(websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        manager_connections.get(manager_id, set()).discard(websocket)
+
 # --- ADMIN ROUTES ---
 @app.post("/api/admin/verify-employee")
 def verify_employee(target_email: str, admin_email: str, db: Session = Depends(get_db)):
@@ -399,6 +428,7 @@ def update_location_endpoint(loc_id: int, data: LocationCreate, db: Session = De
 
 @app.get("/api/admin/live-tracking")
 def get_live_tracking(admin_email: str, db: Session = Depends(get_db)):
+    """Get real-time tracking of all verified users with location details"""
     users = db.query(User).filter(User.is_verified == True).all()
     results = []
     for u in users:
@@ -409,8 +439,41 @@ def get_live_tracking(admin_email: str, db: Session = Depends(get_db)):
                 parts = coords.split(',')
                 lat, lon = float(parts[0]), float(parts[1])
             except: pass
-        results.append({"email": u.email, "name": u.full_name, "lat": lat, "lon": lon, "present": u.is_present})
+        
+        # Get current geofence if inside
+        site_name = None
+        if lat and lon:
+            site = get_site_at_location(lat, lon, db)
+            site_name = site.name if site else None
+        
+        results.append({
+            "user_id": u.id,
+            "email": u.email,
+            "name": u.full_name,
+            "user_type": u.user_type,
+            "lat": lat,
+            "lon": lon,
+            "present": u.is_present,
+            "site_name": site_name,
+            "manager_id": u.manager_id,
+            "last_ping": r.get(f"ping_time:{u.email}") if r else None
+        })
     return results
+
+@app.websocket("/ws/admin-tracking")
+async def admin_tracking_ws(websocket: WebSocket, admin_id: int):
+    """WebSocket for admin real-time tracking of all users"""
+    await websocket.accept()
+    connections = manager_connections.setdefault(f"admin_{admin_id}", set())
+    connections.add(websocket)
+    try:
+        while True:
+            data = await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        manager_connections.get(f"admin_{admin_id}", set()).discard(websocket)
+
 
 @app.post("/api/admin/update-employee-inline")
 def update_employee_inline(data: dict, db: Session = Depends(get_db)):
@@ -448,22 +511,32 @@ def delete_employee(user_id: int, db: Session = Depends(get_db)):
         if user.user_type == 'admin' or user.email == 'admin@lizza.com':
             raise HTTPException(status_code=403, detail="Security protocol prevents deleting the Super Admin account.")
 
+        # 1. Clear Manager references
         db.query(User).filter(User.manager_id == user_id).update({"manager_id": None})
+        
+        # 2. Delete related records (Ensure all referenced tables are included)
         db.query(EmployeeLocation).filter(EmployeeLocation.user_id == user_id).delete()
         db.query(SiteVisit).filter(SiteVisit.officer_id == user_id).delete()
         db.query(SiteStay).filter(SiteStay.officer_id == user_id).delete()
         
+        # ADD THIS: Clear Attendance records
+        try:
+            from .database import Attendance
+            db.query(Attendance).filter(Attendance.user_id == user_id).delete()
+        except: pass
+
+        # 3. Existing logs cleanup
         db.execute(text("DELETE FROM field_visit_logs WHERE officer_id = :uid"), {"uid": user_id})
 
+        # 4. Final deletion
         db.delete(user)
         db.commit()
         return {"status": "success", "message": "Employee and all related records deleted."}
 
-    except HTTPException: raise
     except Exception as e:
         db.rollback() 
-        print(f"Delete Error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to delete employee due to a database constraint. Error: {str(e)}")
+        print(f"Delete Error Details: {str(e)}") # Check your console logs for the exact constraint name
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @app.delete("/api/admin/delete-location/{loc_id}")
 def delete_location(loc_id: int, db: Session = Depends(get_db)):
@@ -575,10 +648,10 @@ def get_monthly_attendance(
     except ImportError:
         from database import Attendance
 
-    query = db.query(Attendance, User, OfficeLocation).join(User, Attendance.user_id == User.id).outerjoin(OfficeLocation, User.location_id == OfficeLocation.id)
+    query = db.query(Attendance, User, OfficeLocation).join(User, Attendance.user_id == User.id).outerjoin(OfficeLocation, Attendance.location_id == OfficeLocation.id)
     query = query.filter(Attendance.date >= start_utc, Attendance.date <= end_utc)
     if user_id: query = query.filter(User.id == user_id)
-    if location_id: query = query.filter(User.location_id == location_id)
+    if location_id: query = query.filter(Attendance.location_id == location_id)
     if user_type: query = query.filter(User.user_type == user_type)
     results = query.order_by(Attendance.date.asc()).all()
 
@@ -646,24 +719,13 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
     
     now_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
     now_str = now_ist.strftime("%H:%M")
-
-    if user.user_type in ['employee', 'manager', 'admin']:
-        office = db.query(OfficeLocation).filter(OfficeLocation.id == user.location_id).first() if user.location_id else None
-        if not office:
-            return {"is_inside": True, "status": "normal", "message": "Location Updated"}
-        is_inside = get_distance(lat, lon, office.lat, office.lon) <= office.radius
-        return {
-            "is_inside": is_inside,
-            "status": "inside" if is_inside else "outside",
-            "message": "Inside Geofence" if is_inside else "Outside Geofence"
-        }
+    now_utc = datetime.utcnow()
 
     if r:
-        if user.is_present: r.set(f"loc:{email}", f"{lat},{lon}", ex=43200) 
-        else: r.set(f"loc:{email}", f"{lat},{lon}", ex=360) 
-    
+        if user.is_present: r.set(f"loc:{email}", f"{lat},{lon}", ex=43200)
+        else: r.set(f"loc:{email}", f"{lat},{lon}", ex=360)
+
     if user.user_type == 'field_officer':
-        now_utc = datetime.utcnow()
         offices = db.query(OfficeLocation).all()
         current_site = next((o for o in offices if get_distance(lat, lon, o.lat, o.lon) <= o.radius), None)
         active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
@@ -673,98 +735,264 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
                 if active_stay: active_stay.exit_time = now_utc
                 db.add(SiteStay(officer_id=user.id, location_id=current_site.id, entry_time=now_utc))
                 db.commit()
+            # Clear outside tracking when back inside
+            if r: r.delete(f"outside:{email}")
         else:
-            if active_stay: active_stay.exit_time = now_utc; db.commit()
-                
-        return {"is_inside": current_site is not None, "status": "normal", "message": "Location Updated"}
-    return {"is_inside": False, "status": "outside", "message": "Outside Geofence"}
+            if active_stay:
+                active_stay.exit_time = now_utc
+                db.commit()
+            # Track when user went outside geofence
+            if r:
+                outside_key = f"outside:{email}"
+                outside_time_str = r.get(outside_key)
+                if not outside_time_str:
+                    # First time going outside, set timestamp
+                    r.set(outside_key, now_utc.isoformat(), ex=600)  # 10 min buffer
+                else:
+                    # Check if been outside for > 5 minutes
+                    try:
+                        outside_time = datetime.fromisoformat(outside_time_str)
+                        outside_duration = (now_utc - outside_time).total_seconds()
+                        if outside_duration > 300:  # 5 minutes
+                            # Auto-checkout
+                            from .database import Attendance
+                            att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
+                            if att:
+                                att.checkout_time = now_utc
+                                att.duration_seconds = int((att.checkout_time - att.checkin_time).total_seconds())
+                                user.is_present = False
+                                db.commit()
+                                r.delete(outside_key)
+                    except Exception as e:
+                        print(f"Auto-checkout error: {e}")
+
+        response = {
+            "is_inside": current_site is not None,
+            "status": "inside" if current_site is not None else "outside",
+            "message": "Inside Geofence" if current_site is not None else "Outside Geofence",
+            "site_name": current_site.name if current_site else None
+        }
+        if user.manager_id:
+            await broadcast_manager_update(user.manager_id, {
+                "type": "location_update",
+                "data": {
+                    "email": user.email,
+                    "name": user.full_name,
+                    "lat": lat,
+                    "lon": lon,
+                    "present": current_site is not None,
+                    "site_name": current_site.name if current_site else None
+                }
+            })
+        return response
+
+    current_site = get_site_at_location(lat, lon, db)
+    
+    # Auto-checkout for regular employees outside office for 5+ minutes
+    if not current_site and user.user_type in ['employee', 'manager']:
+        if r:
+            outside_key = f"outside:{email}"
+            outside_time_str = r.get(outside_key)
+            if not outside_time_str:
+                r.set(outside_key, now_utc.isoformat(), ex=600)
+            else:
+                try:
+                    outside_time = datetime.fromisoformat(outside_time_str)
+                    outside_duration = (now_utc - outside_time).total_seconds()
+                    if outside_duration > 300:
+                        from .database import Attendance
+                        att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
+                        if att:
+                            att.checkout_time = now_utc
+                            att.duration_seconds = int((att.checkout_time - att.checkin_time).total_seconds())
+                            user.is_present = False
+                            db.commit()
+                            r.delete(outside_key)
+                except Exception as e:
+                    print(f"Auto-checkout error: {e}")
+    elif current_site and r:
+        r.delete(f"outside:{email}")
+    
+    response = {
+        "is_inside": current_site is not None,
+        "status": "inside" if current_site is not None else "outside",
+        "message": "Inside Geofence" if current_site is not None else "Outside Geofence",
+        "site_name": current_site.name if current_site else None
+    }
+    if user.manager_id:
+        await broadcast_manager_update(user.manager_id, {
+            "type": "location_update",
+            "data": {
+                "email": user.email,
+                "name": user.full_name,
+                "lat": lat,
+                "lon": lon,
+                "present": current_site is not None,
+                "site_name": current_site.name if current_site else None
+            }
+        })
+    return response
 
 
 @app.post("/api/user/checkin")
 def user_checkin(data: CheckAction, db: Session = Depends(get_db)):
-    email = data.email.lower().strip()
-    user = db.query(User).filter(User.email == email).first()
-    if not user: raise HTTPException(404, "User not found")
-    if user.user_type != 'employee':
-        raise HTTPException(403, "Attendance is only available for employees.")
+    # Calculate site dynamically
+    site = get_site_at_location(data.lat, data.lon, db)
+    if not site:
+        raise HTTPException(400, "You are not inside any valid geofence area.")
 
-    office = db.query(OfficeLocation).filter(OfficeLocation.id == user.location_id).first() if user.location_id else None
-    lat, lon = data.lat, data.lon
-    if office:
-        if lat is None or lon is None:
-            lat, lon = get_saved_coordinates(email)
-        if lat is None or lon is None:
-            raise HTTPException(400, "Geofence validation requires current location. Please refresh location and try again.")
-        distance = get_distance(lat, lon, office.lat, office.lon)
-        if distance > office.radius:
-            raise HTTPException(400, f"Geofence validation failed. You are {int(distance)}m away.")
-
-    try:
-        from .database import Attendance
-    except ImportError:
-        from database import Attendance
-    open_attendance = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).order_by(Attendance.checkin_time.desc()).first()
+    user = db.query(User).filter(User.email == data.email.lower().strip()).first()
+    if not user:
+        raise HTTPException(404, "User not found")
+    
+    # Check if already checked in
+    from .database import Attendance
+    open_attendance = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
     if open_attendance:
         return {"status": "success", "message": "Already checked in.", "checked_in": True}
 
     now_utc = datetime.utcnow()
-    attendance = Attendance(user_id=user.id, checkin_time=now_utc, date=now_utc)
+    # Store the location_id of the site they checked into
+    attendance = Attendance(user_id=user.id, checkin_time=now_utc, date=now_utc, location_id=site.id)
     user.is_present = True
     db.add(attendance)
     db.commit()
-    return {
-        "status": "success", "message": "Checked In",
-        "checked_in": True,
-        "updated_user": {"id": user.id, "email": user.email, "is_present": user.is_present, "shift_start": user.shift_start, "shift_end": user.shift_end, "location_id": user.location_id, "blockchain_id": user.blockchain_id}
-    }
+    return {"status": "success", "message": f"Checked In at {site.name}", "site_name": site.name}
 
 
 @app.post("/api/user/checkout")
 def user_checkout(data: CheckAction, db: Session = Depends(get_db)):
-    email = data.email.lower().strip()
-    user = db.query(User).filter(User.email == email).first()
-    if not user: raise HTTPException(404, "User not found")
-    if user.user_type != 'employee':
-        raise HTTPException(403, "Attendance is only available for employees.")
+    user = db.query(User).filter(User.email == data.email.lower().strip()).first()
+    if not user:
+        raise HTTPException(404, "User not found")
+    
+    from .database import Attendance
+    att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
+    if not att:
+        raise HTTPException(400, "No active check-in found.")
 
-    office = db.query(OfficeLocation).filter(OfficeLocation.id == user.location_id).first() if user.location_id else None
-    lat, lon = data.lat, data.lon
-    if office:
-        if lat is None or lon is None:
-            lat, lon = get_saved_coordinates(email)
-        if lat is None or lon is None:
-            raise HTTPException(400, "Geofence validation requires current location. Please refresh location and try again.")
-        distance = get_distance(lat, lon, office.lat, office.lon)
-        if distance > office.radius:
-            raise HTTPException(400, f"Geofence validation failed. You are {int(distance)}m away.")
+    att.checkout_time = datetime.utcnow()
+    att.duration_seconds = int((att.checkout_time - att.checkin_time).total_seconds())
+    user.is_present = False
+    db.commit()
+    return {"status": "success", "message": "Checked Out"}
 
+@app.post("/api/user/sync-offline-locations")
+async def sync_offline_locations(email: str, locations: List[dict], db: Session = Depends(get_db)):
+    """Sync offline location pings when user comes back online"""
+    user = db.query(User).filter(User.email == email.lower().strip()).first()
+    if not user:
+        raise HTTPException(404, "User not found")
+    
+    if not locations:
+        return {"status": "success", "synced": 0, "message": "No locations to sync"}
+    
+    synced = 0
+    for loc_data in locations:
+        try:
+            lat, lon = loc_data.get('lat'), loc_data.get('lon')
+            timestamp = loc_data.get('timestamp')
+            if lat and lon:
+                current_site = get_site_at_location(lat, lon, db)
+                # Broadcast to manager
+                if user.manager_id and current_site:
+                    await broadcast_manager_update(user.manager_id, {
+                        "type": "location_update",
+                        "data": {
+                            "email": user.email,
+                            "name": user.full_name,
+                            "lat": lat,
+                            "lon": lon,
+                            "present": True,
+                            "site_name": current_site.name,
+                            "note": "(synced offline)"
+                        }
+                    })
+                synced += 1
+        except Exception as e:
+            print(f"Sync location error: {e}")
+    
+    return {"status": "success", "synced": synced, "message": f"Synced {synced} location pings"}
+
+@app.post("/api/user/sync-offline-state")
+async def sync_offline_state(
+    email: str, locations: List[dict], attendanceState: dict = None, db: Session = Depends(get_db)
+):
+    """Sync complete offline state including attendance records and location history"""
+    user = db.query(User).filter(User.email == email.lower().strip()).first()
+    if not user:
+        raise HTTPException(404, "User not found")
+    
     try:
         from .database import Attendance
     except ImportError:
         from database import Attendance
-    att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).order_by(Attendance.checkin_time.desc()).first()
-    if not att:
-        raise HTTPException(400, "No active check-in found.")
-
+    
     now_utc = datetime.utcnow()
-    att.checkout_time = now_utc
-    att.duration_seconds = int((att.checkout_time - att.checkin_time).total_seconds()) if att.checkin_time else 0
-    user.is_present = False
-    db.commit()
-
-    # Calculate actual geofence status
-    is_inside = True
-    if office and lat is not None and lon is not None:
-        distance = get_distance(lat, lon, office.lat, office.lon)
-        is_inside = distance <= office.radius
-
+    synced_locations = 0
+    current_site = None
+    
+    # Process all synced locations
+    for loc_data in locations:
+        try:
+            lat, lon = loc_data.get('lat'), loc_data.get('lon')
+            if lat and lon:
+                current_site = get_site_at_location(lat, lon, db)
+                synced_locations += 1
+        except Exception as e:
+            print(f"Sync error: {e}")
+    
+    # Reconstruct attendance state
+    checked_in = False
+    site_name = None
+    
+    if attendanceState:
+        checked_in = attendanceState.get('checkedIn', False)
+        site_name = attendanceState.get('currentSite', None)
+        
+        # If was checked in offline, create/update attendance record
+        if checked_in:
+            open_att = db.query(Attendance).filter(
+                Attendance.user_id == user.id,
+                Attendance.checkout_time == None
+            ).first()
+            
+            if not open_att and current_site:
+                # Create attendance if it doesn't exist
+                att = Attendance(
+                    user_id=user.id,
+                    checkin_time=now_utc - timedelta(minutes=5),
+                    date=now_utc,
+                    location_id=current_site.id
+                )
+                db.add(att)
+                db.commit()
+                checked_in = True
+                site_name = current_site.name
+    
+    # Broadcast to manager for live tracking
+    if user.manager_id and current_site:
+        await broadcast_manager_update(user.manager_id, {
+            "type": "location_update",
+            "data": {
+                "email": user.email,
+                "name": user.full_name,
+                "lat": locations[-1].get('lat') if locations else None,
+                "lon": locations[-1].get('lon') if locations else None,
+                "present": checked_in,
+                "site_name": site_name,
+                "note": "(offline sync)"
+            }
+        })
+    
     return {
-        "status": "success", "message": "Checked Out",
-        "duration_seconds": att.duration_seconds,
-        "checked_in": False,
-        "is_inside": is_inside,
-        "updated_user": {"id": user.id, "email": user.email, "is_present": user.is_present, "shift_start": user.shift_start, "shift_end": user.shift_end, "location_id": user.location_id, "blockchain_id": user.blockchain_id}
+        "status": "success",
+        "synced": synced_locations,
+        "checked_in": checked_in,
+        "current_site": site_name,
+        "message": f"Synced {synced_locations} location pings and attendance state"
     }
+
 
 # --- e-KYC EXTRACTION ---
 @app.post("/api/manager/extract-ekyc")
