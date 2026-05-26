@@ -69,6 +69,7 @@ const AdminDashboard = () => {
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
   const [filterRole, setFilterRole] = useState('all');
   const [reportOfficerSearch, setReportOfficerSearch] = useState('');
+  const [showReportSuggestions, setShowReportSuggestions] = useState(false); // NEW: Controls the dropdown visibility
   const [filterSite, setFilterSite] = useState('');
   
   const [fieldReports, setFieldReports] = useState([]);
@@ -126,12 +127,15 @@ const AdminDashboard = () => {
     try {
       let url = `/api/admin/reports/monthly-field-visits?month=${reportMonth}&year=${reportYear}`;
       
+      // EXPANDED: Now matches by Name, Email, ID, and Phone Number
       if (reportOfficerSearch && employees.length > 0) {
         const matchedOfficer = employees.find(o => 
           o.is_verified &&
           (filterRole === 'all' ? ['field_officer', 'employee'].includes(o?.user_type) : o?.user_type === filterRole) &&
           (o.full_name?.toLowerCase().includes(reportOfficerSearch.toLowerCase()) ||
-           o.email?.toLowerCase().includes(reportOfficerSearch.toLowerCase()))
+           o.email?.toLowerCase().includes(reportOfficerSearch.toLowerCase()) ||
+           o.blockchain_id?.toLowerCase().includes(reportOfficerSearch.toLowerCase()) ||
+           o.phone_number?.includes(reportOfficerSearch))
         );
         if (matchedOfficer) url += `&officer_id=${matchedOfficer.id}`;
       }
@@ -276,12 +280,14 @@ const AdminDashboard = () => {
     try {
       let url = `/api/admin/reports/monthly-attendance?month=${reportMonth}&year=${reportYear}`;
       
-      // FIXED: Only search for a specific officer if the search box is not empty
+      // EXPANDED: Now matches by Name, Email, ID, and Phone Number
       if (reportOfficerSearch && employees.length > 0) {
         const matchedOfficer = employees.find(o => 
           o.is_verified &&
           (o.full_name?.toLowerCase().includes(reportOfficerSearch.toLowerCase()) || 
-           o.email?.toLowerCase().includes(reportOfficerSearch.toLowerCase()))
+           o.email?.toLowerCase().includes(reportOfficerSearch.toLowerCase()) ||
+           o.blockchain_id?.toLowerCase().includes(reportOfficerSearch.toLowerCase()) ||
+           o.phone_number?.includes(reportOfficerSearch))
         );
         if (matchedOfficer) url += `&user_id=${matchedOfficer.id}`;
       }
@@ -680,17 +686,64 @@ const AdminDashboard = () => {
                 <option value="field_officer">Field Officers</option>
                 <option value="employee">Normal Employees</option>
               </Form.Select>
-              <div style={{width: '200px'}} className="position-relative">
+              
+              {/* --- NEW: DYNAMIC AUTOCOMPLETE DROPDOWN UI --- */}
+              <div style={{width: '250px'}} className="position-relative">
                 <Search size={16} className="position-absolute" style={{top: '8px', left: '10px', color: '#999', pointerEvents: 'none'}} />
                 <Form.Control
                   size="sm"
                   type="text"
-                  placeholder="Search employee..."
+                  placeholder="Search name, email, ID..."
                   value={reportOfficerSearch}
-                  onChange={e => setReportOfficerSearch(e.target.value)}
+                  onChange={e => {
+                      setReportOfficerSearch(e.target.value);
+                      setShowReportSuggestions(true);
+                  }}
+                  onFocus={() => setShowReportSuggestions(true)}
+                  onBlur={() => setTimeout(() => setShowReportSuggestions(false), 200)}
                   style={{paddingLeft: '32px'}}
                 />
+                
+                {showReportSuggestions && reportOfficerSearch && (
+                  <div className="position-absolute w-100 bg-white border rounded shadow mt-1 z-3" style={{ maxHeight: '250px', overflowY: 'auto', zIndex: 1050 }}>
+                    <div className="list-group list-group-flush">
+                      {verified.filter(emp =>
+                        (filterRole === 'all' ? ['field_officer', 'employee'].includes(emp?.user_type) : emp?.user_type === filterRole) &&
+                        (emp.full_name?.toLowerCase().includes(reportOfficerSearch.toLowerCase()) ||
+                         emp.email?.toLowerCase().includes(reportOfficerSearch.toLowerCase()) ||
+                         emp.blockchain_id?.toLowerCase().includes(reportOfficerSearch.toLowerCase()) ||
+                         emp.phone_number?.includes(reportOfficerSearch))
+                      ).map(emp => (
+                        <button
+                          key={emp.id}
+                          type="button" 
+                          className="list-group-item list-group-item-action py-2 px-3 text-start border-bottom"
+                          onClick={() => {
+                            setReportOfficerSearch(emp.full_name);
+                            setShowReportSuggestions(false);
+                          }}
+                        >
+                          <div className="fw-bold" style={{ fontSize: '0.85rem' }}>{emp.full_name}</div>
+                          <div className="text-muted" style={{ fontSize: '0.75rem' }}>
+                              {emp.blockchain_id || 'ID N/A'} &bull; {emp.email}
+                          </div>
+                        </button>
+                      ))}
+                      
+                      {verified.filter(emp =>
+                        (filterRole === 'all' ? ['field_officer', 'employee'].includes(emp?.user_type) : emp?.user_type === filterRole) &&
+                        (emp.full_name?.toLowerCase().includes(reportOfficerSearch.toLowerCase()) ||
+                         emp.email?.toLowerCase().includes(reportOfficerSearch.toLowerCase()) ||
+                         emp.blockchain_id?.toLowerCase().includes(reportOfficerSearch.toLowerCase()) ||
+                         emp.phone_number?.includes(reportOfficerSearch))
+                      ).length === 0 && (
+                        <div className="p-3 text-muted text-center" style={{ fontSize: '0.85rem' }}>No matches found</div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
+              
               <Form.Select size="sm" value={filterSite} onChange={e => setFilterSite(e.target.value)} style={{width: '150px'}}>
                 <option value="">All Sites</option>
                 {locations.map(loc => <option key={loc.id} value={loc.id}>{loc.name}</option>)}
