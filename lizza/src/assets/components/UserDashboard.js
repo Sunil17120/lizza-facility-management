@@ -22,21 +22,64 @@ const UserDashboard = () => {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const userEmail = localStorage.getItem('userEmail');
 
-  // Handle online/offline events
+  // Save state before app closes
+  useEffect(() => {
+    const saveState = () => {
+      if (userEmail) {
+        const attendanceState = {
+          checkedIn,
+          currentSite,
+          statusCode: status.code,
+          timestamp: new Date().toISOString()
+        };
+        localStorage.setItem(`attendanceState_${userEmail}`, JSON.stringify(attendanceState));
+      }
+    };
+    
+    window.addEventListener('beforeunload', saveState);
+    window.addEventListener('pagehide', saveState);
+    
+    return () => {
+      window.removeEventListener('beforeunload', saveState);
+      window.removeEventListener('pagehide', saveState);
+      saveState();
+    };
+  }, [userEmail, checkedIn, currentSite, status.code]);
+
+  // Restore state on mount
+  useEffect(() => {
+    if (!userEmail) return;
+    const attendanceState = JSON.parse(localStorage.getItem(`attendanceState_${userEmail}`) || 'null');
+    if (attendanceState) {
+      setCheckedIn(attendanceState.checkedIn || false);
+      setCurrentSite(attendanceState.currentSite || null);
+    }
+  }, [userEmail]);
+
+  // Handle online/offline events with enhanced sync
   useEffect(() => {
     const handleOnline = async () => {
       setIsOnline(true);
-      // Sync offline locations
       const offlineLocations = JSON.parse(localStorage.getItem('offlineLocations') || '[]');
-      if (offlineLocations.length > 0) {
+      const offlineAttendance = JSON.parse(localStorage.getItem('offlineAttendance') || 'null');
+      
+      if (offlineLocations.length > 0 || offlineAttendance) {
         try {
-          const res = await fetch('/api/user/sync-offline-locations', {
+          const res = await fetch('/api/user/sync-offline-state', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: userEmail, locations: offlineLocations })
+            body: JSON.stringify({
+              email: userEmail,
+              locations: offlineLocations,
+              attendanceState: offlineAttendance
+            })
           });
           if (res.ok) {
+            const data = await res.json();
+            setCheckedIn(data.checked_in || false);
+            setCurrentSite(data.current_site || null);
             localStorage.removeItem('offlineLocations');
+            localStorage.removeItem('offlineAttendance');
           }
         } catch (err) {
           console.error('Offline sync error', err);
@@ -74,13 +117,27 @@ const UserDashboard = () => {
   }, [userEmail, navigate]);
 
   const syncLocation = useCallback(async (lat, lon) => {
-    const locData = { lat, lon, timestamp: new Date().toISOString() };
+    const locData = {
+      lat,
+      lon,
+      timestamp: new Date().toISOString(),
+      checkedIn: checkedIn,
+      currentSite: currentSite
+    };
 
     // Store offline if not connected
     if (!isOnline) {
       const offlineLocations = JSON.parse(localStorage.getItem('offlineLocations') || '[]');
       offlineLocations.push(locData);
       localStorage.setItem('offlineLocations', JSON.stringify(offlineLocations));
+      
+      const offlineAttendance = {
+        checkedIn: checkedIn,
+        currentSite: currentSite,
+        lastUpdate: new Date().toISOString()
+      };
+      localStorage.setItem('offlineAttendance', JSON.stringify(offlineAttendance));
+      
       setStatus({ type: 'warning', msg: 'Offline - Location stored locally', code: 'offline' });
       return;
     }
@@ -102,7 +159,7 @@ const UserDashboard = () => {
       setCurrentSite(null);
       setStatus({ type: 'danger', msg: 'Sync Error', code: 'error' });
     }
-  }, [userEmail, isOnline]);
+  }, [userEmail, isOnline, checkedIn, currentSite]);
 
   const handleCheckIn = async () => {
     if (actionLoading || status.code !== 'inside') return;
@@ -146,12 +203,33 @@ const UserDashboard = () => {
         );
       });
 
-      const res = await fetch('/api/user/checkout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: userEmail, lat: coords.latitude, lon: coords.longitude }) });
+      const checkoutData = {
+        email: userEmail,
+        lat: coords.latitude,
+        lon: coords.longitude,
+        timestamp: new Date().toISOString()
+      };
+
+      if (!isOnline) {
+        const offlineAttendance = JSON.parse(localStorage.getItem('offlineAttendance') || 'null');
+        if (offlineAttendance) {
+          offlineAttendance.checkoutData = checkoutData;
+          localStorage.setItem('offlineAttendance', JSON.stringify(offlineAttendance));
+        }
+        setCheckedIn(false);
+        setCurrentSite(null);
+        setStatus({ type: 'warning', msg: 'Check-out stored offline, will sync when online', code: 'off_duty' });
+        setActionLoading(false);
+        return;
+      }
+
+      const res = await fetch('/api/user/checkout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(checkoutData) });
       const data = await res.json();
       if (res.ok) {
         setCheckedIn(false);
         setCurrentSite(null);
         setStatus({ type: 'secondary', msg: data.message || 'Checked Out', code: 'off_duty' });
+        localStorage.removeItem('offlineAttendance');
         if (data.updated_user) setDbUser(data.updated_user);
       } else {
         setStatus({ type: 'danger', msg: data.detail || data.message || 'Check-out failed', code: 'error' });

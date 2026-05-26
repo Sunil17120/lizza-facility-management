@@ -428,6 +428,7 @@ def update_location_endpoint(loc_id: int, data: LocationCreate, db: Session = De
 
 @app.get("/api/admin/live-tracking")
 def get_live_tracking(admin_email: str, db: Session = Depends(get_db)):
+    """Get real-time tracking of all verified users with location details"""
     users = db.query(User).filter(User.is_verified == True).all()
     results = []
     for u in users:
@@ -438,8 +439,41 @@ def get_live_tracking(admin_email: str, db: Session = Depends(get_db)):
                 parts = coords.split(',')
                 lat, lon = float(parts[0]), float(parts[1])
             except: pass
-        results.append({"email": u.email, "name": u.full_name, "lat": lat, "lon": lon, "present": u.is_present})
+        
+        # Get current geofence if inside
+        site_name = None
+        if lat and lon:
+            site = get_site_at_location(lat, lon, db)
+            site_name = site.name if site else None
+        
+        results.append({
+            "user_id": u.id,
+            "email": u.email,
+            "name": u.full_name,
+            "user_type": u.user_type,
+            "lat": lat,
+            "lon": lon,
+            "present": u.is_present,
+            "site_name": site_name,
+            "manager_id": u.manager_id,
+            "last_ping": r.get(f"ping_time:{u.email}") if r else None
+        })
     return results
+
+@app.websocket("/ws/admin-tracking")
+async def admin_tracking_ws(websocket: WebSocket, admin_id: int):
+    """WebSocket for admin real-time tracking of all users"""
+    await websocket.accept()
+    connections = manager_connections.setdefault(f"admin_{admin_id}", set())
+    connections.add(websocket)
+    try:
+        while True:
+            data = await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        manager_connections.get(f"admin_{admin_id}", set()).discard(websocket)
+
 
 @app.post("/api/admin/update-employee-inline")
 def update_employee_inline(data: dict, db: Session = Depends(get_db)):
@@ -859,13 +893,106 @@ async def sync_offline_locations(email: str, locations: List[dict], db: Session 
             lat, lon = loc_data.get('lat'), loc_data.get('lon')
             timestamp = loc_data.get('timestamp')
             if lat and lon:
-                # Process each ping as if it came live (but use historical timestamp)
-                # This helps reconstruct attendance if auto-checkout was triggered
+                current_site = get_site_at_location(lat, lon, db)
+                # Broadcast to manager
+                if user.manager_id and current_site:
+                    await broadcast_manager_update(user.manager_id, {
+                        "type": "location_update",
+                        "data": {
+                            "email": user.email,
+                            "name": user.full_name,
+                            "lat": lat,
+                            "lon": lon,
+                            "present": True,
+                            "site_name": current_site.name,
+                            "note": "(synced offline)"
+                        }
+                    })
                 synced += 1
         except Exception as e:
             print(f"Sync location error: {e}")
     
     return {"status": "success", "synced": synced, "message": f"Synced {synced} location pings"}
+
+@app.post("/api/user/sync-offline-state")
+async def sync_offline_state(
+    email: str, locations: List[dict], attendanceState: dict = None, db: Session = Depends(get_db)
+):
+    """Sync complete offline state including attendance records and location history"""
+    user = db.query(User).filter(User.email == email.lower().strip()).first()
+    if not user:
+        raise HTTPException(404, "User not found")
+    
+    try:
+        from .database import Attendance
+    except ImportError:
+        from database import Attendance
+    
+    now_utc = datetime.utcnow()
+    synced_locations = 0
+    current_site = None
+    
+    # Process all synced locations
+    for loc_data in locations:
+        try:
+            lat, lon = loc_data.get('lat'), loc_data.get('lon')
+            if lat and lon:
+                current_site = get_site_at_location(lat, lon, db)
+                synced_locations += 1
+        except Exception as e:
+            print(f"Sync error: {e}")
+    
+    # Reconstruct attendance state
+    checked_in = False
+    site_name = None
+    
+    if attendanceState:
+        checked_in = attendanceState.get('checkedIn', False)
+        site_name = attendanceState.get('currentSite', None)
+        
+        # If was checked in offline, create/update attendance record
+        if checked_in:
+            open_att = db.query(Attendance).filter(
+                Attendance.user_id == user.id,
+                Attendance.checkout_time == None
+            ).first()
+            
+            if not open_att and current_site:
+                # Create attendance if it doesn't exist
+                att = Attendance(
+                    user_id=user.id,
+                    checkin_time=now_utc - timedelta(minutes=5),
+                    date=now_utc,
+                    location_id=current_site.id
+                )
+                db.add(att)
+                db.commit()
+                checked_in = True
+                site_name = current_site.name
+    
+    # Broadcast to manager for live tracking
+    if user.manager_id and current_site:
+        await broadcast_manager_update(user.manager_id, {
+            "type": "location_update",
+            "data": {
+                "email": user.email,
+                "name": user.full_name,
+                "lat": locations[-1].get('lat') if locations else None,
+                "lon": locations[-1].get('lon') if locations else None,
+                "present": checked_in,
+                "site_name": site_name,
+                "note": "(offline sync)"
+            }
+        })
+    
+    return {
+        "status": "success",
+        "synced": synced_locations,
+        "checked_in": checked_in,
+        "current_site": site_name,
+        "message": f"Synced {synced_locations} location pings and attendance state"
+    }
+
 
 # --- e-KYC EXTRACTION ---
 @app.post("/api/manager/extract-ekyc")
