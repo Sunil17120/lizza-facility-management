@@ -19,6 +19,7 @@ const ManagerDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [showAddEmp, setShowAddEmp] = useState(false);
   const [empSearch, setEmpSearch] = useState('');
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
   
   // Get managerId from storage
   const managerId = localStorage.getItem('userId'); 
@@ -67,6 +68,20 @@ const ManagerDashboard = () => {
   }, [managerId]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  // Handle online/offline events
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   const wsRef = useRef(null);
   useEffect(() => {

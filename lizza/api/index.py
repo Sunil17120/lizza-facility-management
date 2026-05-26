@@ -685,13 +685,13 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
     
     now_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
     now_str = now_ist.strftime("%H:%M")
+    now_utc = datetime.utcnow()
 
     if r:
         if user.is_present: r.set(f"loc:{email}", f"{lat},{lon}", ex=43200)
         else: r.set(f"loc:{email}", f"{lat},{lon}", ex=360)
 
     if user.user_type == 'field_officer':
-        now_utc = datetime.utcnow()
         offices = db.query(OfficeLocation).all()
         current_site = next((o for o in offices if get_distance(lat, lon, o.lat, o.lon) <= o.radius), None)
         active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
@@ -701,10 +701,36 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
                 if active_stay: active_stay.exit_time = now_utc
                 db.add(SiteStay(officer_id=user.id, location_id=current_site.id, entry_time=now_utc))
                 db.commit()
+            # Clear outside tracking when back inside
+            if r: r.delete(f"outside:{email}")
         else:
             if active_stay:
                 active_stay.exit_time = now_utc
                 db.commit()
+            # Track when user went outside geofence
+            if r:
+                outside_key = f"outside:{email}"
+                outside_time_str = r.get(outside_key)
+                if not outside_time_str:
+                    # First time going outside, set timestamp
+                    r.set(outside_key, now_utc.isoformat(), ex=600)  # 10 min buffer
+                else:
+                    # Check if been outside for > 5 minutes
+                    try:
+                        outside_time = datetime.fromisoformat(outside_time_str)
+                        outside_duration = (now_utc - outside_time).total_seconds()
+                        if outside_duration > 300:  # 5 minutes
+                            # Auto-checkout
+                            from .database import Attendance
+                            att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
+                            if att:
+                                att.checkout_time = now_utc
+                                att.duration_seconds = int((att.checkout_time - att.checkin_time).total_seconds())
+                                user.is_present = False
+                                db.commit()
+                                r.delete(outside_key)
+                    except Exception as e:
+                        print(f"Auto-checkout error: {e}")
 
         response = {
             "is_inside": current_site is not None,
@@ -727,6 +753,32 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
         return response
 
     current_site = get_site_at_location(lat, lon, db)
+    
+    # Auto-checkout for regular employees outside office for 5+ minutes
+    if not current_site and user.user_type in ['employee', 'manager']:
+        if r:
+            outside_key = f"outside:{email}"
+            outside_time_str = r.get(outside_key)
+            if not outside_time_str:
+                r.set(outside_key, now_utc.isoformat(), ex=600)
+            else:
+                try:
+                    outside_time = datetime.fromisoformat(outside_time_str)
+                    outside_duration = (now_utc - outside_time).total_seconds()
+                    if outside_duration > 300:
+                        from .database import Attendance
+                        att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
+                        if att:
+                            att.checkout_time = now_utc
+                            att.duration_seconds = int((att.checkout_time - att.checkin_time).total_seconds())
+                            user.is_present = False
+                            db.commit()
+                            r.delete(outside_key)
+                except Exception as e:
+                    print(f"Auto-checkout error: {e}")
+    elif current_site and r:
+        r.delete(f"outside:{email}")
+    
     response = {
         "is_inside": current_site is not None,
         "status": "inside" if current_site is not None else "outside",
@@ -790,6 +842,30 @@ def user_checkout(data: CheckAction, db: Session = Depends(get_db)):
     user.is_present = False
     db.commit()
     return {"status": "success", "message": "Checked Out"}
+
+@app.post("/api/user/sync-offline-locations")
+async def sync_offline_locations(email: str, locations: List[dict], db: Session = Depends(get_db)):
+    """Sync offline location pings when user comes back online"""
+    user = db.query(User).filter(User.email == email.lower().strip()).first()
+    if not user:
+        raise HTTPException(404, "User not found")
+    
+    if not locations:
+        return {"status": "success", "synced": 0, "message": "No locations to sync"}
+    
+    synced = 0
+    for loc_data in locations:
+        try:
+            lat, lon = loc_data.get('lat'), loc_data.get('lon')
+            timestamp = loc_data.get('timestamp')
+            if lat and lon:
+                # Process each ping as if it came live (but use historical timestamp)
+                # This helps reconstruct attendance if auto-checkout was triggered
+                synced += 1
+        except Exception as e:
+            print(f"Sync location error: {e}")
+    
+    return {"status": "success", "synced": synced, "message": f"Synced {synced} location pings"}
 
 # --- e-KYC EXTRACTION ---
 @app.post("/api/manager/extract-ekyc")

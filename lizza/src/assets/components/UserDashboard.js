@@ -19,7 +19,41 @@ const UserDashboard = () => {
   const [checkedIn, setCheckedIn] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [currentSite, setCurrentSite] = useState(null);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
   const userEmail = localStorage.getItem('userEmail');
+
+  // Handle online/offline events
+  useEffect(() => {
+    const handleOnline = async () => {
+      setIsOnline(true);
+      // Sync offline locations
+      const offlineLocations = JSON.parse(localStorage.getItem('offlineLocations') || '[]');
+      if (offlineLocations.length > 0) {
+        try {
+          const res = await fetch('/api/user/sync-offline-locations', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: userEmail, locations: offlineLocations })
+          });
+          if (res.ok) {
+            localStorage.removeItem('offlineLocations');
+          }
+        } catch (err) {
+          console.error('Offline sync error', err);
+        }
+      }
+    };
+    
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [userEmail]);
 
   useEffect(() => {
     if (localStorage.getItem('forcePasswordChange') === 'true') { setIsForceChange(true); setShowPassModal(true); }
@@ -40,6 +74,17 @@ const UserDashboard = () => {
   }, [userEmail, navigate]);
 
   const syncLocation = useCallback(async (lat, lon) => {
+    const locData = { lat, lon, timestamp: new Date().toISOString() };
+
+    // Store offline if not connected
+    if (!isOnline) {
+      const offlineLocations = JSON.parse(localStorage.getItem('offlineLocations') || '[]');
+      offlineLocations.push(locData);
+      localStorage.setItem('offlineLocations', JSON.stringify(offlineLocations));
+      setStatus({ type: 'warning', msg: 'Offline - Location stored locally', code: 'offline' });
+      return;
+    }
+
     try {
       const res = await fetch(`/api/user/update-location?email=${userEmail}&lat=${lat}&lon=${lon}`, { method: 'POST' });
       const data = await res.json();
@@ -57,7 +102,7 @@ const UserDashboard = () => {
       setCurrentSite(null);
       setStatus({ type: 'danger', msg: 'Sync Error', code: 'error' });
     }
-  }, [userEmail]);
+  }, [userEmail, isOnline]);
 
   const handleCheckIn = async () => {
     if (actionLoading || status.code !== 'inside') return;
