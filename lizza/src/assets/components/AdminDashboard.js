@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Table, Form, Container, Card, Spinner, Button, Row, Col, Modal, Badge, Tabs, Tab } from 'react-bootstrap';
-import { UserCog, Building2, MapPin, Trash2, Users, UserCheck, UserX, Save, Search, Plus, Bell, Edit2, Calendar, Download, Image as ImageIcon, FileText, Briefcase, Filter, Eye, CheckCircle, Mail, Phone } from 'lucide-react';
+import { UserCog, Building2, MapPin, Trash2, Users, UserCheck, UserX, Save, Search, Plus, Bell, Edit2, Calendar, Download, Image as ImageIcon, FileText, Briefcase, Filter, Eye, CheckCircle, Phone } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 import EmployeeOnboardForm from './EmployeeOnboardForm';
 import logoImg from './logo.png';
@@ -79,7 +79,7 @@ const AdminDashboard = () => {
   const adminEmail = localStorage.getItem('userEmail');
 
   // =========================================================================
-  // --- DATA PROCESSING (MOVED HERE TO FIX REFERENCE ERROR / BLANK SCREEN) ---
+  // --- DATA PROCESSING (Moved up to prevent ReferenceError / Blank Screen) ---
   // =========================================================================
   const pending = employees.filter(e => !e?.is_verified && e?.user_type !== 'admin');
   const verified = employees.filter(e => e?.is_verified);
@@ -101,7 +101,6 @@ const AdminDashboard = () => {
     return { ...mgr, teamSize };
   });
 
-
   // --- 1. CORE DATA FETCHING ---
   const fetchBaseData = useCallback(async () => {
     try {
@@ -121,20 +120,24 @@ const AdminDashboard = () => {
 
   useEffect(() => { fetchBaseData(); }, [fetchBaseData]);
 
-  // --- 2. REPORTS DATA FETCHING ---
+  // --- 2. REPORTS DATA FETCHING (Fixed infinite render loop) ---
   const fetchReportsData = useCallback(async () => {
     if (mainTab !== 'reports') return;
     setReportsLoading(true);
     try {
       let url = `/api/admin/reports/monthly-field-visits?month=${reportMonth}&year=${reportYear}`;
-      // Convert search query to officer ID
-      if (reportOfficerSearch && reportPersonnel.length > 0) {
-        const matchedOfficer = reportPersonnel.find(o => 
-          o.full_name.toLowerCase().includes(reportOfficerSearch.toLowerCase()) ||
-          o.email.toLowerCase().includes(reportOfficerSearch.toLowerCase())
+      
+      // Use the stable 'employees' array to find the matched officer
+      if (reportOfficerSearch && employees.length > 0) {
+        const matchedOfficer = employees.find(o => 
+          o.is_verified &&
+          (filterRole === 'all' ? ['field_officer', 'employee'].includes(o?.user_type) : o?.user_type === filterRole) &&
+          (o.full_name?.toLowerCase().includes(reportOfficerSearch.toLowerCase()) ||
+           o.email?.toLowerCase().includes(reportOfficerSearch.toLowerCase()))
         );
         if (matchedOfficer) url += `&officer_id=${matchedOfficer.id}`;
       }
+      
       if (filterSite) url += `&location_id=${filterSite}`;
       if (filterRole && filterRole !== 'all') url += `&user_type=${filterRole}`;
       
@@ -142,7 +145,7 @@ const AdminDashboard = () => {
       if (res.ok) setFieldReports(await res.json());
     } catch (err) { console.error("Report fetch error", err); }
     setReportsLoading(false);
-  }, [reportMonth, reportYear, reportOfficerSearch, filterSite, filterRole, mainTab, reportPersonnel]);
+  }, [reportMonth, reportYear, reportOfficerSearch, filterSite, filterRole, mainTab, employees]);
 
   useEffect(() => { fetchReportsData(); }, [fetchReportsData]);
 
@@ -1216,7 +1219,7 @@ const AdminDashboard = () => {
         </Modal.Body>
       </Modal>
 
-    
+    </Container>
   );
 };
 
