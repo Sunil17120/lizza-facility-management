@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Table, Form, Container, Card, Spinner, Button, Row, Col, Modal, Badge, Tabs, Tab } from 'react-bootstrap';
-import { UserCog, Building2, MapPin, Trash2, Users, UserCheck, UserX, Save, Search, Plus, Bell, Edit2, Calendar, Download, Image as ImageIcon, FileText, Briefcase, Filter, Eye, CheckCircle } from 'lucide-react';
+import { UserCog, Building2, MapPin, Trash2, Users, UserCheck, UserX, Save, Search, Plus, Bell, Edit2, Calendar, Download, Image as ImageIcon, FileText, Briefcase, Filter, Eye, CheckCircle, Mail, Phone } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
-import EmployeeOnboardForm from './EmployeeOnboardForm'; 
+import EmployeeOnboardForm from './EmployeeOnboardForm';
+import logoImg from './logo.png';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
@@ -59,6 +60,9 @@ const AdminDashboard = () => {
   const [newLoc, setNewLoc] = useState({ name: '', lat: '', lon: '', radius: 200 });
   const [editLocModal, setEditLocModal] = useState(false);
   const [editingLoc, setEditingLoc] = useState(null);
+  const [editEmpModal, setEditEmpModal] = useState(false);
+  const [editingEmp, setEditingEmp] = useState(null);
+  const [empSearchQuery, setEmpSearchQuery] = useState('');
   
   // --- REPORTS STATES ---
   const [reportMonth, setReportMonth] = useState(new Date().getMonth() + 1);
@@ -131,6 +135,35 @@ const AdminDashboard = () => {
         fetchBaseData();
     }
   };
+
+  const handleEditEmpSave = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await fetch('/api/admin/update-employee-inline', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editingEmp)
+      });
+      if (res.ok) {
+        alert('Employee details updated successfully!');
+        setEditEmpModal(false);
+        setEditingEmp(null);
+        setEmpSearchQuery('');
+        fetchBaseData();
+      } else {
+        alert('Failed to update employee details');
+      }
+    } catch (err) {
+      alert('Error updating employee: ' + err.message);
+    }
+  };
+
+  const filteredEmployeesForSearch = verified.filter(emp =>
+    emp.full_name?.toLowerCase().includes(empSearchQuery.toLowerCase()) ||
+    emp.email?.toLowerCase().includes(empSearchQuery.toLowerCase()) ||
+    emp.phone_number?.includes(empSearchQuery) ||
+    emp.blockchain_id?.includes(empSearchQuery)
+  );
 
   // --- ACTIONS: BRANCHES ---
   const handleAddBranch = async (e) => {
@@ -312,6 +345,9 @@ const AdminDashboard = () => {
         <html><head><title>Dossier_${selectedStaff?.full_name || 'Employee'}</title>
           <style>
             body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; padding: 30px; color: #333; max-width: 900px; margin: auto; font-size: 14px; }
+            .logo-header { text-align: center; margin-bottom: 20px; border-bottom: 3px solid #e31e24; padding-bottom: 15px; }
+            .logo-header img { height: 50px; vertical-align: middle; margin-right: 15px; }
+            .logo-header .company-name { font-size: 18px; font-weight: bold; color: #e31e24; vertical-align: middle; display: inline-block; }
             h2 { text-align: center; border-bottom: 3px solid #0d6efd; padding-bottom: 10px; margin-bottom: 20px; color: #0d6efd; text-transform: uppercase;}
             .flex-row { display: flex; justify-content: space-between; align-items: flex-start; }
             .photo { width: 140px; height: 140px; border-radius: 8px; object-fit: cover; border: 2px solid #0d6efd; }
@@ -331,7 +367,11 @@ const AdminDashboard = () => {
             }
           </style>
         </head><body>
-          <h2>LFM Official Employee Dossier</h2>
+          <div class="logo-header">
+            <img src="${logoImg}" alt="Company Logo" />
+            <span class="company-name">LIZZA FACILITY MANAGEMENT</span>
+          </div>
+          <h2>Official Employee Dossier</h2>
           
           <h3 class="section-header" style="margin-top:0;">1. Identity & Employment Status</h3>
           <div class="flex-row">
@@ -452,10 +492,9 @@ const AdminDashboard = () => {
         <Tab eventKey="overview" title={<span className="fw-bold px-3">System Overview</span>}>
           
           <Row className="mb-4 text-center">
-            <Col md={3}><Card className="p-3 shadow-sm border-0"><div className="text-muted small">TOTAL STAFF</div><h4 className="fw-bold"><Users size={20} className="me-2"/>{employees.length}</h4></Card></Col>
-            <Col md={3}><Card className="p-3 shadow-sm border-0"><div className="text-muted small text-primary">ASSIGNED SITES</div><h4 className="fw-bold text-primary"><MapPin size={20} className="me-2"/>{locations.length}</h4></Card></Col>
-            <Col md={3}><Card className="p-3 shadow-sm border-0"><div className="text-muted small text-success">PRESENT</div><h4 className="fw-bold text-success"><UserCheck size={20} className="me-2"/>{employees.filter(e => e?.is_present).length}</h4></Card></Col>
-            <Col md={3}><Card className="p-3 shadow-sm border-0"><div className="text-muted small text-danger">ABSENT</div><h4 className="fw-bold text-danger"><UserX size={20} className="me-2"/>{employees.filter(e => !e?.is_present).length}</h4></Card></Col>
+            <Col md={4}><Card className="p-3 shadow-sm border-0"><div className="text-muted small">TOTAL STAFF</div><h4 className="fw-bold"><Users size={20} className="me-2"/>{employees.length}</h4></Card></Col>
+            <Col md={4}><Card className="p-3 shadow-sm border-0"><div className="text-muted small text-primary">VERIFIED EMPLOYEES</div><h4 className="fw-bold text-primary"><UserCheck size={20} className="me-2"/>{verified.length}</h4></Card></Col>
+            <Col md={4}><Card className="p-3 shadow-sm border-0"><div className="text-muted small text-success">ASSIGNED SITES</div><h4 className="fw-bold text-success"><MapPin size={20} className="me-2"/>{locations.length}</h4></Card></Col>
           </Row>
 
           <Row>
@@ -463,6 +502,9 @@ const AdminDashboard = () => {
             <Col md={4}>
               <Card className="border-0 shadow-sm p-3 mb-4">
                 <h6 className="fw-bold mb-3"><Building2 size={18} className="me-2 text-danger"/>Office Branches</h6>
+                <Button variant="info" size="sm" className="w-100 mb-3 fw-bold d-flex align-items-center justify-content-center" onClick={() => { setEditingEmp(null); setEmpSearchQuery(''); setEditEmpModal(true); }}>
+                  <Edit2 size={16} className="me-2"/> Edit Employee Details
+                </Button>
                 <Form onSubmit={handleAddBranch} className="mb-3">
                   <Form.Control size="sm" className="mb-2" placeholder="Branch Name" value={newLoc.name} onChange={e => setNewLoc({...newLoc, name: e.target.value})} required />
                   <div className="d-flex gap-2">
@@ -522,7 +564,7 @@ const AdminDashboard = () => {
           <Card className="border-0 shadow-sm">
             <Table responsive hover className="align-middle mb-0 small">
               <thead className="table-light text-uppercase">
-                <tr><th>Full Name</th><th>Email</th><th>Branch</th><th>Manager</th><th>Shift & Role</th><th>Status</th><th>Actions</th></tr>
+                <tr><th>Full Name</th><th>Email</th><th>Branch</th><th>Manager</th><th>Shift & Role</th><th>Actions</th></tr>
               </thead>
               <tbody>
                 {verified.map(emp => (
@@ -574,10 +616,10 @@ const AdminDashboard = () => {
                         </Form.Select>
                     </td>
 
-                    <td><Badge bg={emp.is_present ? "success" : "secondary"}>{emp.is_present ? "Present" : "Absent"}</Badge></td>
                     <td>
                         <div className="d-flex gap-1">
                             <Button variant="info" size="sm" onClick={() => setSelectedStaff(emp)} title="View Full Profile"><Eye size={14}/></Button>
+                            <Button variant="primary" size="sm" onClick={() => { setEditingEmp({...emp}); setEditEmpModal(true); }} title="Edit Details"><Edit2 size={14}/></Button>
                             <Button variant="danger" size="sm" onClick={() => handleInlineSave(emp)} title="Save Updates"><Save size={14}/></Button>
                             <Button variant="outline-dark" size="sm" onClick={() => handleDeleteEmp(emp.id)}><Trash2 size={14}/></Button>
                         </div>
@@ -617,10 +659,17 @@ const AdminDashboard = () => {
                 <option value="field_officer">Field Officers</option>
                 <option value="employee">Normal Employees</option>
               </Form.Select>
-              <Form.Select size="sm" value={filterOfficer} onChange={e => setFilterOfficer(e.target.value)} style={{width: '180px'}}>
-                <option value="">All Persons</option>
-                {reportPersonnel.map(o => <option key={o.id} value={o.id}>{o.full_name} ({o.user_type === 'employee' ? 'Employee' : 'Field Officer'})</option>)}
-              </Form.Select>
+              <div style={{width: '200px'}} className="position-relative">
+                <Search size={16} className="position-absolute" style={{top: '8px', left: '10px', color: '#999', pointerEvents: 'none'}} />
+                <Form.Control
+                  size="sm"
+                  type="text"
+                  placeholder="Search employee..."
+                  value={filterOfficer}
+                  onChange={e => setFilterOfficer(e.target.value)}
+                  style={{paddingLeft: '32px'}}
+                />
+              </div>
               <Form.Select size="sm" value={filterSite} onChange={e => setFilterSite(e.target.value)} style={{width: '150px'}}>
                 <option value="">All Sites</option>
                 {locations.map(loc => <option key={loc.id} value={loc.id}>{loc.name}</option>)}
@@ -989,6 +1038,162 @@ const AdminDashboard = () => {
                   </Form>
               )}
           </Modal.Body>
+      </Modal>
+
+      {/* Edit Employee Details Modal */}
+      <Modal show={editEmpModal} onHide={() => setEditEmpModal(false)} size="lg" centered>
+        <Modal.Header closeButton className="bg-info text-white"><Modal.Title className="h6 fw-bold"><Edit2 className="me-2" size={18}/>Edit Employee Details</Modal.Title></Modal.Header>
+        <Modal.Body className="p-4">
+          {!editingEmp ? (
+            <>
+              <h6 className="fw-bold mb-3">Search Employee</h6>
+              <div className="position-relative mb-3">
+                <Search size={18} className="position-absolute" style={{top: '10px', left: '12px', color: '#999'}} />
+                <Form.Control
+                  type="text"
+                  placeholder="Search by name, email, phone, or ID..."
+                  value={empSearchQuery}
+                  onChange={e => setEmpSearchQuery(e.target.value)}
+                  style={{paddingLeft: '40px'}}
+                />
+              </div>
+              
+              <div style={{maxHeight: '300px', overflowY: 'auto'}}>
+                {filteredEmployeesForSearch.length === 0 ? (
+                  <div className="text-center text-muted py-5">No employees found. Try different search terms.</div>
+                ) : (
+                  filteredEmployeesForSearch.map(emp => (
+                    <Card key={emp.id} className="mb-2 border cursor-pointer" style={{cursor: 'pointer'}}>
+                      <Card.Body className="p-3 d-flex justify-content-between align-items-center" onClick={() => { setEditingEmp({...emp}); setEmpSearchQuery(''); }}>
+                        <div>
+                          <h6 className="mb-0 fw-bold">{emp.full_name}</h6>
+                          <small className="text-muted">{emp.email}</small><br/>
+                          <small className="text-muted"><Phone size={12} className="me-1"/>{emp.phone_number || 'N/A'}</small>
+                        </div>
+                        <Badge bg="secondary">{emp.user_type}</Badge>
+                      </Card.Body>
+                    </Card>
+                  ))
+                )}
+              </div>
+            </>
+          ) : (
+            <Form onSubmit={handleEditEmpSave}>
+              <div className="d-flex justify-content-between align-items-center mb-3 pb-3 border-bottom">
+                <h6 className="mb-0 fw-bold">{editingEmp.full_name}</h6>
+                <Button variant="light" size="sm" onClick={() => { setEditingEmp(null); setEmpSearchQuery(''); }}>← Back to Search</Button>
+              </div>
+
+              <Row>
+                <Col md={6}>
+                  <Form.Group className="mb-3">
+                    <Form.Label className="small fw-bold">Full Name</Form.Label>
+                    <Form.Control size="sm" value={editingEmp.full_name || ''} onChange={e => setEditingEmp({...editingEmp, full_name: e.target.value})} />
+                  </Form.Group>
+                </Col>
+                <Col md={6}>
+                  <Form.Group className="mb-3">
+                    <Form.Label className="small fw-bold">Email</Form.Label>
+                    <Form.Control size="sm" type="email" value={editingEmp.email || ''} onChange={e => setEditingEmp({...editingEmp, email: e.target.value})} />
+                  </Form.Group>
+                </Col>
+              </Row>
+
+              <Row>
+                <Col md={6}>
+                  <Form.Group className="mb-3">
+                    <Form.Label className="small fw-bold">Phone Number</Form.Label>
+                    <Form.Control size="sm" value={editingEmp.phone_number || ''} onChange={e => setEditingEmp({...editingEmp, phone_number: e.target.value})} />
+                  </Form.Group>
+                </Col>
+                <Col md={6}>
+                  <Form.Group className="mb-3">
+                    <Form.Label className="small fw-bold">Designation</Form.Label>
+                    <Form.Control size="sm" value={editingEmp.designation || ''} onChange={e => setEditingEmp({...editingEmp, designation: e.target.value})} />
+                  </Form.Group>
+                </Col>
+              </Row>
+
+              <Row>
+                <Col md={6}>
+                  <Form.Group className="mb-3">
+                    <Form.Label className="small fw-bold">Department</Form.Label>
+                    <Form.Control size="sm" value={editingEmp.department || ''} onChange={e => setEditingEmp({...editingEmp, department: e.target.value})} />
+                  </Form.Group>
+                </Col>
+                <Col md={6}>
+                  <Form.Group className="mb-3">
+                    <Form.Label className="small fw-bold">User Type</Form.Label>
+                    <Form.Select size="sm" value={editingEmp.user_type || 'employee'} onChange={e => setEditingEmp({...editingEmp, user_type: e.target.value})}>
+                      <option value="employee">Employee</option>
+                      <option value="field_officer">Field Officer</option>
+                      <option value="manager">Manager</option>
+                      <option value="admin">Admin</option>
+                    </Form.Select>
+                  </Form.Group>
+                </Col>
+              </Row>
+
+              <Row>
+                <Col md={6}>
+                  <Form.Group className="mb-3">
+                    <Form.Label className="small fw-bold">Personal Email</Form.Label>
+                    <Form.Control size="sm" type="email" value={editingEmp.personal_email || ''} onChange={e => setEditingEmp({...editingEmp, personal_email: e.target.value})} />
+                  </Form.Group>
+                </Col>
+                <Col md={6}>
+                  <Form.Group className="mb-3">
+                    <Form.Label className="small fw-bold">Date of Birth</Form.Label>
+                    <Form.Control size="sm" type="date" value={editingEmp.dob || ''} onChange={e => setEditingEmp({...editingEmp, dob: e.target.value})} />
+                  </Form.Group>
+                </Col>
+              </Row>
+
+              <Row>
+                <Col md={6}>
+                  <Form.Group className="mb-3">
+                    <Form.Label className="small fw-bold">Assigned Site</Form.Label>
+                    <Form.Select size="sm" value={editingEmp.location_id || ''} onChange={e => setEditingEmp({...editingEmp, location_id: e.target.value ? parseInt(e.target.value) : null})}>
+                      <option value="">Select Site</option>
+                      {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                    </Form.Select>
+                  </Form.Group>
+                </Col>
+                <Col md={6}>
+                  <Form.Group className="mb-3">
+                    <Form.Label className="small fw-bold">Assigned Manager</Form.Label>
+                    <Form.Select size="sm" value={editingEmp.manager_id || ''} onChange={e => setEditingEmp({...editingEmp, manager_id: e.target.value ? parseInt(e.target.value) : null})}>
+                      <option value="">No Manager</option>
+                      {employees.filter(m => m?.user_type === 'manager').map(mgr => (
+                        <option key={mgr.id} value={mgr.id}>{mgr.full_name}</option>
+                      ))}
+                    </Form.Select>
+                  </Form.Group>
+                </Col>
+              </Row>
+
+              <Row>
+                <Col md={6}>
+                  <Form.Group className="mb-3">
+                    <Form.Label className="small fw-bold">Shift Start</Form.Label>
+                    <Form.Control size="sm" type="time" value={editingEmp.shift_start || ''} onChange={e => setEditingEmp({...editingEmp, shift_start: e.target.value})} disabled={editingEmp.user_type === 'field_officer'} />
+                  </Form.Group>
+                </Col>
+                <Col md={6}>
+                  <Form.Group className="mb-3">
+                    <Form.Label className="small fw-bold">Shift End</Form.Label>
+                    <Form.Control size="sm" type="time" value={editingEmp.shift_end || ''} onChange={e => setEditingEmp({...editingEmp, shift_end: e.target.value})} disabled={editingEmp.user_type === 'field_officer'} />
+                  </Form.Group>
+                </Col>
+              </Row>
+
+              <div className="d-flex gap-2">
+                <Button type="submit" variant="success" className="fw-bold flex-fill"><Save size={16} className="me-2"/>Save Changes</Button>
+                <Button variant="light" onClick={() => { setEditingEmp(null); setEmpSearchQuery(''); }} className="fw-bold">Cancel</Button>
+              </div>
+            </Form>
+          )}
+        </Modal.Body>
       </Modal>
 
       {/* Geotag Photo Viewer */}
