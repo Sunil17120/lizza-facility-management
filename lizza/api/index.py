@@ -20,11 +20,7 @@ import os
 import firebase_admin
 from firebase_admin import credentials, messaging
 
-current_dir = os.path.dirname(os.path.abspath(__file__))
-root_dir = os.path.dirname(current_dir)
-sys.path.append(root_dir)
-
-from database import SessionLocal, User, EmployeeLocation, OfficeLocation, SiteVisit, SiteStay, init_db, cipher
+from .database import SessionLocal, User, EmployeeLocation, OfficeLocation, SiteVisit, SiteStay, init_db, cipher
 # Initialize Firebase (Ensure firebase-adminsdk.json is in your root directory)
 try:
     cred = credentials.Certificate("firebase-adminsdk.json")
