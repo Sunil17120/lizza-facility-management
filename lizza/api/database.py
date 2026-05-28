@@ -96,7 +96,7 @@ class User(Base):
     bank_passbook_path = Column(Text, nullable=True) 
     filled_form_path = Column(Text, nullable=True)
     
-    # 9. Status
+    # 9. Status & Background Config
     is_present = Column(Boolean, default=False)
     shift_start = Column(String, nullable=True) 
     shift_end = Column(String, nullable=True)   
@@ -106,6 +106,10 @@ class User(Base):
     emergency_contact = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     extra_documents_json = Column(Text, nullable=True)
+    
+    # --- ADDED: PUSH NOTIFICATION TOKEN ---
+    fcm_token = Column(String, nullable=True)
+
 class EmployeeLocation(Base):
     __tablename__ = "employee_locations"
     id = Column(Integer, primary_key=True)
@@ -175,7 +179,8 @@ def init_db():
         ("voter_photo_path", "TEXT"), ("dl_photo_path", "TEXT"), ("passport_photo_path", "TEXT"),
         ("fingerprints_left_path", "TEXT"), ("fingerprints_right_path", "TEXT"), 
         ("bank_passbook_path", "TEXT"), ("filled_form_path", "TEXT"),
-        ("extra_documents_json", "TEXT")
+        ("extra_documents_json", "TEXT"), 
+        ("fcm_token", "VARCHAR") # <--- ADDED MIGRATION RULE FOR FCM TOKEN
     ]
     
     with engine.connect() as conn:

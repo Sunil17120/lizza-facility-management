@@ -2,5 +2,11 @@
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/index.py" },
     { "source": "/(.*)", "destination": "/" }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/auto-checkout",
+      "schedule": "*/5 * * * *"
+    }
   ]
 }

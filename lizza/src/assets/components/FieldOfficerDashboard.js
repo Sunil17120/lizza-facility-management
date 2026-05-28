@@ -5,8 +5,9 @@ import { MapPin, Camera, Navigation, UserPlus, CheckCircle, FileText, Map as Map
 import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 import EmployeeOnboardForm from './EmployeeOnboardForm'; 
 
-// CAPACITOR NATIVE IMPORT
+// CAPACITOR NATIVE IMPORTS
 import { registerPlugin } from '@capacitor/core';
+import { PushNotifications } from '@capacitor/push-notifications';
 const BackgroundGeolocation = registerPlugin('BackgroundGeolocation');
 
 // ==========================================
@@ -59,12 +60,6 @@ const FieldOfficerDashboard = () => {
   const [checkoutTime, setCheckoutTime] = useState(null);
   const [reportSubmitted, setReportSubmitted] = useState(false);
   
-  // Auto-checkout tracking
-  const [timeOutsideGeofence, setTimeOutsideGeofence] = useState(0);
-  const [autoCheckoutCountdown, setAutoCheckoutCountdown] = useState(null);
-  const outOfGeofenceTimerRef = useRef(null);
-  const autocheckoutTimerRef = useRef(null);
-  
   // Form State
   const [purpose, setPurpose] = useState('');
   const [remarks, setRemarks] = useState('');
@@ -75,6 +70,34 @@ const FieldOfficerDashboard = () => {
 
   const fileInputRef = useRef(null);
   const userEmail = localStorage.getItem('userEmail');
+
+  // --- 1. FIREBASE PUSH NOTIFICATION REGISTRATION ---
+  useEffect(() => {
+    const registerPush = async () => {
+      let permStatus = await PushNotifications.checkPermissions();
+      if (permStatus.receive === 'prompt') {
+        permStatus = await PushNotifications.requestPermissions();
+      }
+      if (permStatus.receive !== 'granted') return;
+
+      await PushNotifications.register();
+
+      PushNotifications.addListener('registration', async (token) => {
+        const fcmToken = token.value;
+        try {
+          await fetch('/api/user/update-fcm-token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: userEmail, fcm_token: fcmToken })
+          });
+        } catch (err) {
+          console.error('Failed to save FCM token', err);
+        }
+      });
+    };
+
+    if (userEmail) registerPush();
+  }, [userEmail]);
 
   const fetchData = useCallback(async () => {
     try {
@@ -94,7 +117,7 @@ const FieldOfficerDashboard = () => {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  // Handle online/offline sync (Fixes 422 Error with || [])
+  // Handle online/offline sync
   useEffect(() => {
     const handleOnline = async () => {
       setIsOnline(true);
@@ -106,7 +129,7 @@ const FieldOfficerDashboard = () => {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ 
                 email: userEmail, 
-                locations: offlineLocations || [] // Safely pass empty array
+                locations: offlineLocations || [] 
             })
           });
           if (res.ok) {
@@ -117,7 +140,7 @@ const FieldOfficerDashboard = () => {
         }
       }
 
-      // SYNC PENDING AUTO-CHECKOUT
+      // Sync offline auto-checkout status if it happened
       const pendingAutoCheckout = localStorage.getItem(`pendingAutoCheckout:${userEmail}`);
       if (pendingAutoCheckout && checkedIn) {
         try {
@@ -131,7 +154,7 @@ const FieldOfficerDashboard = () => {
             localStorage.removeItem(`pendingAutoCheckout:${userEmail}`);
             setCheckedIn(false);
             setCheckoutTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
-            setAlertMsg({ type: 'warning', text: '⏱️ Auto-checked out after leaving site for 5 minutes.' });
+            setAlertMsg({ type: 'warning', text: '⏱️ Offline checkout synced successfully.' });
             fetchData();
           }
         } catch (err) {
@@ -178,93 +201,7 @@ const FieldOfficerDashboard = () => {
     setNearbySites(sitesWithDistance);
     setActiveSite(insideSite);
     
-    // TRACK TIME OUTSIDE GEOFENCE FOR AUTO-CHECKOUT
-    if (!insideSite && checkedIn) {
-      // User is outside geofence while checked in
-      if (timeOutsideGeofence === 0) {
-        // First time going outside - start timer
-        setTimeOutsideGeofence(1);
-        
-        // Update every second
-        if (outOfGeofenceTimerRef.current) clearInterval(outOfGeofenceTimerRef.current);
-        outOfGeofenceTimerRef.current = setInterval(() => {
-          setTimeOutsideGeofence(prev => {
-            const newTime = prev + 1;
-            
-            // At 240 seconds (4 mins): show warning
-            if (newTime === 240) {
-              setAlertMsg({ 
-                type: 'warning', 
-                text: '⚠️ You\'ve been outside the site for 4 minutes. Will auto-checkout in 60 seconds.' 
-              });
-            }
-            
-            // At 300 seconds (5 mins): trigger auto-checkout
-            if (newTime === 300) {
-              clearInterval(outOfGeofenceTimerRef.current);
-              outOfGeofenceTimerRef.current = null;
-              
-              // AUTO-CHECKOUT LOGIC
-              const autoCheckout = async () => {
-                if (!myLoc) return;
-                try {
-                  if (isOnline) {
-                    // Online: directly call checkout
-                    const res = await fetch('/api/user/checkout', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ email: userEmail, lat: myLoc.lat, lon: myLoc.lon })
-                    });
-                    if (res.ok) {
-                      setCheckedIn(false);
-                      setCheckoutTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
-                      setTimeOutsideGeofence(0);
-                      setReportSubmitted(false);
-                      setAlertMsg({ type: 'warning', text: '⏱️ Auto-checked out after leaving site for 5 minutes.' });
-                      fetchData();
-                    }
-                  } else {
-                    // Offline: queue auto-checkout
-                    localStorage.setItem(
-                      `pendingAutoCheckout:${userEmail}`,
-                      JSON.stringify({ email: userEmail, lat: myLoc.lat, lon: myLoc.lon })
-                    );
-                    setCheckedIn(false);
-                    setCheckoutTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
-                    setTimeOutsideGeofence(0);
-                    setReportSubmitted(false);
-                    setAlertMsg({ type: 'warning', text: '⏱️ Auto-checked out (offline). Will sync when online.' });
-                  }
-                } catch (err) {
-                  console.error('Auto-checkout error:', err);
-                }
-              };
-              
-              autoCheckout();
-              return prev;
-            }
-            
-            // Update countdown every second
-            setAutoCheckoutCountdown(300 - newTime);
-            return newTime;
-          });
-        }, 1000);
-      }
-    } else {
-      // User is back inside or manually checked out - reset timers
-      if (outOfGeofenceTimerRef.current) {
-        clearInterval(outOfGeofenceTimerRef.current);
-        outOfGeofenceTimerRef.current = null;
-      }
-      if (autocheckoutTimerRef.current) {
-        clearInterval(autocheckoutTimerRef.current);
-        autocheckoutTimerRef.current = null;
-      }
-      setTimeOutsideGeofence(0);
-      setAutoCheckoutCountdown(null);
-    }
-    
-    // Ping backend or store offline
+    // Ping backend or store offline (Backend Cron handles the 5-min checkout limit)
     if (userEmail) {
       const locData = { lat, lon, timestamp: new Date().toISOString() };
       
@@ -274,11 +211,11 @@ const FieldOfficerDashboard = () => {
         offlineLocations.push(locData);
         localStorage.setItem('offlineLocations', JSON.stringify(offlineLocations));
       } else {
-        // Ping live
+        // Ping live server
         fetch(`/api/user/update-location?email=${userEmail}&lat=${lat}&lon=${lon}`, { method: 'POST' }).catch(e => console.error("Ping error", e));
       }
     }
-  }, [locations, userEmail, isOnline, checkedIn, myLoc, fetchData]);
+  }, [locations, userEmail, isOnline]);
 
   // 1. NATIVE BACKGROUND TRACKING (Runs on Android/iOS)
   useEffect(() => {
@@ -292,8 +229,12 @@ const FieldOfficerDashboard = () => {
             backgroundTitle: "Field Operations Active",
             requestPermissions: true,
             stale: false,
+            distanceFilter: 0,
             interval: 300000, 
-            distanceFilter: 0 
+            allowBackgroundLocationUpdates: true, // Required for iOS/Android aggressive battery
+            autoSync: true,
+            stopOnTerminate: false, // Don't stop when swiped away
+            startOnBoot: true       // Restart if phone reboots
           },
           (location, error) => {
             if (error) {
@@ -314,9 +255,6 @@ const FieldOfficerDashboard = () => {
 
     return () => {
       try { BackgroundGeolocation.removeWatcher(); } catch (e) {}
-      // Cleanup timers on component unmount
-      if (outOfGeofenceTimerRef.current) clearInterval(outOfGeofenceTimerRef.current);
-      if (autocheckoutTimerRef.current) clearInterval(autocheckoutTimerRef.current);
     };
   }, [userEmail, processNewLocation]);
 
@@ -370,13 +308,6 @@ const FieldOfficerDashboard = () => {
     if (!activeSite || !myLoc) return alert("Geofence error: You must be inside the site boundary.");
     setIsSubmitting(true);
     
-    // Clear any pending auto-checkout timers
-    if (outOfGeofenceTimerRef.current) clearInterval(outOfGeofenceTimerRef.current);
-    if (autocheckoutTimerRef.current) clearInterval(autocheckoutTimerRef.current);
-    setTimeOutsideGeofence(0);
-    setAutoCheckoutCountdown(null);
-    localStorage.removeItem(`pendingAutoCheckout:${userEmail}`);
-    
     const formattedLocalTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
     try {
@@ -411,7 +342,7 @@ const FieldOfficerDashboard = () => {
     setIsSubmitting(true);
     
     try {
-      // 1. COMPRESS THE IMAGE TO BYPASS 4.5MB VERCEL LIMIT
+      // 1. COMPRESS THE IMAGE TO BYPASS VERCEL LIMIT
       const compressedPhoto = await compressImage(photo);
       const exactTimestamp = new Date().toISOString();
 
@@ -424,7 +355,7 @@ const FieldOfficerDashboard = () => {
       formData.append('lat', myLoc.lat);
       formData.append('lon', myLoc.lon);
       formData.append('timestamp', exactTimestamp);
-      formData.append('photo', compressedPhoto); // Using the shrunk image!
+      formData.append('photo', compressedPhoto);
 
       // 3. SEND REQUEST
       const res = await fetch('/api/field-officer/log-visit', { method: 'POST', body: formData });
@@ -483,13 +414,6 @@ const FieldOfficerDashboard = () => {
                 {alertMsg && (
                   <Alert variant={alertMsg.type} className="mb-3 small d-flex align-items-center">
                     {alertMsg.text}
-                  </Alert>
-                )}
-                
-                {/* AUTO-CHECKOUT COUNTDOWN WARNING */}
-                {autoCheckoutCountdown !== null && (
-                  <Alert variant="danger" className="mb-3 small fw-bold d-flex align-items-center">
-                    ⏱️ Auto-checkout in {autoCheckoutCountdown} seconds...
                   </Alert>
                 )}
                 

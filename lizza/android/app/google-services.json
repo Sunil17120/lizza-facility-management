@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "929297017325",
+    "project_id": "lizza-facility-management",
+    "storage_bucket": "lizza-facility-management.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:929297017325:android:274d0a4080600fa9765fe4",
+        "android_client_info": {
+          "package_name": "com.lizza.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB1ezHXtUZFDR8ypEHutCen8jWFfvwWbIg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

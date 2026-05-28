@@ -1,9 +1,12 @@
 // Build trigger IST 2026-04-10
 import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom'; 
-import { Container, Row, Col, Card, Spinner, Button, Alert, Badge, ProgressBar, Modal, Form } from 'react-bootstrap';
-import { ShieldCheck, MapPin, Map as MapIcon, Clock, AlertTriangle, KeyRound, EyeOff } from 'lucide-react';
+import { Container, Row, Col, Card, Spinner, Button, Alert, Badge, Modal, Form } from 'react-bootstrap';
+import { ShieldCheck, MapPin, Map as MapIcon, AlertTriangle, KeyRound, EyeOff } from 'lucide-react';
+
+// CAPACITOR NATIVE IMPORTS
 import { registerPlugin } from '@capacitor/core';
+import { PushNotifications } from '@capacitor/push-notifications';
 const BackgroundGeolocation = registerPlugin('BackgroundGeolocation');
 
 const UserDashboard = () => {
@@ -11,7 +14,6 @@ const UserDashboard = () => {
   const [dbUser, setDbUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState({ type: 'info', msg: 'Initializing...', code: 'off_duty' });
-  const [violationTime, setViolationTime] = useState(null);
   const [showPassModal, setShowPassModal] = useState(false);
   const [isForceChange, setIsForceChange] = useState(false);
   const [passForm, setPassForm] = useState({ oldPass: '', newPass: '', confirmPass: '' });
@@ -22,7 +24,35 @@ const UserDashboard = () => {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const userEmail = localStorage.getItem('userEmail');
 
-  // Save state before app closes
+  // --- 1. FIREBASE PUSH NOTIFICATION REGISTRATION ---
+  useEffect(() => {
+    const registerPush = async () => {
+      let permStatus = await PushNotifications.checkPermissions();
+      if (permStatus.receive === 'prompt') {
+        permStatus = await PushNotifications.requestPermissions();
+      }
+      if (permStatus.receive !== 'granted') return;
+
+      await PushNotifications.register();
+
+      PushNotifications.addListener('registration', async (token) => {
+        const fcmToken = token.value;
+        try {
+          await fetch('/api/user/update-fcm-token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: userEmail, fcm_token: fcmToken })
+          });
+        } catch (err) {
+          console.error('Failed to save FCM token', err);
+        }
+      });
+    };
+
+    if (userEmail) registerPush();
+  }, [userEmail]);
+
+  // --- 2. SAVE STATE BEFORE APP CLOSES ---
   useEffect(() => {
     const saveState = () => {
       if (userEmail) {
@@ -46,7 +76,7 @@ const UserDashboard = () => {
     };
   }, [userEmail, checkedIn, currentSite, status.code]);
 
-  // Restore state on mount
+  // --- 3. RESTORE STATE ON MOUNT ---
   useEffect(() => {
     if (!userEmail) return;
     const attendanceState = JSON.parse(localStorage.getItem(`attendanceState_${userEmail}`) || 'null');
@@ -56,7 +86,7 @@ const UserDashboard = () => {
     }
   }, [userEmail]);
 
-  // Handle online/offline events with enhanced sync
+  // --- 4. HANDLE ONLINE/OFFLINE SYNC ---
   useEffect(() => {
     const handleOnline = async () => {
       setIsOnline(true);
@@ -98,6 +128,7 @@ const UserDashboard = () => {
     };
   }, [userEmail]);
 
+  // --- 5. INITIAL PROFILE FETCH ---
   useEffect(() => {
     if (localStorage.getItem('forcePasswordChange') === 'true') { setIsForceChange(true); setShowPassModal(true); }
 
@@ -116,6 +147,7 @@ const UserDashboard = () => {
     }
   }, [userEmail, navigate]);
 
+  // --- 6. LOCATION SYNC LOGIC ---
   const syncLocation = useCallback(async (lat, lon) => {
     const locData = {
       lat,
@@ -125,7 +157,6 @@ const UserDashboard = () => {
       currentSite: currentSite
     };
 
-    // Store offline if not connected
     if (!isOnline) {
       const offlineLocations = JSON.parse(localStorage.getItem('offlineLocations') || '[]');
       offlineLocations.push(locData);
@@ -148,11 +179,9 @@ const UserDashboard = () => {
 
       if (data.is_inside) {
         setCurrentSite(data.site_name || null);
-        setViolationTime(null);
         setStatus({ type: 'success', msg: data.message || 'Inside Geofence', code: 'inside' });
       } else {
         setCurrentSite(null);
-        setViolationTime(null);
         setStatus({ type: 'warning', msg: data.message || 'Outside Geofence', code: 'outside' });
       }
     } catch (err) {
@@ -161,6 +190,53 @@ const UserDashboard = () => {
     }
   }, [userEmail, isOnline, checkedIn, currentSite]);
 
+  // --- 7. NATIVE BACKGROUND TRACKING ---
+  useEffect(() => {
+    if (!dbUser) return;
+    const startBackgroundTracking = async () => {
+      try {
+        await BackgroundGeolocation.addWatcher(
+          { 
+            backgroundMessage: "Tracking duty status and geofence safety.", 
+            backgroundTitle: "Lizza Duty Tracking Active", 
+            requestPermissions: true, 
+            stale: false, 
+            interval: 300000, 
+            distanceFilter: 0,
+            allowBackgroundLocationUpdates: true, // Required for iOS/Android aggressive battery
+            autoSync: true,
+            stopOnTerminate: false, // Don't stop when swiped away
+            startOnBoot: true       // Restart if phone reboots
+          },
+          (location, error) => {
+            if (error) return console.error(error);
+            if (location) syncLocation(location.latitude, location.longitude);
+          }
+        );
+      } catch (err) { console.warn("Native tracking skipped (running on web)."); }
+    };
+    startBackgroundTracking();
+    return () => { try { BackgroundGeolocation.removeWatcher(); } catch (e) {} };
+  }, [dbUser, syncLocation]);
+
+  // --- 8. WEB GEOLOCATION FALLBACK ---
+  useEffect(() => {
+    if (!dbUser) return;
+    const pingLocation = () => {
+      if ("geolocation" in navigator) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => syncLocation(pos.coords.latitude, pos.coords.longitude),
+          (err) => console.error("Web GPS Error. Please allow location access:", err),
+          { enableHighAccuracy: true }
+        );
+      }
+    };
+    pingLocation();
+    const intervalId = setInterval(pingLocation, 300000);
+    return () => clearInterval(intervalId);
+  }, [dbUser, syncLocation]);
+
+  // --- 9. ACTION HANDLERS ---
   const handleCheckIn = async () => {
     if (actionLoading || status.code !== 'inside') return;
     setActionLoading(true);
@@ -240,39 +316,6 @@ const UserDashboard = () => {
     } finally { setActionLoading(false); }
   };
 
-  useEffect(() => {
-    if (!dbUser) return;
-    const startBackgroundTracking = async () => {
-      try {
-        await BackgroundGeolocation.addWatcher(
-          { backgroundMessage: "Tracking duty status and geofence safety.", backgroundTitle: "Lizza Duty Tracking Active", requestPermissions: true, stale: false, interval: 300000, distanceFilter: 0 },
-          (location, error) => {
-            if (error) return console.error(error);
-            if (location) syncLocation(location.latitude, location.longitude);
-          }
-        );
-      } catch (err) { console.warn("Native tracking skipped (running on web)."); }
-    };
-    startBackgroundTracking();
-    return () => { try { BackgroundGeolocation.removeWatcher(); } catch (e) {} };
-  }, [dbUser, syncLocation]);
-
-  useEffect(() => {
-    if (!dbUser) return;
-    const pingLocation = () => {
-      if ("geolocation" in navigator) {
-        navigator.geolocation.getCurrentPosition(
-          (pos) => syncLocation(pos.coords.latitude, pos.coords.longitude),
-          (err) => console.error("Web GPS Error. Please allow location access:", err),
-          { enableHighAccuracy: true }
-        );
-      }
-    };
-    pingLocation();
-    const intervalId = setInterval(pingLocation, 300000);
-    return () => clearInterval(intervalId);
-  }, [dbUser, syncLocation]);
-
   const handlePasswordSubmit = async (e) => {
     e.preventDefault(); setPassError('');
     if (passForm.newPass !== passForm.confirmPass) return setPassError("Passwords do not match.");
@@ -307,14 +350,6 @@ const UserDashboard = () => {
             </div>
             
             <Card.Body className="p-4 text-center">
-              {violationTime !== null && (
-                <div className="mb-4">
-                  <h1 className="display-4 fw-bold text-danger">{violationTime}s</h1>
-                  <ProgressBar animated variant="danger" now={(violationTime / 300) * 100} className="mb-2" style={{height: '10px'}} />
-                  <small className="text-danger fw-bold">If this reaches 0, you will be marked ABSENT.</small>
-                </div>
-              )}
-              
               <Alert variant={status.type} className="mb-4 small fw-bold py-3 text-start d-flex align-items-center justify-content-center">
                 {status.code === 'warning' ? <AlertTriangle size={18} className="me-2" /> : 
                  status.code === 'off_duty' ? <EyeOff size={18} className="me-2 text-secondary" /> : 
@@ -338,7 +373,7 @@ const UserDashboard = () => {
                 </div>
               </div>
 
-                    <div className="d-flex gap-2 mb-3">
+              <div className="d-flex gap-2 mb-3">
                 <Button variant="success" className="fw-bold flex-fill d-flex align-items-center justify-content-center" onClick={handleCheckIn} disabled={status.code !== 'inside' || checkedIn || actionLoading}>
                   {actionLoading && <Spinner animation="border" size="sm" className="me-2" />}<MapPin size={16} className="me-2" />{checkedIn ? 'Checked In' : 'Check In'}
                 </Button>
