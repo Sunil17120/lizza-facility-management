@@ -2,7 +2,7 @@ fastapi
 psycopg2-binary
 sqlalchemy
 uvicorn
-redis
+upstash-redis==0.14.1
 python-multipart
 cryptography
 requests
