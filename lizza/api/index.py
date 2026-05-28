@@ -21,6 +21,7 @@ import firebase_admin
 from firebase_admin import credentials, messaging
 
 from .database import SessionLocal, User, EmployeeLocation, OfficeLocation, SiteVisit, SiteStay, init_db, cipher
+from .database import Attendance
 # Initialize Firebase (Ensure firebase-adminsdk.json is in your root directory)
 try:
     cred = credentials.Certificate("firebase-adminsdk.json")
@@ -222,7 +223,7 @@ def get_user_profile(email: str, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == email.lower().strip()).first()
     if not user: raise HTTPException(status_code=404, detail="User not found")
     
-    from database import Attendance
+    from .database import Attendance
     checked_in = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).count() > 0
     return {
         "id": user.id, "full_name": user.full_name, "email": user.email, "user_type": user.user_type,
@@ -484,7 +485,7 @@ def delete_employee(user_id: int, db: Session = Depends(get_db)):
     db.query(SiteVisit).filter(SiteVisit.officer_id == user_id).delete()
     db.query(SiteStay).filter(SiteStay.officer_id == user_id).delete()
     
-    from database import Attendance
+    from .database import Attendance
     db.query(Attendance).filter(Attendance.user_id == user_id).delete()
 
     db.execute(text("DELETE FROM field_visit_logs WHERE officer_id = :uid"), {"uid": user_id})
@@ -511,7 +512,7 @@ def delete_visit(visit_id: int, db: Session = Depends(get_db)):
 
 @app.delete("/api/admin/delete-attendance/{attendance_id}")
 def delete_attendance(attendance_id: int, db: Session = Depends(get_db)):
-    from database import Attendance
+    from .database import Attendance
     att = db.query(Attendance).filter(Attendance.id == attendance_id).first()
     if not att: raise HTTPException(status_code=404, detail="Attendance record not found")
 
@@ -617,7 +618,7 @@ def get_monthly_attendance(
     start_utc = datetime(year, month, 1, 0, 0, 0) - timedelta(hours=5, minutes=30)
     end_utc = datetime(year, month, last_day, 23, 59, 59) - timedelta(hours=5, minutes=30)
 
-    from database import Attendance
+    from .database import Attendance
     query = db.query(Attendance, User, OfficeLocation).join(User, Attendance.user_id == User.id).outerjoin(OfficeLocation, Attendance.location_id == OfficeLocation.id)
     query = query.filter(Attendance.date >= start_utc, Attendance.date <= end_utc)
     if user_id: query = query.filter(User.id == user_id)
@@ -719,7 +720,7 @@ def user_checkin(data: CheckAction, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(404, "User not found")
     
-    from database import Attendance
+    from .database import Attendance
     open_attendance = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
     if open_attendance:
         return {"status": "success", "message": "Already checked in.", "checked_in": True}
@@ -742,7 +743,7 @@ def user_checkout(data: CheckAction, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(404, "User not found")
     
-    from database import Attendance
+    from .database import Attendance
     att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
     if not att:
         raise HTTPException(400, "No active check-in found.")
@@ -793,7 +794,7 @@ async def sync_offline_state(
     if not user:
         raise HTTPException(404, "User not found")
     
-    from database import Attendance
+    from .database import Attendance
     
     now_utc = datetime.utcnow()
     synced_locations = 0
@@ -962,7 +963,7 @@ async def extract_qr(file: UploadFile = File(...)):
 # THE VERCEL CRON JOB ENDPOINT
 @app.get("/api/cron/auto-checkout")
 def cron_auto_checkout(db: Session = Depends(get_db)):
-    from database import Attendance
+    from .database import Attendance
     
     now_utc = datetime.utcnow()
     five_mins_ago = now_utc - timedelta(minutes=5)
