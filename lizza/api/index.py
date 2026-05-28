@@ -1,4 +1,4 @@
-import hashlib, os, redis, math, smtplib, base64, json, requests, calendar, re
+import hashlib, os, math, smtplib, base64, json, requests, calendar, re
 from email.mime.text import MIMEText
 from typing import Optional, List
 from fastapi import FastAPI, Depends, HTTPException, Query, File, UploadFile, Form
@@ -13,26 +13,29 @@ import cv2
 import numpy as np
 import zlib
 import zxingcpp
-import sys
-import os
+
+# Upstash Serverless Redis SDK (Uses stateless HTTP REST instead of persistent TCP)
+from upstash_redis import Redis as UpstashRedis
 
 # Firebase Admin SDK
 import firebase_admin
 from firebase_admin import credentials, messaging
 
+# Explicit Relative Import for Vercel Bundling
 from .database import SessionLocal, User, EmployeeLocation, OfficeLocation, SiteVisit, SiteStay, init_db, cipher
-from .database import Attendance
-# Initialize Firebase (Ensure firebase-adminsdk.json is in your root directory)
-try:
+
+# Firebase Initialization from Vercel Environment Variables
+firebase_env = os.environ.get("FIREBASE_CREDENTIALS")
+if firebase_env:
+    cred_dict = json.loads(firebase_env)
+    cred = credentials.Certificate(cred_dict)
+else:
     cred = credentials.Certificate("firebase-adminsdk.json")
-    if not firebase_admin._apps:
-        firebase_admin.initialize_app(cred)
-except Exception as e:
-    print(f"Warning: Firebase Admin SDK failed to initialize. Push notifications will not work. Error: {e}")
+    
+if not firebase_admin._apps:
+    firebase_admin.initialize_app(cred)
 
 app = FastAPI()
-redis_url = os.environ.get("REDIS_URL") or os.environ.get("KV_URL")
-r = None
 
 class SafeRedisClient:
     def __init__(self, client):
@@ -56,9 +59,14 @@ class SafeRedisClient:
             return None
         return self._client.delete(*keys)
 
-redis_client = redis.from_url(redis_url, decode_responses=True) if redis_url else None
+# Using your specific Vercel KV / Upstash integration environment keys
+upstash_url = os.environ.get("Redis_url_KV_REST_API_URL")
+upstash_token = os.environ.get("Redis_url_KV_REST_API_TOKEN")
+
+redis_client = UpstashRedis(url=upstash_url, token=upstash_token) if upstash_url else None
 r = SafeRedisClient(redis_client)
 init_db()
+
 PEPPER = os.environ.get("SECRET_PEPPER", "change_me_in_vercel_settings")
 
 def convert_utc_to_ist(utc_dt):
@@ -117,19 +125,15 @@ def get_db():
 def send_push_notification(token: str, title: str, body: str):
     if not token: 
         return False
-    try:
-        message = messaging.Message(
-            notification=messaging.Notification(
-                title=title,
-                body=body
-            ),
-            token=token,
-        )
-        messaging.send(message)
-        return True
-    except Exception as e:
-        print(f"Failed to send push notification: {e}")
-        return False
+    message = messaging.Message(
+        notification=messaging.Notification(
+            title=title,
+            body=body
+        ),
+        token=token,
+    )
+    messaging.send(message)
+    return True
 
 def get_saved_coordinates(email: str):
     if not r: return None, None
@@ -210,12 +214,9 @@ def login(data: AuthRequest, db: Session = Depends(get_db)):
 def update_fcm_token(data: FCMTokenUpdate, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == data.email.lower().strip()).first()
     if user:
-        try:
-            user.fcm_token = data.fcm_token
-            db.commit()
-            return {"status": "success"}
-        except Exception:
-            return {"status": "error", "message": "Add fcm_token column to User table in database.py"}
+        user.fcm_token = data.fcm_token
+        db.commit()
+        return {"status": "success"}
     raise HTTPException(404, "User not found")
 
 @app.get("/api/user/profile")
@@ -688,7 +689,6 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
     
     now_utc = datetime.utcnow()
 
-    # Log the exact time this user's phone pinged the server
     if r:
         r.set(f"ping_time:{email}", now_utc.isoformat(), ex=86400)
 
@@ -708,7 +708,6 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
         "site_name": current_site.name if current_site else None
     }
     return response
-
 
 @app.post("/api/user/checkin")
 def user_checkin(data: CheckAction, db: Session = Depends(get_db)):
@@ -759,7 +758,6 @@ def user_checkout(data: CheckAction, db: Session = Depends(get_db)):
 
     db.commit()
     
-    # Remove the ping tracker since they checked out manually
     if r:
         r.delete(f"ping_time:{user.email}")
         
@@ -780,7 +778,6 @@ async def sync_offline_locations(email: str, locations: List[dict], db: Session 
         if lat and lon:
             synced += 1
             
-    # Update ping time based on the latest synced location
     if r and locations:
         r.set(f"ping_time:{email}", datetime.utcnow().isoformat(), ex=86400)
     
@@ -960,7 +957,6 @@ async def extract_qr(file: UploadFile = File(...)):
             }
         }
 
-# THE VERCEL CRON JOB ENDPOINT
 @app.get("/api/cron/auto-checkout")
 def cron_auto_checkout(db: Session = Depends(get_db)):
     from .database import Attendance
@@ -997,7 +993,6 @@ def cron_auto_checkout(db: Session = Depends(get_db)):
             user.is_present = False
             db.commit()
             
-            # Send the FCM Push Notification
             if getattr(user, 'fcm_token', None):
                 send_push_notification(
                     token=user.fcm_token,
