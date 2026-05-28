@@ -1,3 +1,4 @@
+
 import hashlib, os, redis, math, smtplib, base64, json, requests, calendar, re
 from email.mime.text import MIMEText
 from typing import Optional 
@@ -576,10 +577,6 @@ async def log_site_visit(
     if not active_stay or active_stay.location_id != site.id:
         raise HTTPException(400, "You must Check-In at the site before uploading a visit photo.")
 
-    visited_key = f"visited:{user.email}:{site.id}"
-    if r and r.get(visited_key):
-        raise HTTPException(400, "You recently visited this site. Please wait 1 hour before logging another visit.")
-
     photo_url = upload_to_cloud(photo)
     visit = SiteVisit(officer_id=user.id, location_id=site.id, purpose=purpose, remarks=remarks, photo_path=photo_url)
     db.add(visit)
@@ -704,16 +701,6 @@ async def manual_sync(
 
     now_utc = datetime.utcnow()
 
-    visited_key = f"visited:{user.email}:{site.id}"
-    if type == 'in' and r and r.get(visited_key):
-        raise HTTPException(400, "You recently visited this site. Please wait 1 hour before checking in again.")
-
-    if type == 'in':
-        last_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.location_id == site.id).order_by(SiteStay.entry_time.desc()).first()
-        if last_stay and last_stay.exit_time:
-            if (now_utc - last_stay.exit_time).total_seconds() < 3600:
-                raise HTTPException(400, "You recently visited this site. Please wait 1 hour before checking in again.")
-
     active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
 
     if type == 'in':
@@ -786,8 +773,6 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
                                 active_stay.exit_time = now_utc
                             db.commit()
                             r.delete(outside_key)
-                            if r:
-                                r.set(f"visited:{email}:{loc_id}", "1", ex=3600)
 
     current_site = get_site_at_location(lat, lon, db)
     
@@ -810,8 +795,6 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
                         user.is_present = False
                         db.commit()
                         r.delete(outside_key)
-                        if r:
-                            r.set(f"visited:{email}:{loc_id}", "1", ex=3600)
     elif current_site and r:
         r.delete(f"outside:{email}")
     
@@ -853,15 +836,6 @@ def user_checkin(data: CheckAction, db: Session = Depends(get_db)):
 
     now_utc = datetime.utcnow()
 
-    visited_key = f"visited:{user.email}:{site.id}"
-    if r and r.get(visited_key):
-        raise HTTPException(400, "You recently visited this site. Please wait 1 hour before checking in again.")
-
-    last_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.location_id == site.id).order_by(SiteStay.entry_time.desc()).first()
-    if last_stay and last_stay.exit_time:
-        if (now_utc - last_stay.exit_time).total_seconds() < 3600:
-            raise HTTPException(400, "You recently visited this site. Please wait 1 hour before checking in again.")
-
     attendance = Attendance(user_id=user.id, checkin_time=now_utc, date=now_utc, location_id=site.id)
     user.is_present = True
     db.add(attendance)
@@ -892,9 +866,6 @@ def user_checkout(data: CheckAction, db: Session = Depends(get_db)):
     active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
     if active_stay:
         active_stay.exit_time = now_utc
-
-    if r:
-        r.set(f"visited:{user.email}:{att.location_id}", "1", ex=3600)
 
     db.commit()
     return {"status": "success", "message": "Checked Out"}
