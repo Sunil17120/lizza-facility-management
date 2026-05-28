@@ -578,7 +578,7 @@ async def log_site_visit(
 
     visited_key = f"visited:{user.email}:{site.id}"
     if r and r.get(visited_key):
-        raise HTTPException(400, "This site has already been visited. Next visit allowed after 18:00.")
+        raise HTTPException(400, "You recently visited this site. Please wait 1 hour before logging another visit.")
 
     photo_url = upload_to_cloud(photo)
     visit = SiteVisit(officer_id=user.id, location_id=site.id, purpose=purpose, remarks=remarks, photo_path=photo_url)
@@ -706,15 +706,13 @@ async def manual_sync(
 
     visited_key = f"visited:{user.email}:{site.id}"
     if type == 'in' and r and r.get(visited_key):
-        raise HTTPException(400, "This site was already visited. Next visit allowed after 18:00.")
+        raise HTTPException(400, "You recently visited this site. Please wait 1 hour before checking in again.")
 
     if type == 'in':
-        last_visit = db.query(SiteVisit).filter(SiteVisit.officer_id == user.id, SiteVisit.location_id == site.id).order_by(SiteVisit.visit_time.desc()).first()
-        if last_visit:
-            last_visit_ist = convert_utc_to_ist(last_visit.visit_time)
-            now_ist = convert_utc_to_ist(now_utc)
-            if last_visit_ist and last_visit_ist.date() == now_ist.date() and now_ist.hour < 18:
-                raise HTTPException(400, "This site was already visited today. Next visit allowed after 18:00.")
+        last_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.location_id == site.id).order_by(SiteStay.entry_time.desc()).first()
+        if last_stay and last_stay.exit_time:
+            if (now_utc - last_stay.exit_time).total_seconds() < 3600:
+                raise HTTPException(400, "You recently visited this site. Please wait 1 hour before checking in again.")
 
     active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
 
@@ -780,6 +778,7 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
                         from .database import Attendance
                         att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
                         if att:
+                            loc_id = att.location_id
                             att.checkout_time = now_utc
                             att.duration_seconds = int((att.checkout_time - att.checkin_time).total_seconds())
                             user.is_present = False
@@ -787,6 +786,8 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
                                 active_stay.exit_time = now_utc
                             db.commit()
                             r.delete(outside_key)
+                            if r:
+                                r.set(f"visited:{email}:{loc_id}", "1", ex=3600)
 
     current_site = get_site_at_location(lat, lon, db)
     
@@ -803,11 +804,14 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
                     from .database import Attendance
                     att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
                     if att:
+                        loc_id = att.location_id
                         att.checkout_time = now_utc
                         att.duration_seconds = int((att.checkout_time - att.checkin_time).total_seconds())
                         user.is_present = False
                         db.commit()
                         r.delete(outside_key)
+                        if r:
+                            r.set(f"visited:{email}:{loc_id}", "1", ex=3600)
     elif current_site and r:
         r.delete(f"outside:{email}")
     
@@ -849,16 +853,14 @@ def user_checkin(data: CheckAction, db: Session = Depends(get_db)):
 
     now_utc = datetime.utcnow()
 
-    now_ist = convert_utc_to_ist(now_utc)
     visited_key = f"visited:{user.email}:{site.id}"
     if r and r.get(visited_key):
-        raise HTTPException(400, "This site was already visited. Next visit allowed after 18:00.")
+        raise HTTPException(400, "You recently visited this site. Please wait 1 hour before checking in again.")
 
-    last_visit = db.query(SiteVisit).filter(SiteVisit.officer_id == user.id, SiteVisit.location_id == site.id).order_by(SiteVisit.visit_time.desc()).first()
-    if last_visit:
-        last_visit_ist = convert_utc_to_ist(last_visit.visit_time)
-        if last_visit_ist and last_visit_ist.date() == now_ist.date() and now_ist.hour < 18:
-            raise HTTPException(400, "This site was already visited today. Next visit allowed after 18:00.")
+    last_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.location_id == site.id).order_by(SiteStay.entry_time.desc()).first()
+    if last_stay and last_stay.exit_time:
+        if (now_utc - last_stay.exit_time).total_seconds() < 3600:
+            raise HTTPException(400, "You recently visited this site. Please wait 1 hour before checking in again.")
 
     attendance = Attendance(user_id=user.id, checkin_time=now_utc, date=now_utc, location_id=site.id)
     user.is_present = True
@@ -891,17 +893,8 @@ def user_checkout(data: CheckAction, db: Session = Depends(get_db)):
     if active_stay:
         active_stay.exit_time = now_utc
 
-    now_ist = convert_utc_to_ist(now_utc)
-    today_18_ist = now_ist.replace(hour=18, minute=0, second=0, microsecond=0)
-    if now_ist >= today_18_ist:
-        next_18_ist = today_18_ist + timedelta(days=1)
-    else:
-        next_18_ist = today_18_ist
-
-    next_18_utc = next_18_ist - timedelta(hours=5, minutes=30)
-    expiry_seconds = int((next_18_utc - now_utc).total_seconds())
-    if expiry_seconds > 0 and r:
-        r.set(f"visited:{user.email}:{att.location_id}", "1", ex=expiry_seconds)
+    if r:
+        r.set(f"visited:{user.email}:{att.location_id}", "1", ex=3600)
 
     db.commit()
     return {"status": "success", "message": "Checked Out"}
