@@ -765,9 +765,9 @@ def cron_auto_checkout(db: Session = Depends(get_db)):
             inactivity_mins = inactivity_delta.total_seconds() / 60.0
             
             if user.user_type == 'field_officer':
-                if inactivity_mins >= 25:
+                if inactivity_mins >= 10:
                     needs_checkout = True
-                elif inactivity_mins >= 20:
+                elif inactivity_mins >= 5:
                     needs_warning = True
             else:
                 if inactivity_mins >= 5:
