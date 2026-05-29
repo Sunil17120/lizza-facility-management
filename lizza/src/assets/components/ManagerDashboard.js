@@ -1,16 +1,31 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Container, Card, Row, Col, Badge, Table, Modal, Spinner, InputGroup, Form, Button, Alert } from 'react-bootstrap';
-import { Users, Map as MapIcon, ShieldCheck, Search, UserPlus, AlertTriangle } from 'lucide-react';
+import React, { useEffect, useState, useCallback } from 'react';
+import { Table, Form, Container, Card, Spinner, Button, Row, Col, Modal, Badge, InputGroup } from 'react-bootstrap';
+import { Users, ShieldCheck, Search, UserPlus, AlertTriangle } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 import EmployeeOnboardForm from './EmployeeOnboardForm'; 
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
-// Fix for default Leaflet marker icons
 import markerIcon from 'leaflet/dist/images/marker-icon.png';
 import markerShadow from 'leaflet/dist/images/marker-shadow.png';
 let DefaultIcon = L.icon({ iconUrl: markerIcon, shadowUrl: markerShadow, iconSize: [25, 41], iconAnchor: [12, 41] });
 L.Marker.prototype.options.icon = DefaultIcon;
+
+const getStatusIcon = (isPresent) => {
+  return L.divIcon({
+    html: `<div style="
+      background-color: ${isPresent ? '#28a745' : '#dc3545'}; 
+      width: 16px; 
+      height: 16px; 
+      border-radius: 50%; 
+      border: 2px solid white; 
+      box-shadow: 0 0 5px rgba(0,0,0,0.3);
+    "></div>`,
+    className: 'custom-status-marker',
+    iconSize: [16, 16],
+    iconAnchor: [8, 8]
+  });
+};
 
 const ManagerDashboard = () => {
   const [myEmployees, setMyEmployees] = useState([]);
@@ -21,11 +36,9 @@ const ManagerDashboard = () => {
   const [empSearch, setEmpSearch] = useState('');
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   
-  // Get managerId from storage
   const managerId = localStorage.getItem('userId'); 
 
   const fetchData = useCallback(async () => {
-    // If no session, stop loading to show fallback UI
     if (!managerId) { 
         setLoading(false); 
         return; 
@@ -33,7 +46,6 @@ const ManagerDashboard = () => {
 
     try {
         const cleanId = parseInt(managerId, 10);
-        // Parallel fetching to improve speed
         const [staffRes, liveRes, locRes] = await Promise.all([
             fetch(`/api/manager/my-employees?manager_id=${cleanId}`),
             fetch(`/api/manager/live-tracking?manager_id=${cleanId}`),
@@ -63,13 +75,38 @@ const ManagerDashboard = () => {
     } catch (err) { 
         console.error("Dashboard failed to load:", err); 
     } finally { 
-        setLoading(false); // Ensure spinner stops
+        setLoading(false);
     }
   }, [managerId]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  // Handle online/offline events
+  // VERCEL-SAFE HTTP POLLING (Replaces WebSockets)
+  useEffect(() => {
+    if (!managerId) return;
+    const cleanId = parseInt(managerId, 10);
+
+    const interval = setInterval(async () => {
+        try {
+            const res = await fetch(`/api/manager/live-tracking?manager_id=${cleanId}`);
+            if (res.ok) {
+                const liveData = await res.json();
+                const liveMap = {};
+                if (Array.isArray(liveData)) {
+                    liveData.forEach(loc => { 
+                        if (loc.email) liveMap[loc.email] = loc; 
+                    });
+                }
+                setLiveStaff(liveMap);
+            }
+        } catch (e) {
+            console.error("Live tracking sync failed", e);
+        }
+    }, 15000); // 15-second refresh
+
+    return () => clearInterval(interval);
+  }, [managerId]);
+
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
@@ -83,31 +120,6 @@ const ManagerDashboard = () => {
     };
   }, []);
 
-  const wsRef = useRef(null);
-  useEffect(() => {
-    if (!managerId) return;
-    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(`${protocol}://${window.location.host}/ws/manager-tracking?manager_id=${managerId}`);
-
-    ws.onopen = () => console.log('Manager websocket connected');
-    ws.onmessage = (event) => {
-      try {
-        const message = JSON.parse(event.data);
-        if (message.type === 'location_update' && message.data?.email) {
-          setLiveStaff(prev => ({ ...prev, [message.data.email]: message.data }));
-        }
-      } catch (err) {
-        console.error('WebSocket parse error', err);
-      }
-    };
-    ws.onclose = () => console.log('Manager websocket closed');
-    ws.onerror = (err) => console.error('Manager websocket error', err);
-
-    wsRef.current = ws;
-    return () => { ws.close(); };
-  }, [managerId]);
-
-  // Handle Loading State
   if (loading) {
       return (
           <div className="d-flex justify-content-center align-items-center vh-100 bg-light">
@@ -117,7 +129,6 @@ const ManagerDashboard = () => {
       );
   }
 
-  // Handle Session Missing State
   if (!managerId) {
       return (
           <Container className="py-5 text-center">
@@ -153,10 +164,12 @@ const ManagerDashboard = () => {
         {/* --- LIVE TRACKING MAP --- */}
         <Col lg={12}>
           <Card className="border-0 shadow-sm overflow-hidden" style={{ height: '400px' }}>
+            <Card.Header className="bg-dark text-white p-2">
+              <h6 className="m-0 fw-bold">Live Team Tracking (Checked-In Only)</h6>
+            </Card.Header>
             <MapContainer center={[22.5726, 88.3639]} zoom={5} style={{ height: '100%' }}>
               <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
               
-              {/* Branch Geofences */}
               {locations?.map(loc => (loc.lat && loc.lon) && (
                   <Circle 
                     key={loc.id} 
@@ -166,19 +179,18 @@ const ManagerDashboard = () => {
                   />
               ))}
 
-              {/* Live Staff Markers with Safety Check */}
-              {Object.entries(liveStaff).map(([email, data]) => (
-                  (data?.lat && data?.lon) && (
-                    <Marker key={email} position={[data.lat, data.lon]}>
+              {/* STRICT FILTER: Only show team members who are present === true */}
+              {Object.values(liveStaff)
+                .filter(data => data?.lat && data?.lon && data?.present === true)
+                .map(data => (
+                    <Marker key={data.email} position={[data.lat, data.lon]} icon={getStatusIcon(data.present)}>
                         <Popup className="text-center">
                             <strong>{data.name || "Staff Member"}</strong><br/>
-                            <Badge bg={data.present ? "success" : "warning"}>
-                                {data.present ? "Inside Site" : "Outside"}
-                            </Badge>
+                            <Badge bg="success" className="mt-1">Active / Checked In</Badge>
                         </Popup>
                     </Marker>
-                  )
-              ))}
+                ))
+              }
             </MapContainer>
           </Card>
         </Col>

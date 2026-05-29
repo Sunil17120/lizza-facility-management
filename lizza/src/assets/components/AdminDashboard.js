@@ -649,7 +649,7 @@ const AdminDashboard = () => {
                     <span className="input-group-text bg-light"><UserCheck size={14}/></span>
                     <Form.Select value={mapEmpSearch} onChange={(e) => handleEmpZoom(e.target.value)}>
                       <option value="">Locate Specific Employee...</option>
-                      {liveLocations.filter(loc => loc.lat && loc.lon && (loc.user_type !== 'field_officer' || loc.present || loc.last_ping)).map(l => (
+                      {liveLocations.filter(loc => loc.lat && loc.lon && loc.present === true).map(l => (
                         <option key={l.email} value={l.email}>{l.name} ({l.user_type === 'field_officer' ? 'Field Officer' : 'Staff'})</option>
                       ))}
                     </Form.Select>
@@ -660,7 +660,7 @@ const AdminDashboard = () => {
                     <MapUpdater center={mapCenter} zoom={mapZoom} />
                     <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
                     
-                    {liveLocations.filter(loc => loc.lat && loc.lon && (loc.user_type !== 'field_officer' || loc.present || loc.last_ping)).map(loc => (
+                    {liveLocations.filter(loc => loc.lat && loc.lon && loc.present === true).map(loc => (
                       <Marker 
                           key={loc.email} 
                           position={[loc.lat, loc.lon]}
@@ -670,9 +670,7 @@ const AdminDashboard = () => {
                           <div className="text-center">
                               <strong className="d-block">{loc.name || 'Unknown'}</strong>
                               <small className="text-muted d-block">{loc.user_type?.replace('_', ' ')}</small>
-                              <Badge bg={loc.present ? "success" : "danger"} className="mt-1">
-                                  {loc.present ? "In Geofence" : "Outside"}
-                              </Badge>
+                              <Badge bg="success" className="mt-1">Active / Checked In</Badge>
                           </div>
                         </Popup>
                       </Marker>
