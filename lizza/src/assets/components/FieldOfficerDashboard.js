@@ -1,18 +1,13 @@
-// Build trigger IST 2026-04-10
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Container, Card, Row, Col, Badge, Form, Button, Alert, Spinner, Table } from 'react-bootstrap';
 import { MapPin, Camera, Navigation, UserPlus, CheckCircle, FileText, Map as MapIcon, LogIn, LogOut } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 import EmployeeOnboardForm from './EmployeeOnboardForm'; 
 
-// CAPACITOR NATIVE IMPORTS
 import { registerPlugin } from '@capacitor/core';
 import { PushNotifications } from '@capacitor/push-notifications';
 const BackgroundGeolocation = registerPlugin('BackgroundGeolocation');
 
-// ==========================================
-// IMAGE COMPRESSION HELPER (Fixes 413 Error)
-// ==========================================
 const compressImage = async (file, maxWidth = 1000, quality = 0.7) => {
   return new Promise((resolve) => {
     const reader = new FileReader();
@@ -46,13 +41,22 @@ const compressImage = async (file, maxWidth = 1000, quality = 0.7) => {
   });
 };
 
+const getDistance = (lat1, lon1, lat2, lon2) => {
+  const R = 6371e3;
+  const φ1 = lat1 * Math.PI/180;
+  const φ2 = lat2 * Math.PI/180;
+  const Δφ = (lat2-lat1) * Math.PI/180;
+  const Δλ = (lon2-lon1) * Math.PI/180;
+  const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ/2) * Math.sin(Δλ/2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+};
+
 const FieldOfficerDashboard = () => {
   const [locations, setLocations] = useState([]);
   const [myLoc, setMyLoc] = useState(null);
   const [activeSite, setActiveSite] = useState(null);
   const [visitHistory, setVisitHistory] = useState([]);
   
-  // State to hold sites sorted by distance
   const [nearbySites, setNearbySites] = useState([]);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [checkedIn, setCheckedIn] = useState(false);
@@ -60,7 +64,6 @@ const FieldOfficerDashboard = () => {
   const [checkoutTime, setCheckoutTime] = useState(null);
   const [reportSubmitted, setReportSubmitted] = useState(false);
   
-  // Form State
   const [purpose, setPurpose] = useState('');
   const [remarks, setRemarks] = useState('');
   const [photo, setPhoto] = useState(null);
@@ -71,7 +74,6 @@ const FieldOfficerDashboard = () => {
   const fileInputRef = useRef(null);
   const userEmail = localStorage.getItem('userEmail');
 
-  // --- 1. FIREBASE PUSH NOTIFICATION REGISTRATION ---
   useEffect(() => {
     const registerPush = async () => {
       let permStatus = await PushNotifications.checkPermissions();
@@ -84,15 +86,11 @@ const FieldOfficerDashboard = () => {
 
       PushNotifications.addListener('registration', async (token) => {
         const fcmToken = token.value;
-        try {
-          await fetch('/api/user/update-fcm-token', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: userEmail, fcm_token: fcmToken })
-          });
-        } catch (err) {
-          console.error('Failed to save FCM token', err);
-        }
+        await fetch('/api/user/update-fcm-token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: userEmail, fcm_token: fcmToken })
+        });
       });
     };
 
@@ -100,65 +98,60 @@ const FieldOfficerDashboard = () => {
   }, [userEmail]);
 
   const fetchData = useCallback(async () => {
-    try {
-      const [locRes, histRes, profileRes] = await Promise.all([
-        fetch(`/api/admin/locations`),
-        fetch(`/api/field-officer/my-visits?email=${userEmail}`),
-        fetch(`/api/user/profile?email=${userEmail}`)
-      ]);
-      if (locRes.ok) setLocations(await locRes.json());
-      if (histRes.ok) setVisitHistory(await histRes.json());
-      if (profileRes.ok) {
-        const profileData = await profileRes.json();
-        setCheckedIn(Boolean(profileData.checked_in));
-      }
-    } catch (err) { console.error("Data fetch error", err); }
+    const [locRes, histRes, profileRes] = await Promise.all([
+      fetch(`/api/admin/locations`),
+      fetch(`/api/field-officer/my-visits?email=${userEmail}`),
+      fetch(`/api/user/profile?email=${userEmail}`)
+    ]);
+    
+    if (locRes.ok) {
+      const locData = await locRes.json();
+      setLocations(locData);
+      localStorage.setItem('cached_sites', JSON.stringify(locData));
+    }
+    
+    if (histRes.ok) setVisitHistory(await histRes.json());
+    
+    if (profileRes.ok) {
+      const profileData = await profileRes.json();
+      setCheckedIn(Boolean(profileData.checked_in));
+    }
   }, [userEmail]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  // Handle online/offline sync
   useEffect(() => {
     const handleOnline = async () => {
       setIsOnline(true);
       const offlineLocations = JSON.parse(localStorage.getItem('offlineLocations') || '[]');
       if (offlineLocations.length > 0) {
-        try {
-          const res = await fetch('/api/user/sync-offline-locations', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-                email: userEmail, 
-                locations: offlineLocations || [] 
-            })
-          });
-          if (res.ok) {
-            localStorage.removeItem('offlineLocations');
-          }
-        } catch (err) {
-          console.error('Offline sync error', err);
+        const res = await fetch('/api/user/sync-offline-locations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+              email: userEmail, 
+              locations: offlineLocations || [] 
+          })
+        });
+        if (res.ok) {
+          localStorage.removeItem('offlineLocations');
         }
       }
 
-      // Sync offline auto-checkout status if it happened
       const pendingAutoCheckout = localStorage.getItem(`pendingAutoCheckout:${userEmail}`);
       if (pendingAutoCheckout && checkedIn) {
-        try {
-          const checkoutData = JSON.parse(pendingAutoCheckout);
-          const res = await fetch('/api/user/checkout', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(checkoutData)
-          });
-          if (res.ok) {
-            localStorage.removeItem(`pendingAutoCheckout:${userEmail}`);
-            setCheckedIn(false);
-            setCheckoutTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
-            setAlertMsg({ type: 'warning', text: '⏱️ Offline checkout synced successfully.' });
-            fetchData();
-          }
-        } catch (err) {
-          console.error('Auto-checkout sync error', err);
+        const checkoutData = JSON.parse(pendingAutoCheckout);
+        const res = await fetch('/api/user/checkout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(checkoutData)
+        });
+        if (res.ok) {
+          localStorage.removeItem(`pendingAutoCheckout:${userEmail}`);
+          setCheckedIn(false);
+          setCheckoutTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+          setAlertMsg({ type: 'warning', text: '⏱️ Offline checkout synced successfully.' });
+          fetchData();
         }
       }
     };
@@ -174,22 +167,14 @@ const FieldOfficerDashboard = () => {
     };
   }, [userEmail, checkedIn, fetchData]);
 
-  const getDistance = (lat1, lon1, lat2, lon2) => {
-    const R = 6371e3;
-    const φ1 = lat1 * Math.PI/180;
-    const φ2 = lat2 * Math.PI/180;
-    const Δφ = (lat2-lat1) * Math.PI/180;
-    const Δλ = (lon2-lon1) * Math.PI/180;
-    const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ/2) * Math.sin(Δλ/2);
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-  };
-
-  // Logic to process location data and update geofence status
   const processNewLocation = useCallback((lat, lon) => {
     setMyLoc({ lat, lon });
 
+    const cachedSitesStr = localStorage.getItem('cached_sites');
+    const sitesToEval = cachedSitesStr ? JSON.parse(cachedSitesStr) : locations;
+
     let insideSite = null;
-    const sitesWithDistance = locations.map(site => {
+    const sitesWithDistance = sitesToEval.map(site => {
         const dist = getDistance(lat, lon, site.lat, site.lon);
         if (dist <= (site.radius || 200)) {
             insideSite = site;
@@ -201,70 +186,58 @@ const FieldOfficerDashboard = () => {
     setNearbySites(sitesWithDistance);
     setActiveSite(insideSite);
     
-    // Ping backend or store offline (Backend Cron handles the 5-min checkout limit)
     if (userEmail) {
       const locData = { lat, lon, timestamp: new Date().toISOString() };
       
       if (!isOnline) {
-        // Store offline
         const offlineLocations = JSON.parse(localStorage.getItem('offlineLocations') || '[]');
         offlineLocations.push(locData);
         localStorage.setItem('offlineLocations', JSON.stringify(offlineLocations));
       } else {
-        // Ping live server
-        fetch(`/api/user/update-location?email=${userEmail}&lat=${lat}&lon=${lon}`, { method: 'POST' }).catch(e => console.error("Ping error", e));
+        fetch(`/api/user/update-location?email=${userEmail}&lat=${lat}&lon=${lon}`, { method: 'POST' });
       }
     }
   }, [locations, userEmail, isOnline]);
 
-  // 1. NATIVE BACKGROUND TRACKING (Runs on Android/iOS)
   useEffect(() => {
     if (!userEmail) return;
 
     const startTracking = async () => {
-      try {
-        await BackgroundGeolocation.addWatcher(
-          {
-            backgroundMessage: "Lizza is tracking your site visits for attendance.",
-            backgroundTitle: "Field Operations Active",
-            requestPermissions: true,
-            stale: false,
-            distanceFilter: 0,
-            interval: 300000, 
-            allowBackgroundLocationUpdates: true, // Required for iOS/Android aggressive battery
-            autoSync: true,
-            stopOnTerminate: false, // Don't stop when swiped away
-            startOnBoot: true       // Restart if phone reboots
-          },
-          (location, error) => {
-            if (error) {
-              console.error("Tracking Error:", error);
-              return;
-            }
-            if (location) {
-              processNewLocation(location.latitude, location.longitude);
-            }
+      await BackgroundGeolocation.addWatcher(
+        {
+          backgroundMessage: "Lizza is tracking your site visits for attendance.",
+          backgroundTitle: "Field Operations Active",
+          requestPermissions: true,
+          stale: false,
+          distanceFilter: 0,
+          interval: 300000, 
+          allowBackgroundLocationUpdates: true,
+          autoSync: true,
+          stopOnTerminate: false, 
+          startOnBoot: true 
+        },
+        (location, error) => {
+          if (error) return;
+          if (location) {
+            processNewLocation(location.latitude, location.longitude);
           }
-        );
-      } catch (err) {
-        console.warn("Native background tracking skipped (running on web).", err);
-      }
+        }
+      );
     };
 
     startTracking();
 
     return () => {
-      try { BackgroundGeolocation.removeWatcher(); } catch (e) {}
+      BackgroundGeolocation.removeWatcher();
     };
   }, [userEmail, processNewLocation]);
 
-  // 2. WEB GEOLOCATION FALLBACK
   useEffect(() => {
     if ("geolocation" in navigator) {
       const pingLocation = () => {
         navigator.geolocation.getCurrentPosition(
           (position) => processNewLocation(position.coords.latitude, position.coords.longitude),
-          (error) => console.error("Web GPS Error:", error),
+          () => {},
           { enableHighAccuracy: true }
         );
       };
@@ -274,33 +247,29 @@ const FieldOfficerDashboard = () => {
     }
   }, [processNewLocation]);
 
-  // --- CHECK IN / CHECK OUT ---
   const handleCheckIn = async () => {
     if (!activeSite || !myLoc) return alert("Geofence error: You must be inside the site boundary.");
     setIsSubmitting(true);
     
     const formattedLocalTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-    try {
-      const res = await fetch('/api/user/checkin', { 
-        method: 'POST', 
-        headers: { 'Content-Type': 'application/json' }, 
-        body: JSON.stringify({ email: userEmail, lat: myLoc.lat, lon: myLoc.lon }) 
-      });
-      const data = await res.json();
-      
-      if (res.ok) {
-        setAlertMsg({ type: 'success', text: `Successfully Checked In at ${formattedLocalTime}` });
-        setCheckedIn(true);
-        setCheckinTime(formattedLocalTime);
-        setReportSubmitted(false);
-        setCheckoutTime(null);
-      } else {
-        setAlertMsg({ type: 'danger', text: data.detail || 'Failed to check in.' });
-      }
-    } catch (err) {
-      setAlertMsg({ type: 'danger', text: 'Network error during check-in.' });
+    const res = await fetch('/api/user/checkin', { 
+      method: 'POST', 
+      headers: { 'Content-Type': 'application/json' }, 
+      body: JSON.stringify({ email: userEmail, lat: myLoc.lat, lon: myLoc.lon }) 
+    });
+    const data = await res.json();
+    
+    if (res.ok) {
+      setAlertMsg({ type: 'success', text: `Successfully Checked In at ${formattedLocalTime}` });
+      setCheckedIn(true);
+      setCheckinTime(formattedLocalTime);
+      setReportSubmitted(false);
+      setCheckoutTime(null);
+    } else {
+      setAlertMsg({ type: 'danger', text: data.detail || 'Failed to check in.' });
     }
+    
     setIsSubmitting(false);
   };
 
@@ -310,30 +279,26 @@ const FieldOfficerDashboard = () => {
     
     const formattedLocalTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-    try {
-      const res = await fetch('/api/user/checkout', { 
-        method: 'POST', 
-        headers: { 'Content-Type': 'application/json' }, 
-        body: JSON.stringify({ email: userEmail, lat: myLoc.lat, lon: myLoc.lon }) 
-      });
-      const data = await res.json();
-      
-      if (res.ok) {
-        setAlertMsg({ type: 'success', text: `Successfully Checked Out at ${formattedLocalTime}` });
-        setCheckedIn(false);
-        setCheckoutTime(formattedLocalTime);
-        setReportSubmitted(false);
-        fetchData();
-      } else {
-        setAlertMsg({ type: 'danger', text: data.detail || 'Failed to check out.' });
-      }
-    } catch (err) {
-      setAlertMsg({ type: 'danger', text: 'Network error during check-out.' });
+    const res = await fetch('/api/user/checkout', { 
+      method: 'POST', 
+      headers: { 'Content-Type': 'application/json' }, 
+      body: JSON.stringify({ email: userEmail, lat: myLoc.lat, lon: myLoc.lon }) 
+    });
+    const data = await res.json();
+    
+    if (res.ok) {
+      setAlertMsg({ type: 'success', text: `Successfully Checked Out at ${formattedLocalTime}` });
+      setCheckedIn(false);
+      setCheckoutTime(formattedLocalTime);
+      setReportSubmitted(false);
+      fetchData();
+    } else {
+      setAlertMsg({ type: 'danger', text: data.detail || 'Failed to check out.' });
     }
+    
     setIsSubmitting(false);
   };
 
-  // --- LOG VISIT REPORT ---
   const handleVisitSubmit = async (e) => {
     e.preventDefault();
     if (!photo) return alert("You must capture a geotagged photo to log the visit.");
@@ -341,37 +306,30 @@ const FieldOfficerDashboard = () => {
 
     setIsSubmitting(true);
     
-    try {
-      // 1. COMPRESS THE IMAGE TO BYPASS VERCEL LIMIT
-      const compressedPhoto = await compressImage(photo);
-      const exactTimestamp = new Date().toISOString();
+    const compressedPhoto = await compressImage(photo);
+    const exactTimestamp = new Date().toISOString();
 
-      // 2. APPEND TO FORM DATA
-      const formData = new FormData();
-      formData.append('email', userEmail);
-      formData.append('location_id', activeSite.id);
-      formData.append('purpose', purpose);
-      formData.append('remarks', remarks);
-      formData.append('lat', myLoc.lat);
-      formData.append('lon', myLoc.lon);
-      formData.append('timestamp', exactTimestamp);
-      formData.append('photo', compressedPhoto);
+    const formData = new FormData();
+    formData.append('email', userEmail);
+    formData.append('location_id', activeSite.id);
+    formData.append('purpose', purpose);
+    formData.append('remarks', remarks);
+    formData.append('lat', myLoc.lat);
+    formData.append('lon', myLoc.lon);
+    formData.append('timestamp', exactTimestamp);
+    formData.append('photo', compressedPhoto);
 
-      // 3. SEND REQUEST
-      const res = await fetch('/api/field-officer/log-visit', { method: 'POST', body: formData });
-      const data = await res.json();
-      
-      if (res.ok) {
-        setAlertMsg({ type: 'success', text: 'Visit logged successfully!' });
-        setPurpose(''); setRemarks(''); setPhoto(null);
-        setReportSubmitted(true);
-        if(fileInputRef.current) fileInputRef.current.value = "";
-        fetchData();
-      } else {
-        setAlertMsg({ type: 'danger', text: data.detail || 'Failed to log visit.' });
-      }
-    } catch (err) {
-      setAlertMsg({ type: 'danger', text: 'Network error submitting report.' });
+    const res = await fetch('/api/field-officer/log-visit', { method: 'POST', body: formData });
+    const data = await res.json();
+    
+    if (res.ok) {
+      setAlertMsg({ type: 'success', text: 'Visit logged successfully!' });
+      setPurpose(''); setRemarks(''); setPhoto(null);
+      setReportSubmitted(true);
+      if(fileInputRef.current) fileInputRef.current.value = "";
+      fetchData();
+    } else {
+      setAlertMsg({ type: 'danger', text: data.detail || 'Failed to log visit.' });
     }
     
     setIsSubmitting(false);
@@ -387,7 +345,7 @@ const FieldOfficerDashboard = () => {
       <Row className="g-4 mb-4">
         <Col lg={8}>
           <Card className="border-0 shadow-sm overflow-hidden" style={{ height: '600px' }}>
-            <MapContainer center={[22.5726, 88.3639]} zoom={5} style={{ height: '100%' }}>
+            <MapContainer center={[12.9716, 77.5946]} zoom={11} style={{ height: '100%' }}>
               <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
               {locations.map(site => (
                 <Circle key={site.id} center={[site.lat, site.lon]} radius={site.radius || 200} pathOptions={{ color: 'blue', fillOpacity: 0.2 }}>
@@ -405,7 +363,6 @@ const FieldOfficerDashboard = () => {
 
         <Col lg={4}>
           <div className="d-flex flex-column gap-3 h-100">
-            {/* CURRENT STATUS CARD */}
             <Card className="border-0 shadow-sm">
               <Card.Body>
                 <h5 className="fw-bold mb-3 d-flex align-items-center">
@@ -423,7 +380,6 @@ const FieldOfficerDashboard = () => {
                       <CheckCircle className="me-2"/> At Site: {activeSite.name}
                     </Alert>
                     
-                    {/* CHECK IN / CHECK OUT BUTTONS */}
                     <div className="d-flex gap-2 mb-3">
                       {!checkedIn && (
                         <Button variant="success" className="w-50 fw-bold d-flex align-items-center justify-content-center" disabled={!activeSite || isSubmitting} onClick={handleCheckIn}>
@@ -494,7 +450,6 @@ const FieldOfficerDashboard = () => {
               </Card.Body>
             </Card>
 
-            {/* NEARBY SITES DIRECTORY */}
             <Card className="border-0 shadow-sm flex-grow-1 d-flex flex-column">
               <Card.Header className="bg-white py-3 border-bottom-0">
                 <h6 className="fw-bold m-0 d-flex align-items-center">
