@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Table, Form, Container, Card, Spinner, Button, Row, Col, Modal, Badge, Tabs, Tab } from 'react-bootstrap';
-import { UserCog, Building2, MapPin, Trash2, Users, UserCheck, UserX, Save, Search, Plus, Bell, Edit2, Calendar, Download, Image as ImageIcon, FileText, Briefcase, Filter, Eye, CheckCircle, Phone, Crosshair } from 'lucide-react';
+import { UserCog, Building2, MapPin, Trash2, Users, UserCheck, UserX, Save, Search, Plus, Bell, Edit2, Calendar, Download, Image as ImageIcon, FileText, Briefcase, Filter, Eye, CheckCircle, Phone, Crosshair, ShieldAlert } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from 'react-leaflet';
 import EmployeeOnboardForm from './EmployeeOnboardForm';
 import logoImg from './logo.png';
@@ -67,6 +67,7 @@ const AdminDashboard = () => {
   const [editEmpModal, setEditEmpModal] = useState(false);
   const [editingEmp, setEditingEmp] = useState(null);
   const [empSearchQuery, setEmpSearchQuery] = useState('');
+  const [editEmpTab, setEditEmpTab] = useState('profile');
   
   const [reportMonth, setReportMonth] = useState(new Date().getMonth() + 1);
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
@@ -243,6 +244,7 @@ const AdminDashboard = () => {
         setEditEmpModal(false);
         setEditingEmp(null);
         setEmpSearchQuery('');
+        setEditEmpTab('profile');
         fetchBaseData();
       } else {
         alert('Failed to update employee details');
@@ -415,7 +417,6 @@ const AdminDashboard = () => {
       document.body.removeChild(link);
   };
 
-  // --- UPDATED SECURE DOSSIER FETCH ---
   const handlePrintProfile = async (userId) => {
     try {
       const response = await fetch(`/api/admin/employee-dossier/${userId}?admin_email=${adminEmail}`);
@@ -1326,12 +1327,15 @@ const AdminDashboard = () => {
           </Modal.Body>
       </Modal>
 
+      {/* MASSIVELY UPGRADED EDIT EMPLOYEE MODAL */}
       <Modal show={editEmpModal} onHide={() => setEditEmpModal(false)} size="lg" centered>
-        <Modal.Header closeButton className="bg-info text-white"><Modal.Title className="h6 fw-bold"><Edit2 className="me-2" size={18}/>Edit Employee Details</Modal.Title></Modal.Header>
-        <Modal.Body className="p-4">
+        <Modal.Header closeButton className="bg-info text-white">
+          <Modal.Title className="h6 fw-bold"><Edit2 className="me-2" size={18}/>Master Employee Editor</Modal.Title>
+        </Modal.Header>
+        <Modal.Body className="p-4 bg-light">
           {!editingEmp ? (
             <>
-              <h6 className="fw-bold mb-3">Search Employee</h6>
+              <h6 className="fw-bold mb-3">Search Employee to Edit</h6>
               <div className="position-relative mb-3">
                 <Search size={18} className="position-absolute" style={{top: '10px', left: '12px', color: '#999'}} />
                 <Form.Control
@@ -1349,7 +1353,19 @@ const AdminDashboard = () => {
                 ) : (
                   filteredEmployeesForSearch.map(emp => (
                     <Card key={emp.id} className="mb-2 border cursor-pointer" style={{cursor: 'pointer'}}>
-                      <Card.Body className="p-3 d-flex justify-content-between align-items-center" onClick={() => { setEditingEmp({...emp}); setEmpSearchQuery(''); }}>
+                      <Card.Body className="p-3 d-flex justify-content-between align-items-center" onClick={() => { 
+                          // Initialize safe blank fields for secure edits
+                          setEditingEmp({
+                              ...emp, 
+                              aadhar_raw: '', 
+                              pan_raw: '', 
+                              account_number_raw: '',
+                              voter_id_raw: '',
+                              dl_raw: ''
+                          }); 
+                          setEmpSearchQuery(''); 
+                          setEditEmpTab('profile');
+                      }}>
                         <div>
                           <h6 className="mb-0 fw-bold">{emp.full_name}</h6>
                           <small className="text-muted">{emp.email}</small><br/>
@@ -1365,115 +1381,223 @@ const AdminDashboard = () => {
           ) : (
             <Form onSubmit={handleEditEmpSave}>
               <div className="d-flex justify-content-between align-items-center mb-3 pb-3 border-bottom">
-                <h6 className="mb-0 fw-bold">{editingEmp.full_name}</h6>
-                <Button variant="light" size="sm" onClick={() => { setEditingEmp(null); setEmpSearchQuery(''); }}>← Back to Search</Button>
+                <h6 className="mb-0 fw-bold fs-5">{editingEmp.full_name} <Badge bg="dark" className="ms-2 fs-6">{editingEmp.blockchain_id}</Badge></h6>
+                <Button variant="outline-secondary" size="sm" onClick={() => { setEditingEmp(null); setEmpSearchQuery(''); }}>← Select Another</Button>
               </div>
 
-              <Row>
-                <Col md={6}>
-                  <Form.Group className="mb-3">
-                    <Form.Label className="small fw-bold">Full Name</Form.Label>
-                    <Form.Control size="sm" value={editingEmp.full_name || ''} onChange={e => setEditingEmp({...editingEmp, full_name: e.target.value})} />
-                  </Form.Group>
-                </Col>
-                <Col md={6}>
-                  <Form.Group className="mb-3">
-                    <Form.Label className="small fw-bold">Email</Form.Label>
-                    <Form.Control size="sm" type="email" value={editingEmp.email || ''} onChange={e => setEditingEmp({...editingEmp, email: e.target.value})} />
-                  </Form.Group>
-                </Col>
-              </Row>
+              <Tabs activeKey={editEmpTab} onSelect={(k) => setEditEmpTab(k)} className="mb-4 bg-white shadow-sm rounded">
+                
+                {/* TAB 1: PROFILE & WORK */}
+                <Tab eventKey="profile" title="Profile & Role" className="p-3 bg-white border border-top-0">
+                  <Row>
+                    <Col md={6}>
+                      <Form.Group className="mb-3">
+                        <Form.Label className="small fw-bold">Full Name</Form.Label>
+                        <Form.Control size="sm" value={editingEmp.full_name || ''} onChange={e => setEditingEmp({...editingEmp, full_name: e.target.value})} />
+                      </Form.Group>
+                    </Col>
+                    <Col md={6}>
+                      <Form.Group className="mb-3">
+                        <Form.Label className="small fw-bold">Official Email</Form.Label>
+                        <Form.Control size="sm" type="email" value={editingEmp.email || ''} onChange={e => setEditingEmp({...editingEmp, email: e.target.value})} />
+                      </Form.Group>
+                    </Col>
+                    <Col md={6}>
+                      <Form.Group className="mb-3">
+                        <Form.Label className="small fw-bold">Primary Phone</Form.Label>
+                        <Form.Control size="sm" value={editingEmp.phone_number || ''} onChange={e => setEditingEmp({...editingEmp, phone_number: e.target.value})} />
+                      </Form.Group>
+                    </Col>
+                    <Col md={6}>
+                      <Form.Group className="mb-3">
+                        <Form.Label className="small fw-bold">Personal Email</Form.Label>
+                        <Form.Control size="sm" type="email" value={editingEmp.personal_email || ''} onChange={e => setEditingEmp({...editingEmp, personal_email: e.target.value})} />
+                      </Form.Group>
+                    </Col>
+                    <Col md={6}>
+                      <Form.Group className="mb-3">
+                        <Form.Label className="small fw-bold">Date of Birth</Form.Label>
+                        <Form.Control size="sm" type="date" value={editingEmp.dob || ''} onChange={e => setEditingEmp({...editingEmp, dob: e.target.value})} />
+                      </Form.Group>
+                    </Col>
+                    <Col md={6}>
+                      <Form.Group className="mb-3">
+                        <Form.Label className="small fw-bold">User Type (System Role)</Form.Label>
+                        <Form.Select size="sm" value={editingEmp.user_type || 'employee'} onChange={e => setEditingEmp({...editingEmp, user_type: e.target.value})}>
+                          <option value="employee">Standard Employee</option>
+                          <option value="field_officer">Field Officer</option>
+                          <option value="manager">Manager</option>
+                        </Form.Select>
+                      </Form.Group>
+                    </Col>
+                    <Col md={6}>
+                      <Form.Group className="mb-3">
+                        <Form.Label className="small fw-bold">Designation</Form.Label>
+                        <Form.Control size="sm" value={editingEmp.designation || ''} onChange={e => setEditingEmp({...editingEmp, designation: e.target.value})} />
+                      </Form.Group>
+                    </Col>
+                    <Col md={6}>
+                      <Form.Group className="mb-3">
+                        <Form.Label className="small fw-bold">Department</Form.Label>
+                        <Form.Control size="sm" value={editingEmp.department || ''} onChange={e => setEditingEmp({...editingEmp, department: e.target.value})} />
+                      </Form.Group>
+                    </Col>
+                    <Col md={6}>
+                      <Form.Group className="mb-3">
+                        <Form.Label className="small fw-bold">Assigned Site / Geofence</Form.Label>
+                        <Form.Select size="sm" value={editingEmp.location_id || ''} onChange={e => setEditingEmp({...editingEmp, location_id: e.target.value ? parseInt(e.target.value) : null})}>
+                          <option value="">No Base Site</option>
+                          {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                        </Form.Select>
+                      </Form.Group>
+                    </Col>
+                    <Col md={6}>
+                      <Form.Group className="mb-3">
+                        <Form.Label className="small fw-bold">Reporting Manager</Form.Label>
+                        <Form.Select size="sm" value={editingEmp.manager_id || ''} onChange={e => setEditingEmp({...editingEmp, manager_id: e.target.value ? parseInt(e.target.value) : null})}>
+                          <option value="">No Manager Assigned</option>
+                          {employees.filter(m => m?.user_type === 'manager').map(mgr => (
+                            <option key={mgr.id} value={mgr.id}>{mgr.full_name}</option>
+                          ))}
+                        </Form.Select>
+                      </Form.Group>
+                    </Col>
+                    <Col md={6}>
+                      <Form.Group className="mb-3">
+                        <Form.Label className="small fw-bold">Shift Start</Form.Label>
+                        <Form.Control size="sm" type="time" value={editingEmp.shift_start || ''} onChange={e => setEditingEmp({...editingEmp, shift_start: e.target.value})} disabled={editingEmp.user_type === 'field_officer'} />
+                      </Form.Group>
+                    </Col>
+                    <Col md={6}>
+                      <Form.Group className="mb-3">
+                        <Form.Label className="small fw-bold">Shift End</Form.Label>
+                        <Form.Control size="sm" type="time" value={editingEmp.shift_end || ''} onChange={e => setEditingEmp({...editingEmp, shift_end: e.target.value})} disabled={editingEmp.user_type === 'field_officer'} />
+                      </Form.Group>
+                    </Col>
+                  </Row>
+                </Tab>
 
-              <Row>
-                <Col md={6}>
-                  <Form.Group className="mb-3">
-                    <Form.Label className="small fw-bold">Phone Number</Form.Label>
-                    <Form.Control size="sm" value={editingEmp.phone_number || ''} onChange={e => setEditingEmp({...editingEmp, phone_number: e.target.value})} />
-                  </Form.Group>
-                </Col>
-                <Col md={6}>
-                  <Form.Group className="mb-3">
-                    <Form.Label className="small fw-bold">Designation</Form.Label>
-                    <Form.Control size="sm" value={editingEmp.designation || ''} onChange={e => setEditingEmp({...editingEmp, designation: e.target.value})} />
-                  </Form.Group>
-                </Col>
-              </Row>
+                {/* TAB 2: ADDRESSES */}
+                <Tab eventKey="addresses" title="Addresses & Contact" className="p-3 bg-white border border-top-0">
+                  <h6 className="fw-bold mb-3 text-primary border-bottom pb-2">Permanent Address</h6>
+                  <Row className="mb-3">
+                    <Col md={12}>
+                      <Form.Group className="mb-2">
+                        <Form.Label className="small fw-bold">Full Address</Form.Label>
+                        <Form.Control size="sm" as="textarea" rows={2} value={editingEmp.perm_address || ''} onChange={e => setEditingEmp({...editingEmp, perm_address: e.target.value})} />
+                      </Form.Group>
+                    </Col>
+                    <Col md={4}>
+                      <Form.Group>
+                        <Form.Label className="small fw-bold">State</Form.Label>
+                        <Form.Control size="sm" value={editingEmp.perm_state || ''} onChange={e => setEditingEmp({...editingEmp, perm_state: e.target.value})} />
+                      </Form.Group>
+                    </Col>
+                    <Col md={4}>
+                      <Form.Group>
+                        <Form.Label className="small fw-bold">PIN Code</Form.Label>
+                        <Form.Control size="sm" value={editingEmp.perm_pin || ''} onChange={e => setEditingEmp({...editingEmp, perm_pin: e.target.value})} />
+                      </Form.Group>
+                    </Col>
+                    <Col md={4}>
+                      <Form.Group>
+                        <Form.Label className="small fw-bold">Alt Mobile</Form.Label>
+                        <Form.Control size="sm" value={editingEmp.perm_mobile || ''} onChange={e => setEditingEmp({...editingEmp, perm_mobile: e.target.value})} />
+                      </Form.Group>
+                    </Col>
+                  </Row>
 
-              <Row>
-                <Col md={6}>
-                  <Form.Group className="mb-3">
-                    <Form.Label className="small fw-bold">Department</Form.Label>
-                    <Form.Control size="sm" value={editingEmp.department || ''} onChange={e => setEditingEmp({...editingEmp, department: e.target.value})} />
-                  </Form.Group>
-                </Col>
-                <Col md={6}>
-                  <Form.Group className="mb-3">
-                    <Form.Label className="small fw-bold">User Type</Form.Label>
-                    <Form.Select size="sm" value={editingEmp.user_type || 'employee'} onChange={e => setEditingEmp({...editingEmp, user_type: e.target.value})}>
-                      <option value="employee">Employee</option>
-                      <option value="field_officer">Field Officer</option>
-                      <option value="manager">Manager</option>
-                    </Form.Select>
-                  </Form.Group>
-                </Col>
-              </Row>
+                  <h6 className="fw-bold mb-3 mt-4 text-primary border-bottom pb-2">Temporary / Local Address</h6>
+                  <Row>
+                    <Col md={12}>
+                      <Form.Group className="mb-2">
+                        <Form.Label className="small fw-bold">Full Address</Form.Label>
+                        <Form.Control size="sm" as="textarea" rows={2} value={editingEmp.temp_address || ''} onChange={e => setEditingEmp({...editingEmp, temp_address: e.target.value})} />
+                      </Form.Group>
+                    </Col>
+                    <Col md={4}>
+                      <Form.Group>
+                        <Form.Label className="small fw-bold">State</Form.Label>
+                        <Form.Control size="sm" value={editingEmp.temp_state || ''} onChange={e => setEditingEmp({...editingEmp, temp_state: e.target.value})} />
+                      </Form.Group>
+                    </Col>
+                    <Col md={4}>
+                      <Form.Group>
+                        <Form.Label className="small fw-bold">PIN Code</Form.Label>
+                        <Form.Control size="sm" value={editingEmp.temp_pin || ''} onChange={e => setEditingEmp({...editingEmp, temp_pin: e.target.value})} />
+                      </Form.Group>
+                    </Col>
+                    <Col md={4}>
+                      <Form.Group>
+                        <Form.Label className="small fw-bold">Local Mobile</Form.Label>
+                        <Form.Control size="sm" value={editingEmp.temp_mobile || ''} onChange={e => setEditingEmp({...editingEmp, temp_mobile: e.target.value})} />
+                      </Form.Group>
+                    </Col>
+                  </Row>
+                </Tab>
 
-              <Row>
-                <Col md={6}>
-                  <Form.Group className="mb-3">
-                    <Form.Label className="small fw-bold">Personal Email</Form.Label>
-                    <Form.Control size="sm" type="email" value={editingEmp.personal_email || ''} onChange={e => setEditingEmp({...editingEmp, personal_email: e.target.value})} />
-                  </Form.Group>
-                </Col>
-                <Col md={6}>
-                  <Form.Group className="mb-3">
-                    <Form.Label className="small fw-bold">Date of Birth</Form.Label>
-                    <Form.Control size="sm" type="date" value={editingEmp.dob || ''} onChange={e => setEditingEmp({...editingEmp, dob: e.target.value})} />
-                  </Form.Group>
-                </Col>
-              </Row>
+                {/* TAB 3: BANKING & SECURE KYC */}
+                <Tab eventKey="secure" title={<><ShieldAlert size={14} className="me-1"/> Bank & KYC Updates</>} className="p-3 bg-white border border-top-0">
+                  <Alert variant="warning" className="small mb-4">
+                    <strong>Security Notice:</strong> The fields below accept plain text, but will be <strong>permanently encrypted</strong> into the database immediately upon saving. To preserve existing data, leave the fields blank.
+                  </Alert>
 
-              <Row>
-                <Col md={6}>
-                  <Form.Group className="mb-3">
-                    <Form.Label className="small fw-bold">Assigned Site</Form.Label>
-                    <Form.Select size="sm" value={editingEmp.location_id || ''} onChange={e => setEditingEmp({...editingEmp, location_id: e.target.value ? parseInt(e.target.value) : null})}>
-                      <option value="">Select Site</option>
-                      {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
-                    </Form.Select>
-                  </Form.Group>
-                </Col>
-                <Col md={6}>
-                  <Form.Group className="mb-3">
-                    <Form.Label className="small fw-bold">Assigned Manager</Form.Label>
-                    <Form.Select size="sm" value={editingEmp.manager_id || ''} onChange={e => setEditingEmp({...editingEmp, manager_id: e.target.value ? parseInt(e.target.value) : null})}>
-                      <option value="">No Manager</option>
-                      {employees.filter(m => m?.user_type === 'manager').map(mgr => (
-                        <option key={mgr.id} value={mgr.id}>{mgr.full_name}</option>
-                      ))}
-                    </Form.Select>
-                  </Form.Group>
-                </Col>
-              </Row>
+                  <h6 className="fw-bold mb-3 text-primary border-bottom pb-2">Banking Details</h6>
+                  <Row className="mb-4">
+                    <Col md={4}>
+                      <Form.Group>
+                        <Form.Label className="small fw-bold">Bank Name</Form.Label>
+                        <Form.Control size="sm" value={editingEmp.bank_name || ''} onChange={e => setEditingEmp({...editingEmp, bank_name: e.target.value})} />
+                      </Form.Group>
+                    </Col>
+                    <Col md={4}>
+                      <Form.Group>
+                        <Form.Label className="small fw-bold">IFSC Code</Form.Label>
+                        <Form.Control size="sm" value={editingEmp.ifsc_code || ''} onChange={e => setEditingEmp({...editingEmp, ifsc_code: e.target.value})} />
+                      </Form.Group>
+                    </Col>
+                    <Col md={4}>
+                      <Form.Group>
+                        <Form.Label className="small fw-bold text-danger">Override Account Number</Form.Label>
+                        <Form.Control size="sm" placeholder="Leave blank to keep current" value={editingEmp.account_number_raw || ''} onChange={e => setEditingEmp({...editingEmp, account_number_raw: e.target.value})} />
+                      </Form.Group>
+                    </Col>
+                  </Row>
 
-              <Row>
-                <Col md={6}>
-                  <Form.Group className="mb-3">
-                    <Form.Label className="small fw-bold">Shift Start</Form.Label>
-                    <Form.Control size="sm" type="time" value={editingEmp.shift_start || ''} onChange={e => setEditingEmp({...editingEmp, shift_start: e.target.value})} disabled={editingEmp.user_type === 'field_officer'} />
-                  </Form.Group>
-                </Col>
-                <Col md={6}>
-                  <Form.Group className="mb-3">
-                    <Form.Label className="small fw-bold">Shift End</Form.Label>
-                    <Form.Control size="sm" type="time" value={editingEmp.shift_end || ''} onChange={e => setEditingEmp({...editingEmp, shift_end: e.target.value})} disabled={editingEmp.user_type === 'field_officer'} />
-                  </Form.Group>
-                </Col>
-              </Row>
+                  <h6 className="fw-bold mb-3 text-primary border-bottom pb-2">Secure KYC Override</h6>
+                  <Row>
+                    <Col md={6}>
+                      <Form.Group className="mb-3">
+                        <Form.Label className="small fw-bold text-danger">Override Aadhaar Number</Form.Label>
+                        <Form.Control size="sm" placeholder="Leave blank to keep current" value={editingEmp.aadhar_raw || ''} onChange={e => setEditingEmp({...editingEmp, aadhar_raw: e.target.value})} />
+                      </Form.Group>
+                    </Col>
+                    <Col md={6}>
+                      <Form.Group className="mb-3">
+                        <Form.Label className="small fw-bold text-danger">Override PAN Number</Form.Label>
+                        <Form.Control size="sm" placeholder="Leave blank to keep current" value={editingEmp.pan_raw || ''} onChange={e => setEditingEmp({...editingEmp, pan_raw: e.target.value})} />
+                      </Form.Group>
+                    </Col>
+                    <Col md={6}>
+                      <Form.Group className="mb-3">
+                        <Form.Label className="small fw-bold text-danger">Override Voter ID</Form.Label>
+                        <Form.Control size="sm" placeholder="Leave blank to keep current" value={editingEmp.voter_id_raw || ''} onChange={e => setEditingEmp({...editingEmp, voter_id_raw: e.target.value})} />
+                      </Form.Group>
+                    </Col>
+                    <Col md={6}>
+                      <Form.Group className="mb-3">
+                        <Form.Label className="small fw-bold text-danger">Override Driving Licence</Form.Label>
+                        <Form.Control size="sm" placeholder="Leave blank to keep current" value={editingEmp.dl_raw || ''} onChange={e => setEditingEmp({...editingEmp, dl_raw: e.target.value})} />
+                      </Form.Group>
+                    </Col>
+                  </Row>
+                </Tab>
 
-              <div className="d-flex gap-2">
-                <Button type="submit" variant="success" className="fw-bold flex-fill"><Save size={16} className="me-2"/>Save Changes</Button>
-                <Button variant="light" onClick={() => { setEditingEmp(null); setEmpSearchQuery(''); }} className="fw-bold">Cancel</Button>
+              </Tabs>
+
+              <div className="d-flex gap-3 pt-3 border-top">
+                <Button variant="light" onClick={() => { setEditingEmp(null); setEmpSearchQuery(''); setEditEmpTab('profile'); }} className="fw-bold w-25">Cancel</Button>
+                <Button type="submit" variant="success" className="fw-bold w-75 shadow-sm"><Save size={18} className="me-2"/>Save All Changes to Database</Button>
               </div>
             </Form>
           )}
