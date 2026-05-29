@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Table, Form, Container, Card, Spinner, Button, Row, Col, Modal, Badge, Tabs, Tab } from 'react-bootstrap';
+// FIX: Added 'Alert' to the import list below
+import { Table, Form, Container, Card, Spinner, Button, Row, Col, Modal, Badge, Tabs, Tab, Alert } from 'react-bootstrap';
 import { UserCog, Building2, MapPin, Trash2, Users, UserCheck, UserX, Save, Search, Plus, Bell, Edit2, Calendar, Download, Image as ImageIcon, FileText, Briefcase, Filter, Eye, CheckCircle, Phone, Crosshair, ShieldAlert } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from 'react-leaflet';
 import EmployeeOnboardForm from './EmployeeOnboardForm';
@@ -475,8 +476,7 @@ const AdminDashboard = () => {
               .logo-header { text-align: center; margin-bottom: 20px; border-bottom: 3px solid #e31e24; padding-bottom: 15px; }
               .logo-header img { height: 50px; vertical-align: middle; margin-right: 15px; }
               .logo-header .company-name { font-size: 18px; font-weight: bold; color: #e31e24; vertical-align: middle; display: inline-block; }
-              h2 { text-align: center; border-bottom: 3px solid #0d6efd; padding-bottom: 10px; margin-bottom: 20px; color: #0d6efd; text-transform: uppercase;}
-              .confidential-banner { border: 2px solid #dc3545; color: #dc3545; padding: 10px; text-align: center; font-weight: bold; margin-bottom: 20px; font-size: 16px; text-transform: uppercase; }
+              h2 { text-align: center; color: #0d6efd; text-transform: uppercase; margin-bottom: 5px; }
               .flex-row { display: flex; justify-content: space-between; align-items: flex-start; }
               .photo { width: 140px; height: 140px; border-radius: 8px; object-fit: cover; border: 2px solid #0d6efd; }
               .details { flex-grow: 1; padding-left: 25px; }
@@ -500,8 +500,11 @@ const AdminDashboard = () => {
               <img src="${logoImg}" alt="Company Logo" />
               <span class="company-name">LIZZA FACILITY MANAGEMENT</span>
             </div>
+            
             <h2>Official Employee Dossier</h2>
-            <div class="confidential-banner">HIGHLY CONFIDENTIAL - ADMIN EYES ONLY (UNENCRYPTED)</div>
+            <div style="text-align: center; font-size: 11px; color: #555; letter-spacing: 1.5px; border-bottom: 1px solid #eee; padding-bottom: 15px; margin-bottom: 20px; text-transform: uppercase;">
+              Privileged & Confidential • Internal HR Use Only
+            </div>
             
             <h3 class="section-header" style="margin-top:0;">1. Identity & Employment Status</h3>
             <div class="flex-row">
@@ -547,17 +550,17 @@ const AdminDashboard = () => {
               </tr>
             </table>
 
-            <h3 class="section-header">4. Confidential Identity Details (DECRYPTED)</h3>
+            <h3 class="section-header">4. Verified Identity & KYC Details</h3>
             <table>
-                <tr><th>Aadhaar Number</th><td style="color:#dc3545; font-weight:bold;">${emp?.aadhar_raw && emp.aadhar_raw !== 'N/A' ? emp.aadhar_raw : 'Not Provided'}</td><th>PAN Number</th><td style="font-weight:bold;">${emp?.pan_raw && emp.pan_raw !== 'N/A' ? emp.pan_raw : 'Not Provided'}</td></tr>
+                <tr><th>Aadhaar Number</th><td style="font-weight:bold;">${emp?.aadhar_raw && emp.aadhar_raw !== 'N/A' ? emp.aadhar_raw : 'Not Provided'}</td><th>PAN Number</th><td style="font-weight:bold;">${emp?.pan_raw && emp.pan_raw !== 'N/A' ? emp.pan_raw : 'Not Provided'}</td></tr>
                 <tr><th>Voter ID</th><td>${emp?.voter_id_raw && emp.voter_id_raw !== 'N/A' ? emp.voter_id_raw : 'Not Provided'}</td><th>Driving Licence</th><td>${emp?.dl_raw && emp.dl_raw !== 'N/A' ? emp.dl_raw : 'Not Provided'}</td></tr>
                 <tr><th>Passport Number</th><td colspan="3">${emp?.passport_raw && emp.passport_raw !== 'N/A' ? emp.passport_raw : 'Not Provided'}</td></tr>
             </table>
 
-            <h3 class="section-header">5. Financial Details (DECRYPTED)</h3>
+            <h3 class="section-header">5. Salary & Banking Details</h3>
             <table>
                 <tr><th>Bank Name</th><td>${emp?.bank_name || 'N/A'}</td><th>IFSC Code</th><td>${emp?.ifsc_code || 'N/A'}</td></tr>
-                <tr><th>Account Number</th><td colspan="3" style="font-weight:bold; color: #198754;">${emp?.account_number_raw && emp.account_number_raw !== 'N/A' ? emp.account_number_raw : 'Not Provided'}</td></tr>
+                <tr><th>Account Number</th><td colspan="3" style="font-weight:bold;">${emp?.account_number_raw && emp.account_number_raw !== 'N/A' ? emp.account_number_raw : 'Not Provided'}</td></tr>
             </table>
 
             <h3 class="section-header">6. Education History</h3>
@@ -1327,7 +1330,6 @@ const AdminDashboard = () => {
           </Modal.Body>
       </Modal>
 
-      {/* MASSIVELY UPGRADED EDIT EMPLOYEE MODAL */}
       <Modal show={editEmpModal} onHide={() => setEditEmpModal(false)} size="lg" centered>
         <Modal.Header closeButton className="bg-info text-white">
           <Modal.Title className="h6 fw-bold"><Edit2 className="me-2" size={18}/>Master Employee Editor</Modal.Title>
@@ -1354,7 +1356,6 @@ const AdminDashboard = () => {
                   filteredEmployeesForSearch.map(emp => (
                     <Card key={emp.id} className="mb-2 border cursor-pointer" style={{cursor: 'pointer'}}>
                       <Card.Body className="p-3 d-flex justify-content-between align-items-center" onClick={() => { 
-                          // Initialize safe blank fields for secure edits
                           setEditingEmp({
                               ...emp, 
                               aadhar_raw: '', 
@@ -1387,7 +1388,6 @@ const AdminDashboard = () => {
 
               <Tabs activeKey={editEmpTab} onSelect={(k) => setEditEmpTab(k)} className="mb-4 bg-white shadow-sm rounded">
                 
-                {/* TAB 1: PROFILE & WORK */}
                 <Tab eventKey="profile" title="Profile & Role" className="p-3 bg-white border border-top-0">
                   <Row>
                     <Col md={6}>
@@ -1477,7 +1477,6 @@ const AdminDashboard = () => {
                   </Row>
                 </Tab>
 
-                {/* TAB 2: ADDRESSES */}
                 <Tab eventKey="addresses" title="Addresses & Contact" className="p-3 bg-white border border-top-0">
                   <h6 className="fw-bold mb-3 text-primary border-bottom pb-2">Permanent Address</h6>
                   <Row className="mb-3">
@@ -1536,7 +1535,6 @@ const AdminDashboard = () => {
                   </Row>
                 </Tab>
 
-                {/* TAB 3: BANKING & SECURE KYC */}
                 <Tab eventKey="secure" title={<><ShieldAlert size={14} className="me-1"/> Bank & KYC Updates</>} className="p-3 bg-white border border-top-0">
                   <Alert variant="warning" className="small mb-4">
                     <strong>Security Notice:</strong> The fields below accept plain text, but will be <strong>permanently encrypted</strong> into the database immediately upon saving. To preserve existing data, leave the fields blank.
