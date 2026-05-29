@@ -214,7 +214,7 @@ def update_fcm_token(data: FCMTokenUpdate, db: Session = Depends(get_db)):
 
     if user:
         user.fcm_token = data.fcm_token
-        console.log("FCM TOKEN:", data.fcm_token);
+    
         db.commit()
         return {"status": "success"}
     raise HTTPException(404, "User not found")
@@ -222,6 +222,7 @@ def update_fcm_token(data: FCMTokenUpdate, db: Session = Depends(get_db)):
 @app.get("/api/user/profile")
 def get_user_profile(email: str, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == email.lower().strip()).first()
+    console.log("FCM TOKEN:", user.fcm_token if user else None)
     if not user: raise HTTPException(status_code=404, detail="User not found")
     
     from .database import Attendance
