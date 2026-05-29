@@ -1233,13 +1233,17 @@ const AdminDashboard = () => {
                         <Table size="sm" bordered hover className="mb-0 small">
                             <thead className="table-light"><tr><th>Name</th><th>Contact Number</th><th>Relation / Context</th></tr></thead>
                             <tbody>
-                                {safeParseJSON(selectedStaff?.references_json).map((refItem, i) => (
-                                    <tr key={i}>
-                                        <td>{refItem?.name || '-'}</td>
-                                        <td>{refItem?.contact || '-'}</td>
-                                        <td>{refItem?.relation || '-'}</td>
-                                    </tr>
-                                ))}
+                                {safeParseJSON(selectedStaff?.references_json).length > 0 ? (
+                                    safeParseJSON(selectedStaff?.references_json).map((ref, i) => (
+                                        <tr key={i}>
+                                            <td>{ref?.name || ref?.referenceName || ref?.fullName || '-'}</td>
+                                            <td>{ref?.contact || ref?.phone || ref?.phoneNumber || ref?.mobile || '-'}</td>
+                                            <td>{ref?.relation || ref?.relationship || ref?.context || '-'}</td>
+                                        </tr>
+                                    ))
+                                ) : (
+                                    <tr><td colSpan="3" className="text-center text-muted">No reference details provided.</td></tr>
+                                )}
                             </tbody>
                         </Table>
                     </Tab>
