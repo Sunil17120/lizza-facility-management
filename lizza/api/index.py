@@ -92,12 +92,15 @@ def get_site_at_location(lat, lon, db):
             return office
     return None
 def safe_decrypt(encrypted_data: str) -> str:
-    if not encrypted_data or encrypted_data == "null" or encrypted_data == "undefined":
+    if not encrypted_data or str(encrypted_data).strip() == "" or encrypted_data in ["null", "undefined"]:
         return "N/A"
     try:
         from .database import cipher
-        return cipher.decrypt(encrypted_data.encode()).decode()
+        # Ensure it is explicitly converted to a string before encoding
+        return cipher.decrypt(str(encrypted_data).encode()).decode()
     except Exception as e:
+        # THIS WILL PRINT THE EXACT REASON TO VERCEL LOGS
+        print(f"CRITICAL DECRYPTION FAILURE -> Data: {encrypted_data} | Error: {str(e)}") 
         return "Decryption Error"
 
 class AuthRequest(BaseModel): 
