@@ -14,7 +14,7 @@ import numpy as np
 import zlib
 import zxingcpp
 
-# Upstash Serverless Redis SDK (Uses stateless HTTP REST instead of persistent TCP)
+# Upstash Serverless Redis SDK
 from upstash_redis import Redis as UpstashRedis
 
 # Firebase Admin SDK
@@ -59,7 +59,6 @@ class SafeRedisClient:
             return None
         return self._client.delete(*keys)
 
-# Using your specific Vercel KV / Upstash integration environment keys
 upstash_url = os.environ.get("Redis_url_KV_REST_API_URL")
 upstash_token = os.environ.get("Redis_url_KV_REST_API_TOKEN")
 
@@ -135,13 +134,6 @@ def send_push_notification(token: str, title: str, body: str):
     messaging.send(message)
     return True
 
-def get_saved_coordinates(email: str):
-    if not r: return None, None
-    coords = r.get(f"loc:{email}")
-    if not coords: return None, None
-    lat, lon = coords.split(',')
-    return float(lat), float(lon)
-
 def validate_geofence_for_user(db, user, latitude: float, longitude: float):
     if not user.location_id: return
     office = db.query(OfficeLocation).filter(OfficeLocation.id == user.location_id).first()
@@ -152,13 +144,6 @@ def validate_geofence_for_user(db, user, latitude: float, longitude: float):
 
 def get_secure_hash(password: str, salt: str):
     return hashlib.sha256((password + salt + PEPPER).encode()).hexdigest()
-
-def process_upload_base64(upload_file: UploadFile, max_size_mb: int = 5) -> str:
-    if not upload_file or not upload_file.filename: return None
-    content = upload_file.file.read()
-    if len(content) > max_size_mb * 1024 * 1024:
-        raise HTTPException(400, detail="File too large")
-    return f"data:{upload_file.content_type};base64,{base64.b64encode(content).decode('utf-8')}"
 
 def upload_to_cloud(upload_file: UploadFile) -> str:
     if not upload_file or not upload_file.filename: 
@@ -200,6 +185,8 @@ def safe_encrypt(data: str) -> str:
     if not data or str(data).strip() == "" or data == "null" or data == "undefined":
         return None
     return cipher.encrypt(str(data).encode()).decode()
+
+# --- AUTH & PROFILES ---
 
 @app.post("/api/login")
 def login(data: AuthRequest, db: Session = Depends(get_db)):
@@ -243,6 +230,8 @@ def change_password(data: PasswordChange, db: Session = Depends(get_db)):
     user.is_password_changed = True
     db.commit()
     return {"status": "success"}
+
+# --- EMPLOYEE MANAGEMENT ---
 
 @app.post("/api/manager/add-employee")
 async def add_employee(
@@ -297,16 +286,9 @@ async def add_employee(
         if not aadhar_number.isdigit() or len(aadhar_number) != 12:
             raise HTTPException(status_code=422, detail="Aadhaar Number must be exactly 12 digits.")
 
-    if pan_number:
-        pan_regex = r"^[A-Z]{5}[0-9]{4}[A-Z]{1}$"
-        if not re.match(pan_regex, pan_number.upper()):
-            raise HTTPException(status_code=422, detail="Invalid PAN Card format (e.g., ABCDE1234F).")
-
     base_email = f"{first_name.strip().replace(' ', '').lower()}.{last_name.strip().replace(' ', '').lower()}@lizza.com"
-    
     dt_obj = datetime.strptime(dob, "%Y-%m-%d")
     initial_pw = dt_obj.strftime("%d%m%Y") 
-
     salt = hashlib.sha256(base_email.encode()).hexdigest()[:16]
 
     profile_url = upload_to_cloud(profile_photo)
@@ -367,7 +349,9 @@ async def add_employee(
     db.add(new_user)
     db.commit()
     return {"status": "success", "official_email": base_email, "message": "Employee registered successfully."}
-    
+
+# --- TRACKING & DASHBOARD ROUTES ---
+
 @app.get("/api/manager/my-employees")
 def get_my_employees(manager_id: int, db: Session = Depends(get_db)):
     return db.query(User).filter(User.manager_id == manager_id).all()
@@ -481,7 +465,6 @@ def delete_employee(user_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=403, detail="Security protocol prevents deleting the Super Admin account.")
 
     db.query(User).filter(User.manager_id == user_id).update({"manager_id": None})
-    
     db.query(EmployeeLocation).filter(EmployeeLocation.user_id == user_id).delete()
     db.query(SiteVisit).filter(SiteVisit.officer_id == user_id).delete()
     db.query(SiteStay).filter(SiteStay.officer_id == user_id).delete()
@@ -648,39 +631,7 @@ def get_monthly_attendance(
         })
     return report_data
 
-@app.post("/api/field-officer/manual-sync")
-async def manual_sync(
-    email: str = Form(...), location_id: int = Form(...), type: str = Form(...), 
-    lat: float = Form(...), lon: float = Form(...), db: Session = Depends(get_db)
-):
-    user = db.query(User).filter(User.email == email.lower().strip()).first()
-    if not user or user.user_type != 'field_officer': raise HTTPException(403, "Unauthorized")
-    
-    site = db.query(OfficeLocation).filter(OfficeLocation.id == location_id).first()
-    if not site: raise HTTPException(404, "Site not found")
-
-    distance = get_distance(lat, lon, site.lat, site.lon)
-    if distance > site.radius: raise HTTPException(400, f"Validation failed. You are outside the {site.radius}m geofence.")
-
-    now_utc = datetime.utcnow()
-    active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
-
-    if type == 'in':
-        if not active_stay or active_stay.location_id != site.id:
-            if active_stay: active_stay.exit_time = now_utc
-            db.add(SiteStay(officer_id=user.id, location_id=site.id, entry_time=now_utc))
-            db.commit()
-            return {"status": "success", "message": "Manual Check-In recorded."}
-        return {"status": "success", "message": "Already checked in."}
-
-    elif type == 'out':
-        if active_stay and active_stay.location_id == site.id:
-            active_stay.exit_time = now_utc
-            db.commit()
-            return {"status": "success", "message": "Manual Check-Out recorded."}
-        return {"status": "error", "detail": "No active check-in found at this location."}
-        
-    raise HTTPException(400, "Invalid sync type")
+# --- GEOFENCING & ATTENDANCE ACTIONS ---
 
 @app.post("/api/user/update-location")
 async def update_location(email: str, lat: float, lon: float, db: Session = Depends(get_db)):
@@ -688,9 +639,7 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
     if not user: return {"status": "error", "message": "User not found"}
     
     now_utc = datetime.utcnow()
-
-    if r:
-        r.set(f"ping_time:{email}", now_utc.isoformat(), ex=86400)
+    if r: r.set(f"ping_time:{email}", now_utc.isoformat(), ex=86400)
 
     current_site = get_site_at_location(lat, lon, db)
     
@@ -725,7 +674,6 @@ def user_checkin(data: CheckAction, db: Session = Depends(get_db)):
         return {"status": "success", "message": "Already checked in.", "checked_in": True}
 
     now_utc = datetime.utcnow()
-
     attendance = Attendance(user_id=user.id, checkin_time=now_utc, date=now_utc, location_id=site.id)
     user.is_present = True
     db.add(attendance)
@@ -740,19 +688,44 @@ def user_checkin(data: CheckAction, db: Session = Depends(get_db)):
         
     return {"status": "success", "message": f"Checked In at {site.name}", "site_name": site.name}
 
+@app.post("/api/user/checkout")
+def user_checkout(data: CheckAction, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == data.email.lower().strip()).first()
+    if not user:
+        raise HTTPException(404, "User not found")
+        
+    from .database import Attendance
+    now_utc = datetime.utcnow()
+    
+    open_attendance = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
+    if open_attendance:
+        open_attendance.checkout_time = now_utc
+        open_attendance.duration_seconds = int((now_utc - open_attendance.checkin_time).total_seconds())
+        
+    active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
+    if active_stay:
+        active_stay.exit_time = now_utc
+        
+    user.is_present = False
+    db.commit()
+    
+    if r:
+        r.delete(f"ping_time:{user.email}")
+        r.delete(f"warning_sent:{user.email}")
+        
+    return {"status": "success", "message": "Successfully checked out."}
+
 @app.get("/api/cron/auto-checkout")
 def cron_auto_checkout(db: Session = Depends(get_db)):
     from .database import Attendance
     
     now_utc = datetime.utcnow()
     active_users = db.query(User).filter(User.is_present == True).all()
-    
     swept_users = []
     warned_users = []
     
     for user in active_users:
         last_ping_str = r.get(f"ping_time:{user.email}")
-        
         needs_checkout = False
         needs_warning = False
         
@@ -765,9 +738,9 @@ def cron_auto_checkout(db: Session = Depends(get_db)):
             inactivity_mins = inactivity_delta.total_seconds() / 60.0
             
             if user.user_type == 'field_officer':
-                if inactivity_mins >= 10:
+                if inactivity_mins >= 5:
                     needs_checkout = True
-                elif inactivity_mins >= 5:
+                elif inactivity_mins >= 3:
                     needs_warning = True
             else:
                 if inactivity_mins >= 5:
@@ -780,7 +753,7 @@ def cron_auto_checkout(db: Session = Depends(get_db)):
                     send_push_notification(
                         token=user.fcm_token,
                         title="⚠️ Location Inactive",
-                        body="Are you still in? Open the app to sync your location or you will be automatically checked out in 5 minutes."
+                        body="Are you still in? Open the app to sync your location or you will be automatically checked out in 2 minutes."
                     )
                 r.set(f"warning_sent:{user.email}", "1", ex=600)
                 warned_users.append(user.email)
@@ -809,27 +782,20 @@ def cron_auto_checkout(db: Session = Depends(get_db)):
             r.delete(f"warning_sent:{user.email}")
             swept_users.append(user.email)
             
-    return {
-        "status": "success", 
-        "message": "Cron sweep complete", 
-        "warned_officers": warned_users, 
-        "auto_checked_out": swept_users
-    }
+    return {"status": "success", "message": "Cron sweep complete", "warned_officers": warned_users, "auto_checked_out": swept_users}
+
+# --- OFFLINE SYNC ---
 
 @app.post("/api/user/sync-offline-locations")
 async def sync_offline_locations(email: str, locations: List[dict], db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == email.lower().strip()).first()
-    if not user:
-        raise HTTPException(404, "User not found")
-    
-    if not locations:
-        return {"status": "success", "synced": 0, "message": "No locations to sync"}
+    if not user: raise HTTPException(404, "User not found")
+    if not locations: return {"status": "success", "synced": 0, "message": "No locations to sync"}
     
     synced = 0
     for loc_data in locations:
         lat, lon = loc_data.get('lat'), loc_data.get('lon')
-        if lat and lon:
-            synced += 1
+        if lat and lon: synced += 1
             
     if r and locations:
         r.set(f"ping_time:{email}", datetime.utcnow().isoformat(), ex=86400)
@@ -837,15 +803,11 @@ async def sync_offline_locations(email: str, locations: List[dict], db: Session 
     return {"status": "success", "synced": synced, "message": f"Synced {synced} location pings"}
 
 @app.post("/api/user/sync-offline-state")
-async def sync_offline_state(
-    email: str, locations: List[dict], attendanceState: dict = None, db: Session = Depends(get_db)
-):
+async def sync_offline_state(email: str, locations: List[dict], attendanceState: dict = None, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == email.lower().strip()).first()
-    if not user:
-        raise HTTPException(404, "User not found")
+    if not user: raise HTTPException(404, "User not found")
     
     from .database import Attendance
-    
     now_utc = datetime.utcnow()
     synced_locations = 0
     current_site = None
@@ -862,35 +824,49 @@ async def sync_offline_state(
     if attendanceState:
         checked_in = attendanceState.get('checkedIn', False)
         site_name = attendanceState.get('currentSite', None)
-        
         if checked_in:
-            open_att = db.query(Attendance).filter(
-                Attendance.user_id == user.id,
-                Attendance.checkout_time == None
-            ).first()
-            
+            open_att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
             if not open_att and current_site:
-                att = Attendance(
-                    user_id=user.id,
-                    checkin_time=now_utc - timedelta(minutes=5),
-                    date=now_utc,
-                    location_id=current_site.id
-                )
+                att = Attendance(user_id=user.id, checkin_time=now_utc - timedelta(minutes=5), date=now_utc, location_id=current_site.id)
                 db.add(att)
                 db.commit()
                 checked_in = True
                 site_name = current_site.name
                 
-    if r:
-        r.set(f"ping_time:{email}", now_utc.isoformat(), ex=86400)
-    
-    return {
-        "status": "success",
-        "synced": synced_locations,
-        "checked_in": checked_in,
-        "current_site": site_name,
-        "message": f"Synced {synced_locations} location pings and attendance state"
-    }
+    if r: r.set(f"ping_time:{email}", now_utc.isoformat(), ex=86400)
+    return {"status": "success", "synced": synced_locations, "checked_in": checked_in, "current_site": site_name, "message": f"Synced {synced_locations} location pings and attendance state"}
+
+@app.post("/api/field-officer/manual-sync")
+async def manual_sync(email: str = Form(...), location_id: int = Form(...), type: str = Form(...), lat: float = Form(...), lon: float = Form(...), db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == email.lower().strip()).first()
+    if not user or user.user_type != 'field_officer': raise HTTPException(403, "Unauthorized")
+    site = db.query(OfficeLocation).filter(OfficeLocation.id == location_id).first()
+    if not site: raise HTTPException(404, "Site not found")
+
+    distance = get_distance(lat, lon, site.lat, site.lon)
+    if distance > site.radius: raise HTTPException(400, f"Validation failed. You are outside the {site.radius}m geofence.")
+
+    now_utc = datetime.utcnow()
+    active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
+
+    if type == 'in':
+        if not active_stay or active_stay.location_id != site.id:
+            if active_stay: active_stay.exit_time = now_utc
+            db.add(SiteStay(officer_id=user.id, location_id=site.id, entry_time=now_utc))
+            db.commit()
+            return {"status": "success", "message": "Manual Check-In recorded."}
+        return {"status": "success", "message": "Already checked in."}
+
+    elif type == 'out':
+        if active_stay and active_stay.location_id == site.id:
+            active_stay.exit_time = now_utc
+            db.commit()
+            return {"status": "success", "message": "Manual Check-Out recorded."}
+        return {"status": "error", "detail": "No active check-in found at this location."}
+        
+    raise HTTPException(400, "Invalid sync type")
+
+# --- DOCUMENT PARSERS ---
 
 @app.post("/api/manager/extract-ekyc")
 async def extract_ekyc(file: UploadFile = File(...), share_code: str = Form(...)):
@@ -931,12 +907,9 @@ async def extract_qr(file: UploadFile = File(...)):
     if qr_text.isdigit() and len(qr_text) > 500:
         qr_int = int(qr_text)
         qr_bytes = qr_int.to_bytes((qr_int.bit_length() + 7) // 8, byteorder='big')
-        
         start_idx = qr_bytes.find(b'\x1f\x8b\x08')
-            
         compressed_data = qr_bytes[start_idx:]
         decompressed = zlib.decompress(compressed_data, zlib.MAX_WBITS | 32)
-        
         parts = decompressed.split(b'\xff')
         str_parts = [p.decode('utf-8', errors='ignore').strip() for p in parts]
 
@@ -979,7 +952,6 @@ async def extract_qr(file: UploadFile = File(...)):
                 "aadhar_reference": "XXXX-XXXX-VERIFIED"
             }
         }
-
     else:
         root = ET.fromstring(qr_text)
         attribs = root.attrib
@@ -1010,53 +982,8 @@ async def extract_qr(file: UploadFile = File(...)):
             }
         }
 
-@app.get("/api/cron/auto-checkout")
-def cron_auto_checkout(db: Session = Depends(get_db)):
-    from .database import Attendance
-    
-    now_utc = datetime.utcnow()
-    five_mins_ago = now_utc - timedelta(minutes=5)
-    
-    active_users = db.query(User).filter(User.is_present == True).all()
-    swept_users = []
-    
-    for user in active_users:
-        last_ping_str = r.get(f"ping_time:{user.email}")
-        
-        needs_checkout = False
-        
-        if not last_ping_str:
-            needs_checkout = True
-            
-        if last_ping_str:
-            last_ping_time = datetime.fromisoformat(last_ping_str)
-            if last_ping_time < five_mins_ago:
-                needs_checkout = True
-                
-        if needs_checkout:
-            att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
-            if att:
-                att.checkout_time = now_utc
-                att.duration_seconds = int((att.checkout_time - att.checkin_time).total_seconds())
-                
-            active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
-            if active_stay:
-                active_stay.exit_time = now_utc
-                
-            user.is_present = False
-            db.commit()
-            
-            if getattr(user, 'fcm_token', None):
-                send_push_notification(
-                    token=user.fcm_token,
-                    title="⏱️ Auto-Checked Out",
-                    body="You have been automatically checked out due to inactivity or leaving the site."
-                )
-            
-            r.delete(f"ping_time:{user.email}")
-            swept_users.append(user.email)
-            
-    return {"status": "success", "message": "Cron sweep complete", "auto_checked_out": swept_users}
+# --- TEST ROUTE ---
+
 @app.get("/api/test-fcm")
 def test_fcm(email: str, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == email.lower().strip()).first()

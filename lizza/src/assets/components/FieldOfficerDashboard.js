@@ -74,29 +74,40 @@ const FieldOfficerDashboard = () => {
   const fileInputRef = useRef(null);
   const userEmail = localStorage.getItem('userEmail');
 
-  useEffect(() => {
-    const registerPush = async () => {
-      let permStatus = await PushNotifications.checkPermissions();
-      if (permStatus.receive === 'prompt') {
-        permStatus = await PushNotifications.requestPermissions();
+  // --- 1. FCM PUSH NOTIFICATION REGISTRATION ---
+  const registerFCM = async (email) => {
+      try {
+          console.log("Checking push permissions...");
+          let status = await PushNotifications.checkPermissions();
+          if (status.receive !== 'granted') {
+              status = await PushNotifications.requestPermissions();
+          }
+
+          if (status.receive === 'granted') {
+              await PushNotifications.register();
+              PushNotifications.addListener('registration', async (token) => {
+                  console.log("FCM Token Generated: ", token.value);
+                  await fetch('/api/user/update-fcm-token', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ email: email, fcm_token: token.value })
+                  });
+              });
+          } else {
+              console.error("User denied notification permissions.");
+          }
+      } catch (e) {
+          console.error("FCM Registration Error:", e);
       }
-      if (permStatus.receive !== 'granted') return;
+  };
 
-      await PushNotifications.register();
-
-      PushNotifications.addListener('registration', async (token) => {
-        const fcmToken = token.value;
-        await fetch('/api/user/update-fcm-token', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: userEmail, fcm_token: fcmToken })
-        });
-      });
-    };
-
-    if (userEmail) registerPush();
+  useEffect(() => {
+      if (userEmail) {
+          registerFCM(userEmail);
+      }
   }, [userEmail]);
 
+  // --- 2. DATA FETCHING ---
   const fetchData = useCallback(async () => {
     const [locRes, histRes, profileRes] = await Promise.all([
       fetch(`/api/admin/locations`),
@@ -120,6 +131,7 @@ const FieldOfficerDashboard = () => {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  // --- 3. OFFLINE SYNC HANDLER ---
   useEffect(() => {
     const handleOnline = async () => {
       setIsOnline(true);
@@ -167,6 +179,7 @@ const FieldOfficerDashboard = () => {
     };
   }, [userEmail, checkedIn, fetchData]);
 
+  // --- 4. LOCATION PROCESSING ---
   const processNewLocation = useCallback((lat, lon) => {
     setMyLoc({ lat, lon });
 
@@ -247,6 +260,7 @@ const FieldOfficerDashboard = () => {
     }
   }, [processNewLocation]);
 
+  // --- 5. ACTIONS (CHECK-IN / CHECK-OUT / LOG VISIT) ---
   const handleCheckIn = async () => {
     if (!activeSite || !myLoc) return alert("Geofence error: You must be inside the site boundary.");
     setIsSubmitting(true);
@@ -274,7 +288,7 @@ const FieldOfficerDashboard = () => {
   };
 
   const handleCheckOut = async () => {
-    if (!activeSite || !myLoc) return alert("Geofence error: You must be inside the site boundary.");
+    if (!myLoc) return alert("Waiting for GPS signal...");
     setIsSubmitting(true);
     
     const formattedLocalTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -343,6 +357,7 @@ const FieldOfficerDashboard = () => {
       </div>
 
       <Row className="g-4 mb-4">
+        {/* MAP SECTION */}
         <Col lg={8}>
           <Card className="border-0 shadow-sm overflow-hidden" style={{ height: '600px' }}>
             <MapContainer center={[12.9716, 77.5946]} zoom={11} style={{ height: '100%' }}>
@@ -361,6 +376,7 @@ const FieldOfficerDashboard = () => {
           </Card>
         </Col>
 
+        {/* STATUS & ACTIONS SECTION */}
         <Col lg={4}>
           <div className="d-flex flex-column gap-3 h-100">
             <Card className="border-0 shadow-sm">
@@ -375,36 +391,35 @@ const FieldOfficerDashboard = () => {
                 )}
                 
                 {activeSite ? (
-                  <>
-                    <Alert variant="success" className="d-flex align-items-center fw-bold mb-3">
-                      <CheckCircle className="me-2"/> At Site: {activeSite.name}
-                    </Alert>
-                    
-                    <div className="d-flex gap-2 mb-3">
-                      {!checkedIn && (
-                        <Button variant="success" className="w-50 fw-bold d-flex align-items-center justify-content-center" disabled={!activeSite || isSubmitting} onClick={handleCheckIn}>
-                          <LogIn className="me-2" size={16}/> Check In
-                        </Button>
-                      )}
-                      {checkedIn && reportSubmitted && (
-                        <Button variant="danger" className="w-50 fw-bold d-flex align-items-center justify-content-center" disabled={!activeSite || isSubmitting} onClick={handleCheckOut}>
-                          <LogOut className="me-2" size={16}/> Check Out
-                        </Button>
-                      )}
-                    </div>
-                    <div className="small text-muted mb-2">
-                      {checkedIn ? `Checked in at: ${checkinTime || 'Pending...'}` : 'Not checked in yet.'}
-                      {checkoutTime ? ` | Last checkout at: ${checkoutTime}` : ''}
-                    </div>
-                  </>
+                  <Alert variant="success" className="d-flex align-items-center fw-bold mb-3">
+                    <CheckCircle className="me-2"/> At Site: {activeSite.name}
+                  </Alert>
                 ) : (
-                  <Alert variant="warning" className="mb-0">Searching for nearby sites... Drive to a geofence to log a visit.</Alert>
+                  <Alert variant="warning" className="mb-3">Searching for nearby sites... Drive to a geofence to check in.</Alert>
                 )}
+
+                <div className="d-flex gap-2 mb-3">
+                  {!checkedIn && activeSite && (
+                    <Button variant="success" className="w-100 fw-bold d-flex align-items-center justify-content-center" disabled={isSubmitting} onClick={handleCheckIn}>
+                      <LogIn className="me-2" size={16}/> Manual Check In
+                    </Button>
+                  )}
+                  
+                  {checkedIn && (
+                    <Button variant="danger" className="w-100 fw-bold d-flex align-items-center justify-content-center" disabled={isSubmitting} onClick={handleCheckOut}>
+                      <LogOut className="me-2" size={16}/> Manual Check Out
+                    </Button>
+                  )}
+                </div>
+
+                <div className="small text-muted mb-2">
+                  {checkedIn ? `Checked in at: ${checkinTime || 'Pending...'}` : 'Not checked in yet.'}
+                  {checkoutTime ? ` | Last checkout at: ${checkoutTime}` : ''}
+                </div>
 
                 {activeSite && checkedIn && !reportSubmitted && (
                   <Form onSubmit={handleVisitSubmit} className="mt-2 border-top pt-3">
                     <h6 className="fw-bold mb-3"><FileText className="me-2" size={18}/>Log Visit Report</h6>
-                    {alertMsg && <Alert variant={alertMsg.type} className="small">{alertMsg.text}</Alert>}
                     
                     <Form.Group className="mb-2">
                       <Form.Select size="sm" value={purpose} onChange={e => setPurpose(e.target.value)} required>
@@ -442,9 +457,10 @@ const FieldOfficerDashboard = () => {
                     </Button>
                   </Form>
                 )}
-                {activeSite && checkedIn && reportSubmitted && (
+                
+                {checkedIn && reportSubmitted && (
                   <Alert variant="info" className="mt-3 mb-0 small">
-                    Report uploaded. You may now check out.
+                    Report uploaded successfully. Don't forget to Check Out when leaving!
                   </Alert>
                 )}
               </Card.Body>
