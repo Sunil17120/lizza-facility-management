@@ -452,18 +452,50 @@ def update_employee_inline(data: dict, db: Session = Depends(get_db)):
         
     if not user: raise HTTPException(404, "User not found")
     
+    # 1. Standard Info
     if "full_name" in data: user.full_name = data.get("full_name")
     if "email" in data: user.email = data.get("email")
     if "phone_number" in data: user.phone_number = data.get("phone_number")
+    if "personal_email" in data: user.personal_email = data.get("personal_email")
+    if "dob" in data: user.dob = data.get("dob")
+    
+    # 2. Work & Role
     if "designation" in data: user.designation = data.get("designation")
     if "department" in data: user.department = data.get("department")
     if "user_type" in data: user.user_type = data.get("user_type")
-    if "personal_email" in data: user.personal_email = data.get("personal_email")
-    if "dob" in data: user.dob = data.get("dob")
     if "location_id" in data: user.location_id = data.get("location_id")
     if "manager_id" in data: user.manager_id = data.get("manager_id")
     if "shift_start" in data: user.shift_start = data.get("shift_start")
     if "shift_end" in data: user.shift_end = data.get("shift_end")
+
+    # 3. Addresses
+    if "perm_address" in data: user.perm_address = data.get("perm_address")
+    if "perm_state" in data: user.perm_state = data.get("perm_state")
+    if "perm_pin" in data: user.perm_pin = data.get("perm_pin")
+    if "perm_mobile" in data: user.perm_mobile = data.get("perm_mobile")
+    if "temp_address" in data: user.temp_address = data.get("temp_address")
+    if "temp_state" in data: user.temp_state = data.get("temp_state")
+    if "temp_pin" in data: user.temp_pin = data.get("temp_pin")
+    if "temp_mobile" in data: user.temp_mobile = data.get("temp_mobile")
+
+    # 4. Secure Bank & KYC (Only update and encrypt if Admin typed a NEW value)
+    if "bank_name" in data: user.bank_name = data.get("bank_name")
+    if "ifsc_code" in data: user.ifsc_code = data.get("ifsc_code")
+    
+    if data.get("account_number_raw") and data.get("account_number_raw").strip() != "":
+        user.account_number_enc = safe_encrypt(data.get("account_number_raw"))
+        
+    if data.get("aadhar_raw") and data.get("aadhar_raw").strip() != "":
+        user.aadhar_enc = safe_encrypt(data.get("aadhar_raw"))
+        
+    if data.get("pan_raw") and data.get("pan_raw").strip() != "":
+        user.pan_enc = safe_encrypt(data.get("pan_raw"))
+        
+    if data.get("voter_id_raw") and data.get("voter_id_raw").strip() != "":
+        user.voter_id_enc = safe_encrypt(data.get("voter_id_raw"))
+
+    if data.get("dl_raw") and data.get("dl_raw").strip() != "":
+        user.driving_licence_enc = safe_encrypt(data.get("dl_raw"))
 
     db.commit()
     return {"status": "updated"}
