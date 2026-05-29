@@ -401,13 +401,13 @@ const FieldOfficerDashboard = () => {
                 <div className="d-flex gap-2 mb-3">
                   {!checkedIn && activeSite && (
                     <Button variant="success" className="w-100 fw-bold d-flex align-items-center justify-content-center" disabled={isSubmitting} onClick={handleCheckIn}>
-                      <LogIn className="me-2" size={16}/> Manual Check In
+                      <LogIn className="me-2" size={16}/>  Check In
                     </Button>
                   )}
                   
                   {checkedIn && (
                     <Button variant="danger" className="w-100 fw-bold d-flex align-items-center justify-content-center" disabled={isSubmitting} onClick={handleCheckOut}>
-                      <LogOut className="me-2" size={16}/> Manual Check Out
+                      <LogOut className="me-2" size={16}/>  Check Out
                     </Button>
                   )}
                 </div>
