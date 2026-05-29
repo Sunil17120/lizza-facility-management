@@ -1057,3 +1057,13 @@ def cron_auto_checkout(db: Session = Depends(get_db)):
             swept_users.append(user.email)
             
     return {"status": "success", "message": "Cron sweep complete", "auto_checked_out": swept_users}
+@app.get("/api/test-fcm")
+def test_fcm(email: str, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == email.lower().strip()).first()
+    if user and user.fcm_token:
+        try:
+            send_push_notification(user.fcm_token, "Test Title", "Test Message Body")
+            return {"status": "sent", "token_exists": True}
+        except Exception as e:
+            return {"status": "failed", "error": str(e)}
+    return {"status": "failed", "reason": "User not found or no FCM token"}
