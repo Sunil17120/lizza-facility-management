@@ -1,17 +1,26 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Table, Form, Container, Card, Spinner, Button, Row, Col, Modal, Badge, Tabs, Tab } from 'react-bootstrap';
-import { UserCog, Building2, MapPin, Trash2, Users, UserCheck, UserX, Save, Search, Plus, Bell, Edit2, Calendar, Download, Image as ImageIcon, FileText, Briefcase, Filter, Eye, CheckCircle, Phone } from 'lucide-react';
-import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
+import { UserCog, Building2, MapPin, Trash2, Users, UserCheck, UserX, Save, Search, Plus, Bell, Edit2, Calendar, Download, Image as ImageIcon, FileText, Briefcase, Filter, Eye, CheckCircle, Phone, Crosshair } from 'lucide-react';
+import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from 'react-leaflet';
 import EmployeeOnboardForm from './EmployeeOnboardForm';
 import logoImg from './logo.png';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
-// Fix Leaflet marker icons for production builds
 import markerIcon from 'leaflet/dist/images/marker-icon.png';
 import markerShadow from 'leaflet/dist/images/marker-shadow.png';
 let DefaultIcon = L.icon({ iconUrl: markerIcon, shadowUrl: markerShadow, iconSize: [25, 41], iconAnchor: [12, 41] });
 L.Marker.prototype.options.icon = DefaultIcon;
+
+function MapUpdater({ center, zoom }) {
+  const map = useMap();
+  useEffect(() => {
+    if (center && center[0] && center[1]) {
+      map.flyTo(center, zoom, { animate: true, duration: 1.5 });
+    }
+  }, [center, zoom, map]);
+  return null;
+}
 
 const getStatusIcon = (isPresent) => {
   return L.divIcon({
@@ -31,13 +40,9 @@ const getStatusIcon = (isPresent) => {
 
 const safeParseJSON = (jsonStr) => {
     if (!jsonStr || jsonStr === 'null' || jsonStr === 'undefined') return [];
-    try {
-        const parsed = JSON.parse(jsonStr);
-        const arr = Array.isArray(parsed) ? parsed : (typeof parsed === 'object' && parsed !== null ? [parsed] : []);
-        return arr.filter(item => item !== null && item !== undefined);
-    } catch (e) {
-        return [];
-    }
+    const parsed = JSON.parse(jsonStr);
+    const arr = Array.isArray(parsed) ? parsed : (typeof parsed === 'object' && parsed !== null ? [parsed] : []);
+    return arr.filter(item => item !== null && item !== undefined);
 };
 
 const AdminDashboard = () => {
@@ -47,6 +52,11 @@ const AdminDashboard = () => {
   const [liveLocations, setLiveLocations] = useState([]);
   const [loading, setLoading] = useState(true);
   
+  const [mapCenter, setMapCenter] = useState([22.5726, 88.3639]); 
+  const [mapZoom, setMapZoom] = useState(5);
+  const [mapSiteSearch, setMapSiteSearch] = useState('');
+  const [mapEmpSearch, setMapEmpSearch] = useState('');
+
   const [showNotif, setShowNotif] = useState(false);
   const [selectedStaff, setSelectedStaff] = useState(null);
 
@@ -72,18 +82,12 @@ const AdminDashboard = () => {
   const [attendanceLoading, setAttendanceLoading] = useState(false);
   const [photoPreview, setPhotoPreview] = useState(null);
   
-  // Set to true by default to immediately sync reports
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
   
   const adminEmail = localStorage.getItem('userEmail');
 
   const pending = employees.filter(e => !e?.is_verified && e?.user_type !== 'admin');
   const verified = employees.filter(e => e?.is_verified);
-  const reportPersonnel = verified.filter(e => {
-    if (filterRole === 'all') return ['field_officer', 'employee'].includes(e?.user_type);
-    return e?.user_type === filterRole;
-  });
-  const fieldOfficers = verified.filter(e => e?.user_type === 'field_officer');
   
   const groupedReports = fieldReports.reduce((acc, visit) => {
     if (!visit?.date) return acc;
@@ -98,7 +102,6 @@ const AdminDashboard = () => {
   });
 
   const fetchBaseData = useCallback(async () => {
-    try {
       const [empRes, locRes, liveRes] = await Promise.all([
         fetch(`/api/admin/employees?admin_email=${adminEmail}`),
         fetch(`/api/admin/locations`),
@@ -110,15 +113,22 @@ const AdminDashboard = () => {
         if (liveRes.ok) setLiveLocations(await liveRes.json());
       }
       setLoading(false);
-    } catch (err) { setLoading(false); }
   }, [adminEmail]);
 
   useEffect(() => { fetchBaseData(); }, [fetchBaseData]);
 
+  useEffect(() => {
+    if (mainTab !== 'overview' || !autoRefreshEnabled) return;
+    const interval = setInterval(async () => {
+        const res = await fetch(`/api/admin/live-tracking?admin_email=${adminEmail}`);
+        if (res.ok) setLiveLocations(await res.json());
+    }, 15000); 
+    return () => clearInterval(interval);
+  }, [mainTab, autoRefreshEnabled, adminEmail]);
+
   const fetchReportsData = useCallback(async () => {
     if (mainTab !== 'reports') return;
     setReportsLoading(true);
-    try {
       let url = `/api/admin/reports/monthly-field-visits?month=${reportMonth}&year=${reportYear}`;
       
       if (reportOfficerSearch && employees.length > 0) {
@@ -138,7 +148,6 @@ const AdminDashboard = () => {
       
       const res = await fetch(url);
       if (res.ok) setFieldReports(await res.json());
-    } catch (err) { console.error("Report fetch error", err); }
     setReportsLoading(false);
   }, [reportMonth, reportYear, reportOfficerSearch, filterSite, filterRole, mainTab, employees]);
 
@@ -147,7 +156,6 @@ const AdminDashboard = () => {
   const fetchAttendanceData = useCallback(async () => {
     if (mainTab !== 'reports') return;
     setAttendanceLoading(true);
-    try {
       let url = `/api/admin/reports/monthly-attendance?month=${reportMonth}&year=${reportYear}`;
       if (reportOfficerSearch && employees.length > 0) {
         const matchedOfficer = employees.find(o => 
@@ -164,12 +172,11 @@ const AdminDashboard = () => {
       if (filterRole && filterRole !== 'all') url += `&user_type=${filterRole}`;
 
       const res = await fetch(url);
-      if (res.ok) setAttendanceRecords(await res.json());
-      else setAttendanceRecords([]);
-    } catch (err) {
-      console.error("Attendance fetch error", err);
-      setAttendanceRecords([]);
-    }
+      if (res.ok) {
+          setAttendanceRecords(await res.json());
+      } else {
+          setAttendanceRecords([]);
+      }
     setAttendanceLoading(false);
   }, [reportMonth, reportYear, reportOfficerSearch, filterSite, filterRole, mainTab, employees]);
 
@@ -178,7 +185,6 @@ const AdminDashboard = () => {
     fetchAttendanceData();
   }, [fetchAttendanceData]);
 
-  // AUTO-REFRESH REPORTS EVERY 10 SECONDS
   useEffect(() => {
     if (mainTab !== 'reports' || !autoRefreshEnabled) return;
     
@@ -227,7 +233,6 @@ const AdminDashboard = () => {
 
   const handleEditEmpSave = async (e) => {
     e.preventDefault();
-    try {
       const res = await fetch('/api/admin/update-employee-inline', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -242,9 +247,6 @@ const AdminDashboard = () => {
       } else {
         alert('Failed to update employee details');
       }
-    } catch (err) {
-      alert('Error updating employee: ' + err.message);
-    }
   };
 
   const filteredEmployeesForSearch = verified.filter(emp =>
@@ -274,6 +276,28 @@ const AdminDashboard = () => {
     if(window.confirm("Delete Branch?")) {
         await fetch(`/api/admin/delete-location/${id}`, { method: 'DELETE' });
         fetchBaseData();
+    }
+  };
+
+  const handleSiteZoom = (siteId) => {
+    setMapSiteSearch(siteId);
+    if(siteId) {
+      const site = locations.find(l => l.id == siteId);
+      if(site && site.lat && site.lon) {
+        setMapCenter([site.lat, site.lon]);
+        setMapZoom(17);
+      }
+    }
+  };
+
+  const handleEmpZoom = (empEmail) => {
+    setMapEmpSearch(empEmail);
+    if(empEmail) {
+      const emp = liveLocations.find(l => l.email === empEmail);
+      if(emp && emp.lat && emp.lon) {
+        setMapCenter([emp.lat, emp.lon]);
+        setMapZoom(18);
+      }
     }
   };
 
@@ -327,7 +351,6 @@ const AdminDashboard = () => {
   };
 
   const downloadAttendanceExcel = async () => {
-    try {
       let url = `/api/admin/reports/monthly-attendance?month=${reportMonth}&year=${reportYear}`;
       
       if (reportOfficerSearch && employees.length > 0) {
@@ -390,10 +413,6 @@ const AdminDashboard = () => {
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-    } catch (err) {
-      console.error(err);
-      alert('Unable to download attendance report.');
-    }
   };
 
   const handlePrintProfile = () => {
@@ -456,8 +475,9 @@ const AdminDashboard = () => {
             .doc-title { font-size: 14px; color: #555; margin-bottom: 10px; text-transform: uppercase; border-bottom: 1px dashed #eee; padding-bottom: 5px; }
             .doc-img { max-width: 100%; max-height: 450px; border: 1px solid #ccc; border-radius: 4px; padding: 5px; object-fit: contain; }
             .text-muted { color: #6c757d; font-style: italic; }
+            .terms-box { font-size: 12px; background-color: #f8f9fa; padding: 15px; border: 1px solid #dee2e6; margin-bottom: 20px; }
             @media print {
-                .doc-section, table { page-break-inside: avoid; }
+                .doc-section, table, .terms-box { page-break-inside: avoid; }
                 body { padding: 0; }
                 .no-print { display: none; }
             }
@@ -516,7 +536,7 @@ const AdminDashboard = () => {
           <h3 class="section-header">4. Financial Details</h3>
           <table>
             <tr><th>Bank Name</th><td>${selectedStaff?.bank_name || 'N/A'}</td><th>IFSC Code</th><td>${selectedStaff?.ifsc_code || 'N/A'}</td></tr>
-            <tr><th>Account Number</th><td colspan="3" style="font-weight:bold;">${selectedStaff?.account_number_enc ? "[ENCRYPTED IN DATABASE - SEE PASSBOOK PHOTO]" : "N/A"}</td></tr>
+            <tr><th>Account Number</th><td colspan="3" style="font-weight:bold; color: #198754;">${selectedStaff?.account_number_enc ? "[SECURELY ENCRYPTED IN DATABASE - SEE PASSBOOK PHOTO]" : "N/A"}</td></tr>
           </table>
 
           <h3 class="section-header">5. Education History</h3>
@@ -527,6 +547,24 @@ const AdminDashboard = () => {
 
           <h3 class="section-header">7. Family Details</h3>
           ${famHtml}
+
+          <h3 class="section-header">8. Terms & Conditions Agreement</h3>
+          <div class="terms-box">
+              <p><strong>The employee has electronically accepted and agreed to the following conditions during onboarding:</strong></p>
+              <ol style="color: #555; padding-left: 20px;">
+                  <li>If the applicant is selected, he/she should work with company for a period of minimum three months.</li>
+                  <li>Employee agree that will work faithfully without any issues, and will be present in time for duty and complete the duty hrs as per schedule assigned.</li>
+                  <li>Selected candidate should pay 2200/- as security deposit for providing uniform.</li>
+                  <li>Selected candidate should submit any one original document while joining, same will be returned back after 1month as due to verification purpose.</li>
+                  <li>Candidate who are selected and deployed in respective sites while in duty they are sole responsible for any theft or pilerage and they had to be borne by them.</li>
+                  <li>A minimum of one-month notice has to given before leaving the job or a month salary will be deducted.</li>
+                  <li>Employer may terminate Candidate (Employee) if any mis appropriation occurs in duty without prior notice.</li>
+                  <li>The Selected Employee agree that any property like sim card or mobile should returned of at the time of resignation/termination.</li>
+                  <li>Selected Employee should be flexible towards work like in shifts process as per Employer.</li>
+                  <li>Resigned Employee salary will release after cmpletetion of 30 days of notice period, if not then one month salary will be on hold and that will be clear with a fine of 4000/-(every month on 25th).</li>
+              </ol>
+              <p style="text-align: right; color: #198754; font-weight: bold; margin-top: 15px; font-size: 14px;">✅ Electronically Signed & Accepted by: ${selectedStaff?.full_name}</p>
+          </div>
 
           <div style="page-break-before: always;"></div>
           <h3 class="section-header" style="text-align:center; background-color:#333; color:white; padding:10px;">APPENDIX: OFFICIAL DOCUMENTS & EVIDENCE</h3>
@@ -582,11 +620,12 @@ const AdminDashboard = () => {
                   </div>
                   <Button type="submit" variant="outline-danger" size="sm" className="w-100 mt-2 fw-bold">ADD BRANCH</Button>
                 </Form>
-                <div style={{maxHeight: '180px', overflowY: 'auto'}}>
+                <div style={{maxHeight: '220px', overflowY: 'auto'}}>
                     {locations.map(loc => (
                         <div key={loc.id} className="d-flex justify-content-between align-items-center p-2 border-bottom small">
                             <span>{loc.name}</span>
                             <div>
+                                <Crosshair size={14} className="text-success me-2" title="Zoom to site" onClick={() => handleSiteZoom(loc.id)} style={{cursor: 'pointer'}}/>
                                 <Edit2 size={14} className="text-primary me-2" onClick={() => { setEditingLoc(loc); setEditLocModal(true); }} style={{cursor: 'pointer'}}/>
                                 <Trash2 size={14} className="text-danger" onClick={() => deleteLoc(loc.id)} style={{cursor: 'pointer'}}/>
                             </div>
@@ -597,33 +636,55 @@ const AdminDashboard = () => {
             </Col>
 
             <Col md={8}>
-              <Card className="border-0 shadow-sm overflow-hidden mb-4" style={{ height: '380px' }}>
-                <MapContainer center={[22.5726, 88.3639]} zoom={5} style={{ height: '100%' }}>
-                  <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-                  
-                  {liveLocations.map(loc => (loc?.lat && loc?.lon) && (
-                    <Marker 
-                        key={loc.email} 
-                        position={[loc.lat, loc.lon]}
-                        icon={getStatusIcon(loc.present)}
-                    >
-                      <Popup>
-                        <div className="text-center">
-                            <strong className="d-block">{loc.name || 'Unknown'}</strong>
-                            <Badge bg={loc.present ? "success" : "danger"} className="mt-1">
-                                {loc.present ? "In Geofence" : "Outside"}
-                            </Badge>
-                        </div>
-                      </Popup>
-                    </Marker>
-                  ))}
-                  
-                  {locations.map(office => (
-                    <Circle key={office.id} center={[office.lat, office.lon]} radius={office.radius || 200} pathOptions={{ color: 'red', fillColor: 'red', fillOpacity: 0.1 }}>
-                      <Popup>{office.name} Geofence ({office.radius || 200}m)</Popup>
-                    </Circle>
-                  ))}
-                </MapContainer>
+              <Card className="border-0 shadow-sm overflow-hidden mb-4" style={{ height: '430px' }}>
+                <Card.Header className="bg-white p-2 border-bottom d-flex gap-2 w-100">
+                  <div className="input-group input-group-sm w-50">
+                    <span className="input-group-text bg-light"><Building2 size={14}/></span>
+                    <Form.Select value={mapSiteSearch} onChange={(e) => handleSiteZoom(e.target.value)}>
+                      <option value="">Zoom to Branch/Site...</option>
+                      {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                    </Form.Select>
+                  </div>
+                  <div className="input-group input-group-sm w-50">
+                    <span className="input-group-text bg-light"><UserCheck size={14}/></span>
+                    <Form.Select value={mapEmpSearch} onChange={(e) => handleEmpZoom(e.target.value)}>
+                      <option value="">Locate Specific Employee...</option>
+                      {liveLocations.filter(loc => loc.lat && loc.lon && (loc.user_type !== 'field_officer' || loc.present || loc.last_ping)).map(l => (
+                        <option key={l.email} value={l.email}>{l.name} ({l.user_type === 'field_officer' ? 'Field Officer' : 'Staff'})</option>
+                      ))}
+                    </Form.Select>
+                  </div>
+                </Card.Header>
+                <div style={{ height: 'calc(100% - 40px)' }}>
+                  <MapContainer center={mapCenter} zoom={mapZoom} style={{ height: '100%', width: '100%' }}>
+                    <MapUpdater center={mapCenter} zoom={mapZoom} />
+                    <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+                    
+                    {liveLocations.filter(loc => loc.lat && loc.lon && (loc.user_type !== 'field_officer' || loc.present || loc.last_ping)).map(loc => (
+                      <Marker 
+                          key={loc.email} 
+                          position={[loc.lat, loc.lon]}
+                          icon={getStatusIcon(loc.present)}
+                      >
+                        <Popup>
+                          <div className="text-center">
+                              <strong className="d-block">{loc.name || 'Unknown'}</strong>
+                              <small className="text-muted d-block">{loc.user_type?.replace('_', ' ')}</small>
+                              <Badge bg={loc.present ? "success" : "danger"} className="mt-1">
+                                  {loc.present ? "In Geofence" : "Outside"}
+                              </Badge>
+                          </div>
+                        </Popup>
+                      </Marker>
+                    ))}
+                    
+                    {locations.map(office => (
+                      <Circle key={office.id} center={[office.lat, office.lon]} radius={office.radius || 200} pathOptions={{ color: 'red', fillColor: 'red', fillOpacity: 0.1 }}>
+                        <Popup>{office.name} Geofence ({office.radius || 200}m)</Popup>
+                      </Circle>
+                    ))}
+                  </MapContainer>
+                </div>
               </Card>
             </Col>
           </Row>

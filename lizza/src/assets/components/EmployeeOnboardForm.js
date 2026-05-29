@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { Form, Row, Col, Button, Image, Alert, Card, Tab, Tabs, Modal } from 'react-bootstrap';
-import { Camera, CheckCircle, UploadCloud, QrCode, Fingerprint, Lock, Plus, Trash } from 'lucide-react';
+import { Camera, CheckCircle, UploadCloud, QrCode, Fingerprint, Lock, Plus, Trash, FileText } from 'lucide-react';
 import ReactCrop from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 
@@ -64,8 +64,8 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
     panPhoto: null, voterPhoto: null, dlPhoto: null, passportPhoto: null, bankPassbook: null
   });
   
-  // --- ADDED: EXTRA DOCUMENTS STATE ---
   const [extraDocuments, setExtraDocuments] = useState([{ title: '', file: null }]);
+  const [termsAccepted, setTermsAccepted] = useState(false); // NEW: Terms acceptance state
   
   const [previews, setPreviews] = useState({ profile: null });
   const [error, setError] = useState(null);
@@ -81,6 +81,20 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
   const [crop, setCrop] = useState({ unit: '%', width: 50, aspect: 1 });
   const [completedCrop, setCompletedCrop] = useState(null);
   const imgRef = useRef(null);
+
+  const companyTerms = [
+    "If the applicant is selected, he/she should work with company for a period of minimum three months.",
+    "Employee agree that will work faithfully without any issues, and will be present in time for duty and complete the duty hrs as per schedule assigned.",
+    "Selected candidate should pay 2200/- as security deposit for providing uniform.",
+    "Selected candidate should submit any one original document while joining, same will be returned back after 1month as due to verification purpose.",
+    "Candidate who are selected and deployed in respective sites while in duty they are sole responsible for any theft or pilerage and they had to be borne by them.",
+    "A minimum of one-month notice has to given before leaving the job or a month salary will be deducted.",
+    "Employer may terminate Candidate (Employee) if any mis appropriation occurs in duty without prior notice.",
+    "The Selected Employee agree that any property like sim card or mobile should returned of at the time of resignation/termination.",
+    "Selected Employee should be flexible towards work like in shifts process as per Employer.",
+    "Resigned Employee salary will release after cmpletetion of 30 days of notice period, if not then one month salary will be on hold and that will be clear with a fine of 4000/-(every month on 25th).",
+    "The above all terms and conditions are Solley Accepted and signed."
+  ];
 
   const handleFileChange = async (e, type) => {
     const file = e.target.files[0];
@@ -161,6 +175,7 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
   const handleSubmit = async (e) => {
     e.preventDefault(); setError(null);
     
+    if (!termsAccepted) { setError("You must accept the terms and conditions to complete onboarding."); return; }
     if (!files.aadharPhoto) { setError("Aadhaar Photo (Front & Back) is strictly mandatory for our records."); return; }
 
     if (kycMode === 'without_aadhaar') {
@@ -171,7 +186,6 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
     const submitData = new FormData();
     submitData.append('kyc_mode', kycMode);
     
-    // --- MAPPING MANDATORY FIELDS TO FASTAPI ---
     submitData.append('first_name', formData.firstName);
     submitData.append('last_name', formData.lastName);
     submitData.append('phone_number', formData.phoneNumber); 
@@ -180,7 +194,6 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
     submitData.append('designation', formData.designation);
     submitData.append('userType', formData.userType);
     
-    // --- MAPPING OPTIONAL FIELDS TO FASTAPI ---
     if (formData.gender) submitData.append('gender', formData.gender);
     if (formData.maritalStatus) submitData.append('marital_status', formData.maritalStatus);
     if (formData.identityMark) submitData.append('identity_mark', formData.identityMark);
@@ -216,14 +229,12 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
     if (formData.shiftStart) submitData.append('shift_start', formData.shiftStart);
     if (formData.shiftEnd) submitData.append('shift_end', formData.shiftEnd);
 
-    // --- JSON ARRAYS ---
     submitData.append('languages_json', JSON.stringify(languages));
     submitData.append('education_json', JSON.stringify(education));
     submitData.append('experience_json', JSON.stringify(experience));
     submitData.append('family_json', JSON.stringify(family));
     submitData.append('references_json', JSON.stringify(references));
 
-    // --- FILES ---
     if (files.profile) submitData.append('profile_photo', files.profile);
     if (files.aadharPhoto) submitData.append('aadhar_photo', files.aadharPhoto); 
     if (files.bankPassbook) submitData.append('bank_passbook', files.bankPassbook);
@@ -236,11 +247,10 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
     if (files.dlPhoto) submitData.append('dl_photo', files.dlPhoto);
     if (files.passportPhoto) submitData.append('passport_photo', files.passportPhoto);
 
-    // --- ADDED: EXTRA DOCUMENTS SUBMISSION ---
     const extraDocsInfo = [];
     extraDocuments.forEach((doc, idx) => {
       if (doc.title.trim() && doc.file) {
-        submitData.append('extra_files', doc.file); // Array of files
+        submitData.append('extra_files', doc.file); 
         extraDocsInfo.push({ title: doc.title, originalName: doc.file.name });
       }
     });
@@ -273,7 +283,6 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
 
       {error && <Alert variant="danger">{error}</Alert>}
       
-      {/* --- CROPPER MODAL --- */}
       <Modal show={showCropModal} onHide={() => setShowCropModal(false)} centered backdrop="static">
         <Modal.Header closeButton><Modal.Title className="fw-bold">Crop QR Code</Modal.Title></Modal.Header>
         <Modal.Body className="text-center">
@@ -564,7 +573,6 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
                 </Col>
               </Row>
 
-              {/* --- ADDED: EXTRA DOCUMENTS SECTION --- */}
               <h6 className="mt-4 fw-bold border-bottom pb-2 text-primary">Additional Documents</h6>
               {extraDocuments.map((doc, idx) => (
                 <Row key={idx} className="mb-2 align-items-center">
@@ -594,7 +602,6 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
                               return; 
                           }
                           const newDocs = [...extraDocuments];
-                          // Use the existing compressImage function if it's an image
                           if (file.type.startsWith('image/')) {
                               newDocs[idx].file = await compressImage(file);
                           } else {
@@ -637,9 +644,33 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
              </Card>
           )}
 
+          {/* --- NEW: TERMS AND CONDITIONS SECTION --- */}
+          <Card className="mt-4 mb-4 border-primary">
+            <Card.Header className="bg-primary text-white fw-bold d-flex align-items-center">
+              <FileText className="me-2" /> Declarations & Terms of Service
+            </Card.Header>
+            <Card.Body>
+              <div className="bg-light p-3 rounded mb-3" style={{ maxHeight: '200px', overflowY: 'auto', fontSize: '0.85rem' }}>
+                <ol className="mb-0 ps-3">
+                  {companyTerms.map((term, index) => (
+                    <li key={index} className="mb-2 text-muted">{term}</li>
+                  ))}
+                </ol>
+              </div>
+              <Form.Check 
+                type="checkbox"
+                id="terms-checkbox"
+                className="fw-bold text-danger"
+                label="I have read, understood, and accept all the terms and conditions outlined above."
+                checked={termsAccepted}
+                onChange={(e) => setTermsAccepted(e.target.checked)}
+              />
+            </Card.Body>
+          </Card>
+
           <div className="d-flex justify-content-end gap-2 border-top pt-3 mt-2">
             <Button variant="light" onClick={onCancel}>Cancel</Button>
-            <Button type="submit" variant="primary" className="px-4 fw-bold shadow-sm" disabled={isProcessing}>
+            <Button type="submit" variant="primary" className="px-4 fw-bold shadow-sm" disabled={isProcessing || !termsAccepted}>
                {isProcessing ? 'Submitting...' : 'Submit to Admin for Verification'}
             </Button>
           </div>
