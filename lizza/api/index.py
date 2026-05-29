@@ -734,34 +734,87 @@ def user_checkin(data: CheckAction, db: Session = Depends(get_db)):
         db.add(SiteStay(officer_id=user.id, location_id=site.id, entry_time=now_utc))
     db.commit()
     
+    if r:
+        r.set(f"ping_time:{user.email}", now_utc.isoformat(), ex=86400)
+        r.delete(f"warning_sent:{user.email}")
+        
     return {"status": "success", "message": f"Checked In at {site.name}", "site_name": site.name}
 
-@app.post("/api/user/checkout")
-def user_checkout(data: CheckAction, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == data.email.lower().strip()).first()
-    if not user:
-        raise HTTPException(404, "User not found")
-    
+@app.get("/api/cron/auto-checkout")
+def cron_auto_checkout(db: Session = Depends(get_db)):
     from .database import Attendance
-    att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
-    if not att:
-        raise HTTPException(400, "No active check-in found.")
-
-    now_utc = datetime.utcnow()
-    att.checkout_time = now_utc
-    att.duration_seconds = int((att.checkout_time - att.checkin_time).total_seconds())
-    user.is_present = False
-
-    active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
-    if active_stay:
-        active_stay.exit_time = now_utc
-
-    db.commit()
     
-    if r:
-        r.delete(f"ping_time:{user.email}")
+    now_utc = datetime.utcnow()
+    active_users = db.query(User).filter(User.is_present == True).all()
+    
+    swept_users = []
+    warned_users = []
+    
+    for user in active_users:
+        last_ping_str = r.get(f"ping_time:{user.email}")
         
-    return {"status": "success", "message": "Checked Out"}
+        needs_checkout = False
+        needs_warning = False
+        
+        if not last_ping_str:
+            needs_checkout = True
+            
+        if last_ping_str:
+            last_ping_time = datetime.fromisoformat(last_ping_str)
+            inactivity_delta = now_utc - last_ping_time
+            inactivity_mins = inactivity_delta.total_seconds() / 60.0
+            
+            if user.user_type == 'field_officer':
+                if inactivity_mins >= 25:
+                    needs_checkout = True
+                elif inactivity_mins >= 20:
+                    needs_warning = True
+            else:
+                if inactivity_mins >= 5:
+                    needs_checkout = True
+                    
+        if needs_warning:
+            already_warned = r.get(f"warning_sent:{user.email}")
+            if not already_warned:
+                if getattr(user, 'fcm_token', None):
+                    send_push_notification(
+                        token=user.fcm_token,
+                        title="⚠️ Location Inactive",
+                        body="Are you still in? Open the app to sync your location or you will be automatically checked out in 5 minutes."
+                    )
+                r.set(f"warning_sent:{user.email}", "1", ex=600)
+                warned_users.append(user.email)
+                
+        if needs_checkout:
+            att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
+            if att:
+                att.checkout_time = now_utc
+                att.duration_seconds = int((att.checkout_time - att.checkin_time).total_seconds())
+                
+            active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
+            if active_stay:
+                active_stay.exit_time = now_utc
+                
+            user.is_present = False
+            db.commit()
+            
+            if getattr(user, 'fcm_token', None):
+                send_push_notification(
+                    token=user.fcm_token,
+                    title="⏱️ Auto-Checked Out",
+                    body="You have been automatically checked out due to prolonged inactivity or leaving the site."
+                )
+            
+            r.delete(f"ping_time:{user.email}")
+            r.delete(f"warning_sent:{user.email}")
+            swept_users.append(user.email)
+            
+    return {
+        "status": "success", 
+        "message": "Cron sweep complete", 
+        "warned_officers": warned_users, 
+        "auto_checked_out": swept_users
+    }
 
 @app.post("/api/user/sync-offline-locations")
 async def sync_offline_locations(email: str, locations: List[dict], db: Session = Depends(get_db)):
