@@ -20,7 +20,7 @@ import UserDashboard from './assets/components/UserDashboard';
 import ManagerDashboard from './assets/components/ManagerDashboard'; 
 import FieldOfficerDashboard from './assets/components/FieldOfficerDashboard'; 
 import Footer from './assets/components/Footer'; 
-import { UserProvider, useUser } from './assets/context/UserContext';
+import { UserProvider, useUser } from './assets/components/UserContext';
 
 // Scalable Protected Route component
 const RoleRoute = ({ children, allowedRoles }) => {
