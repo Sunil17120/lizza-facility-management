@@ -45,6 +45,26 @@ const safeParseJSON = (jsonStr) => {
     return arr.filter(item => item !== null && item !== undefined);
 };
 
+// Helper to parse references data which has format: {"local1": {...}, "local2": {...}, etc}
+const parseReferencesJSON = (jsonStr) => {
+    if (!jsonStr || jsonStr === 'null' || jsonStr === 'undefined') return [];
+    try {
+        const parsed = JSON.parse(jsonStr);
+        if (Array.isArray(parsed)) {
+            return parsed.filter(item => item && item.name && (item.contact || item.phone || item.mobile));
+        }
+        // Handle object format with keys like local1, local2, native1, native2
+        if (typeof parsed === 'object' && parsed !== null) {
+            return Object.values(parsed)
+                .filter(item => item && item.name && (item.contact || item.phone || item.mobile || item.relationship || item.relation));
+        }
+        return [];
+    } catch (e) {
+        console.error('Error parsing references:', e);
+        return [];
+    }
+};
+
 const AdminDashboard = () => {
   const [mainTab, setMainTab] = useState('overview');
   const [employees, setEmployees] = useState([]);
@@ -468,10 +488,10 @@ const AdminDashboard = () => {
           ? `<table><tr><th>Name</th><th>Relationship</th><th>DOB</th></tr>` + famData.map(f => `<tr><td>${f?.name||'-'}</td><td>${f?.relation||'-'}</td><td>${f?.dob||'-'}</td></tr>`).join('') + `</table>`
           : '<p class="text-muted">No family details provided.</p>';
 
-      // NEW: Parse References JSON
-      const refData = safeParseJSON(emp?.references_json);
-      let refHtml = refData.length > 0 && refData[0]?.name
-          ? `<table><tr><th>Name</th><th>Contact Number</th><th>Relation / Context</th></tr>` + refData.map(r => `<tr><td>${r?.name||'-'}</td><td>${r?.contact||'-'}</td><td>${r?.relation||'-'}</td></tr>`).join('') + `</table>`
+      // NEW: Parse References JSON with proper handling for object format
+      const refData = parseReferencesJSON(emp?.references_json);
+      let refHtml = refData.length > 0
+          ? `<table><tr><th>Name</th><th>Contact Number</th><th>Relation / Context</th></tr>` + refData.map(r => `<tr><td>${r?.name||'-'}</td><td>${r?.contact || r?.phone || r?.mobile || '-'}</td><td>${r?.relation || r?.relationship || '-'}</td></tr>`).join('') + `</table>`
           : '<p class="text-muted">No reference details provided.</p>';
 
       printWindow.document.write(`
@@ -1233,12 +1253,12 @@ const AdminDashboard = () => {
                         <Table size="sm" bordered hover className="mb-0 small">
                             <thead className="table-light"><tr><th>Name</th><th>Contact Number</th><th>Relation / Context</th></tr></thead>
                             <tbody>
-                                {safeParseJSON(selectedStaff?.references_json).length > 0 ? (
-                                    safeParseJSON(selectedStaff?.references_json).map((ref, i) => (
+                                {parseReferencesJSON(selectedStaff?.references_json).length > 0 ? (
+                                    parseReferencesJSON(selectedStaff?.references_json).map((ref, i) => (
                                         <tr key={i}>
-                                            <td>{ref?.name || ref?.referenceName || ref?.fullName || '-'}</td>
-                                            <td>{ref?.contact || ref?.phone || ref?.phoneNumber || ref?.mobile || '-'}</td>
-                                            <td>{ref?.relation || ref?.relationship || ref?.context || '-'}</td>
+                                            <td className="fw-bold">{ref?.name || '-'}</td>
+                                            <td>{ref?.contact || ref?.phone || ref?.mobile || '-'}</td>
+                                            <td>{ref?.relation || ref?.relationship || '-'}</td>
                                         </tr>
                                     ))
                                 ) : (
