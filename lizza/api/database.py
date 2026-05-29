@@ -4,11 +4,13 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
 from cryptography.fernet import Fernet 
+import base64
+import hashlib
 
 # --- SECURITY CONFIG ---
-ENCRYPTION_KEY = os.environ.get("DATA_KEY", Fernet.generate_key().decode())
-cipher = Fernet(ENCRYPTION_KEY)
-
+PEPPER = os.environ.get("SECRET_PEPPER", "lizza_super_secret_fallback_key")
+FERNET_KEY = base64.urlsafe_b64encode(hashlib.sha256(PEPPER.encode()).digest())
+cipher = Fernet(FERNET_KEY)
 DATABASE_URL = os.environ.get("DATABASE_URL")
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
