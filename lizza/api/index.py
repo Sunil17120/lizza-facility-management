@@ -26,12 +26,20 @@ from .database import SessionLocal, User, EmployeeLocation, OfficeLocation, Site
 
 # Firebase Initialization from Vercel Environment Variables
 firebase_env = os.environ.get("FIREBASE_CREDENTIALS")
+
 if firebase_env:
-    cred_dict = json.loads(firebase_env)
-    cred = credentials.Certificate(cred_dict)
+    try:
+        cred_dict = json.loads(firebase_env)
+        cred = credentials.Certificate(cred_dict)
+        print("Successfully loaded Firebase credentials from environment variable.")
+    except Exception as e:
+        print(f"CRITICAL ERROR: Failed to parse FIREBASE_CREDENTIALS: {e}")
+        # Optionally, you could trigger a fallback here if needed
+        raise e 
 else:
+    print("Warning: FIREBASE_CREDENTIALS not found, attempting to use local file.")
     cred = credentials.Certificate("firebase-adminsdk.json")
-    
+
 if not firebase_admin._apps:
     firebase_admin.initialize_app(cred)
 
