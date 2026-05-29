@@ -4,11 +4,6 @@ import 'bootstrap/dist/css/bootstrap.min.css';
 import './App.css';
 import AOS from 'aos';
 import 'aos/dist/aos.css';
-
-// Capacitor Native Bridge
-import { registerPlugin } from '@capacitor/core';
-const BackgroundGeolocation = registerPlugin('BackgroundGeolocation');
-
 // Component Imports
 import Header from './assets/components/Header';
 import Hero from './assets/components/Hero';
@@ -21,6 +16,12 @@ import ManagerDashboard from './assets/components/ManagerDashboard';
 import FieldOfficerDashboard from './assets/components/FieldOfficerDashboard'; 
 import Footer from './assets/components/Footer'; 
 import { UserProvider, useUser } from './assets/components/UserContext';
+
+// Capacitor Native Bridge
+import { registerPlugin } from '@capacitor/core';
+const BackgroundGeolocation = registerPlugin('BackgroundGeolocation');
+
+
 
 // Scalable Protected Route component
 const RoleRoute = ({ children, allowedRoles }) => {
