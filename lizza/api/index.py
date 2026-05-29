@@ -91,6 +91,14 @@ def get_site_at_location(lat, lon, db):
         if distance <= office.radius:
             return office
     return None
+def safe_decrypt(encrypted_data: str) -> str:
+    if not encrypted_data or encrypted_data == "null" or encrypted_data == "undefined":
+        return "N/A"
+    try:
+        from .database import cipher
+        return cipher.decrypt(encrypted_data.encode()).decode()
+    except Exception as e:
+        return "Decryption Error"
 
 class AuthRequest(BaseModel): 
     email: str
@@ -994,3 +1002,31 @@ def test_fcm(email: str, db: Session = Depends(get_db)):
         except Exception as e:
             return {"status": "failed", "error": str(e)}
     return {"status": "failed", "reason": "User not found or no FCM token"}
+
+@app.get("/api/admin/employee-dossier/{user_id}")
+def get_decrypted_dossier(user_id: int, admin_email: str, db: Session = Depends(get_db)):
+    # Security Check: Ensure the person requesting this is actually the Admin
+    admin = db.query(User).filter(User.email == admin_email.lower().strip(), User.user_type == 'admin').first()
+    if not admin:
+        raise HTTPException(403, "Unauthorized. Only admins can view decrypted dossiers.")
+        
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(404, "Employee not found.")
+        
+    # Convert database row to dictionary
+    user_data = {c.name: getattr(user, c.name) for c in user.__table__.columns}
+    
+    # DECRYPT SENSITIVE FIELDS (Overriding the encrypted hashes)
+    user_data['aadhar_raw'] = safe_decrypt(user.aadhar_enc)
+    user_data['pan_raw'] = safe_decrypt(user.pan_enc)
+    user_data['account_number_raw'] = safe_decrypt(user.account_number_enc)
+    user_data['voter_id_raw'] = safe_decrypt(user.voter_id_enc)
+    user_data['dl_raw'] = safe_decrypt(user.driving_licence_enc)
+    user_data['passport_raw'] = safe_decrypt(user.passport_no_enc)
+    
+    # We do not send the password hash or salt to the frontend, even for admins
+    user_data.pop('password', None)
+    user_data.pop('salt', None)
+    
+    return {"status": "success", "data": user_data}
