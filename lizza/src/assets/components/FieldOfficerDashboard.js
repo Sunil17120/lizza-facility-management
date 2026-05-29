@@ -75,6 +75,18 @@ const FieldOfficerDashboard = () => {
   const userEmail = localStorage.getItem('userEmail');
 
   // --- 1. FCM PUSH NOTIFICATION REGISTRATION ---
+  const sendTokenToBackend = async (email, token) => {
+      try {
+          await fetch('/api/user/update-fcm-token', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ email: email, fcm_token: token })
+          });
+          console.log("Token successfully sent to backend.");
+      } catch (err) {
+          console.error("Failed to sync token with backend:", err);
+      }
+  };
 const registerFCM = async (email) => {
     try {
         console.log("Checking push permissions...");
