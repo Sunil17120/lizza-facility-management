@@ -75,31 +75,34 @@ const FieldOfficerDashboard = () => {
   const userEmail = localStorage.getItem('userEmail');
 
   // --- 1. FCM PUSH NOTIFICATION REGISTRATION ---
-  const registerFCM = async (email) => {
-      try {
-          console.log("Checking push permissions...");
-          let status = await PushNotifications.checkPermissions();
-          if (status.receive !== 'granted') {
-              status = await PushNotifications.requestPermissions();
-          }
+const registerFCM = async (email) => {
+    try {
+        console.log("Checking push permissions...");
+        let status = await PushNotifications.checkPermissions();
+        
+        if (status.receive !== 'granted') {
+            status = await PushNotifications.requestPermissions();
+        }
 
-          if (status.receive === 'granted') {
-              await PushNotifications.register();
-              PushNotifications.addListener('registration', async (token) => {
-                  console.log("FCM Token Generated: ", token.value);
-                  await fetch('/api/user/update-fcm-token', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ email: email, fcm_token: token.value })
-                  });
-              });
-          } else {
-              console.error("User denied notification permissions.");
-          }
-      } catch (e) {
-          console.error("FCM Registration Error:", e);
-      }
-  };
+        if (status.receive === 'granted') {
+            // This is the call that triggers the Android native registration
+            await PushNotifications.register();
+            
+            // Listen for success
+            PushNotifications.addListener('registration', async (token) => {
+                console.log("SUCCESS: FCM Token received:", token.value);
+                await sendTokenToBackend(email, token.value);
+            });
+
+            // LISTEN FOR ERRORS - This is where you will see the REAL problem
+            PushNotifications.addListener('registrationError', (err) => {
+                console.error("FATAL: FCM Registration Error from Android:", err.error);
+            });
+        }
+    } catch (e) {
+        console.error("FCM Logic Error:", e);
+    }
+};
 
   useEffect(() => {
       if (userEmail) {
