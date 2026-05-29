@@ -1,5 +1,4 @@
 import React, { useEffect, useState, useCallback } from 'react';
-// FIX: Added 'Alert' to the import list below
 import { Table, Form, Container, Card, Spinner, Button, Row, Col, Modal, Badge, Tabs, Tab, Alert } from 'react-bootstrap';
 import { UserCog, Building2, MapPin, Trash2, Users, UserCheck, UserX, Save, Search, Plus, Bell, Edit2, Calendar, Download, Image as ImageIcon, FileText, Briefcase, Filter, Eye, CheckCircle, Phone, Crosshair, ShieldAlert } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from 'react-leaflet';
@@ -469,6 +468,12 @@ const AdminDashboard = () => {
           ? `<table><tr><th>Name</th><th>Relationship</th><th>DOB</th></tr>` + famData.map(f => `<tr><td>${f?.name||'-'}</td><td>${f?.relation||'-'}</td><td>${f?.dob||'-'}</td></tr>`).join('') + `</table>`
           : '<p class="text-muted">No family details provided.</p>';
 
+      // NEW: Parse References JSON
+      const refData = safeParseJSON(emp?.references_json);
+      let refHtml = refData.length > 0 && refData[0]?.name
+          ? `<table><tr><th>Name</th><th>Contact Number</th><th>Relation / Context</th></tr>` + refData.map(r => `<tr><td>${r?.name||'-'}</td><td>${r?.contact||'-'}</td><td>${r?.relation||'-'}</td></tr>`).join('') + `</table>`
+          : '<p class="text-muted">No reference details provided.</p>';
+
       printWindow.document.write(`
           <html><head><title>Dossier_${emp?.full_name || 'Employee'}</title>
             <style>
@@ -572,7 +577,10 @@ const AdminDashboard = () => {
             <h3 class="section-header">8. Family Details</h3>
             ${famHtml}
 
-            <h3 class="section-header">9. Terms & Conditions Agreement</h3>
+            <h3 class="section-header">9. Reference Details</h3>
+            ${refHtml}
+
+            <h3 class="section-header">10. Terms & Conditions Agreement</h3>
             <div class="terms-box">
                 <p><strong>The employee has electronically accepted and agreed to the following conditions during onboarding:</strong></p>
                 <ol style="color: #555; padding-left: 20px;">
@@ -1220,6 +1228,20 @@ const AdminDashboard = () => {
                                 ))}
                             </tbody>
                         </Table>
+
+                        <h6 className="fw-bold border-bottom pb-2 mb-3 mt-4 text-primary">Reference Details</h6>
+                        <Table size="sm" bordered hover className="mb-0 small">
+                            <thead className="table-light"><tr><th>Name</th><th>Contact Number</th><th>Relation / Context</th></tr></thead>
+                            <tbody>
+                                {safeParseJSON(selectedStaff?.references_json).map((refItem, i) => (
+                                    <tr key={i}>
+                                        <td>{refItem?.name || '-'}</td>
+                                        <td>{refItem?.contact || '-'}</td>
+                                        <td>{refItem?.relation || '-'}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </Table>
                     </Tab>
 
                     <Tab eventKey="documents" title="KYC Documents">
@@ -1330,6 +1352,7 @@ const AdminDashboard = () => {
           </Modal.Body>
       </Modal>
 
+      {/* MASSIVELY UPGRADED EDIT EMPLOYEE MODAL */}
       <Modal show={editEmpModal} onHide={() => setEditEmpModal(false)} size="lg" centered>
         <Modal.Header closeButton className="bg-info text-white">
           <Modal.Title className="h6 fw-bold"><Edit2 className="me-2" size={18}/>Master Employee Editor</Modal.Title>
@@ -1356,6 +1379,7 @@ const AdminDashboard = () => {
                   filteredEmployeesForSearch.map(emp => (
                     <Card key={emp.id} className="mb-2 border cursor-pointer" style={{cursor: 'pointer'}}>
                       <Card.Body className="p-3 d-flex justify-content-between align-items-center" onClick={() => { 
+                          // Initialize safe blank fields for secure edits
                           setEditingEmp({
                               ...emp, 
                               aadhar_raw: '', 
@@ -1388,6 +1412,7 @@ const AdminDashboard = () => {
 
               <Tabs activeKey={editEmpTab} onSelect={(k) => setEditEmpTab(k)} className="mb-4 bg-white shadow-sm rounded">
                 
+                {/* TAB 1: PROFILE & WORK */}
                 <Tab eventKey="profile" title="Profile & Role" className="p-3 bg-white border border-top-0">
                   <Row>
                     <Col md={6}>
@@ -1477,6 +1502,7 @@ const AdminDashboard = () => {
                   </Row>
                 </Tab>
 
+                {/* TAB 2: ADDRESSES */}
                 <Tab eventKey="addresses" title="Addresses & Contact" className="p-3 bg-white border border-top-0">
                   <h6 className="fw-bold mb-3 text-primary border-bottom pb-2">Permanent Address</h6>
                   <Row className="mb-3">
@@ -1535,6 +1561,7 @@ const AdminDashboard = () => {
                   </Row>
                 </Tab>
 
+                {/* TAB 3: BANKING & SECURE KYC */}
                 <Tab eventKey="secure" title={<><ShieldAlert size={14} className="me-1"/> Bank & KYC Updates</>} className="p-3 bg-white border border-top-0">
                   <Alert variant="warning" className="small mb-4">
                     <strong>Security Notice:</strong> The fields below accept plain text, but will be <strong>permanently encrypted</strong> into the database immediately upon saving. To preserve existing data, leave the fields blank.
