@@ -211,8 +211,10 @@ def login(data: AuthRequest, db: Session = Depends(get_db)):
 @app.post("/api/user/update-fcm-token")
 def update_fcm_token(data: FCMTokenUpdate, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == data.email.lower().strip()).first()
+
     if user:
         user.fcm_token = data.fcm_token
+        console.log("FCM TOKEN:", data.fcm_token);
         db.commit()
         return {"status": "success"}
     raise HTTPException(404, "User not found")
