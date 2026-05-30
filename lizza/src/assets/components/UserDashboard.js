@@ -1,13 +1,13 @@
-// Build trigger IST 2026-04-10
 import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom'; 
 import { Container, Row, Col, Card, Spinner, Button, Alert, Badge, Modal, Form } from 'react-bootstrap';
 import { ShieldCheck, MapPin, Map as MapIcon, AlertTriangle, KeyRound, EyeOff } from 'lucide-react';
 
-// CAPACITOR NATIVE IMPORTS
 import { registerPlugin } from '@capacitor/core';
 import { PushNotifications } from '@capacitor/push-notifications';
 const BackgroundGeolocation = registerPlugin('BackgroundGeolocation');
+
+const API_BASE_URL = 'https://lizza-facility-management.vercel.app';
 
 const UserDashboard = () => {
   const navigate = useNavigate(); 
@@ -24,7 +24,6 @@ const UserDashboard = () => {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const userEmail = localStorage.getItem('userEmail');
 
-  // --- 1. FIREBASE PUSH NOTIFICATION REGISTRATION ---
   useEffect(() => {
     const registerPush = async () => {
       let permStatus = await PushNotifications.checkPermissions();
@@ -37,22 +36,17 @@ const UserDashboard = () => {
 
       PushNotifications.addListener('registration', async (token) => {
         const fcmToken = token.value;
-        try {
-          await fetch('/api/user/update-fcm-token', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: userEmail, fcm_token: fcmToken })
-          });
-        } catch (err) {
-          console.error('Failed to save FCM token', err);
-        }
+        await fetch(`${API_BASE_URL}/api/user/update-fcm-token`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: userEmail, fcm_token: fcmToken })
+        });
       });
     };
 
     if (userEmail) registerPush();
   }, [userEmail]);
 
-  // --- 2. SAVE STATE BEFORE APP CLOSES ---
   useEffect(() => {
     const saveState = () => {
       if (userEmail) {
@@ -76,7 +70,6 @@ const UserDashboard = () => {
     };
   }, [userEmail, checkedIn, currentSite, status.code]);
 
-  // --- 3. RESTORE STATE ON MOUNT ---
   useEffect(() => {
     if (!userEmail) return;
     const attendanceState = JSON.parse(localStorage.getItem(`attendanceState_${userEmail}`) || 'null');
@@ -86,7 +79,6 @@ const UserDashboard = () => {
     }
   }, [userEmail]);
 
-  // --- 4. HANDLE ONLINE/OFFLINE SYNC ---
   useEffect(() => {
     const handleOnline = async () => {
       setIsOnline(true);
@@ -94,25 +86,21 @@ const UserDashboard = () => {
       const offlineAttendance = JSON.parse(localStorage.getItem('offlineAttendance') || 'null');
       
       if (offlineLocations.length > 0 || offlineAttendance) {
-        try {
-          const res = await fetch('/api/user/sync-offline-state', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              email: userEmail,
-              locations: offlineLocations,
-              attendanceState: offlineAttendance
-            })
-          });
-          if (res.ok) {
-            const data = await res.json();
-            setCheckedIn(data.checked_in || false);
-            setCurrentSite(data.current_site || null);
-            localStorage.removeItem('offlineLocations');
-            localStorage.removeItem('offlineAttendance');
-          }
-        } catch (err) {
-          console.error('Offline sync error', err);
+        const res = await fetch(`${API_BASE_URL}/api/user/sync-offline-state`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: userEmail,
+            locations: offlineLocations,
+            attendanceState: offlineAttendance
+          })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setCheckedIn(data.checked_in || false);
+          setCurrentSite(data.current_site || null);
+          localStorage.removeItem('offlineLocations');
+          localStorage.removeItem('offlineAttendance');
         }
       }
     };
@@ -128,12 +116,11 @@ const UserDashboard = () => {
     };
   }, [userEmail]);
 
-  // --- 5. INITIAL PROFILE FETCH ---
   useEffect(() => {
     if (localStorage.getItem('forcePasswordChange') === 'true') { setIsForceChange(true); setShowPassModal(true); }
 
     if (userEmail) {
-      fetch(`/api/user/profile?email=${userEmail}`)
+      fetch(`${API_BASE_URL}/api/user/profile?email=${userEmail}`)
         .then(res => res.json())
         .then(data => { 
           if (data.user_type === 'field_officer') return navigate('/field-operations', { replace: true });
@@ -142,12 +129,10 @@ const UserDashboard = () => {
           setDbUser(data); 
           setCheckedIn(Boolean(data.checked_in));
           setLoading(false); 
-        })
-        .catch(() => setLoading(false));
+        });
     }
   }, [userEmail, navigate]);
 
-  // --- 6. LOCATION SYNC LOGIC ---
   const syncLocation = useCallback(async (lat, lon) => {
     const locData = {
       lat,
@@ -173,60 +158,50 @@ const UserDashboard = () => {
       return;
     }
 
-    try {
-      const res = await fetch(`/api/user/update-location?email=${userEmail}&lat=${lat}&lon=${lon}`, { method: 'POST' });
-      const data = await res.json();
+    const res = await fetch(`${API_BASE_URL}/api/user/update-location?email=${userEmail}&lat=${lat}&lon=${lon}`, { method: 'POST' });
+    const data = await res.json();
 
-      if (data.is_inside) {
-        setCurrentSite(data.site_name || null);
-        setStatus({ type: 'success', msg: data.message || 'Inside Geofence', code: 'inside' });
-      } else {
-        setCurrentSite(null);
-        setStatus({ type: 'warning', msg: data.message || 'Outside Geofence', code: 'outside' });
-      }
-    } catch (err) {
+    if (data.is_inside) {
+      setCurrentSite(data.site_name || null);
+      setStatus({ type: 'success', msg: data.message || 'Inside Geofence', code: 'inside' });
+    } else {
       setCurrentSite(null);
-      setStatus({ type: 'danger', msg: 'Sync Error', code: 'error' });
+      setStatus({ type: 'warning', msg: data.message || 'Outside Geofence', code: 'outside' });
     }
   }, [userEmail, isOnline, checkedIn, currentSite]);
 
-  // --- 7. NATIVE BACKGROUND TRACKING ---
   useEffect(() => {
     if (!dbUser) return;
     const startBackgroundTracking = async () => {
-      try {
-        await BackgroundGeolocation.addWatcher(
-          { 
-            backgroundMessage: "Tracking duty status and geofence safety.", 
-            backgroundTitle: "Lizza Duty Tracking Active", 
-            requestPermissions: true, 
-            stale: false, 
-            interval: 300000, 
-            distanceFilter: 0,
-            allowBackgroundLocationUpdates: true, // Required for iOS/Android aggressive battery
-            autoSync: true,
-            stopOnTerminate: false, // Don't stop when swiped away
-            startOnBoot: true       // Restart if phone reboots
-          },
-          (location, error) => {
-            if (error) return console.error(error);
-            if (location) syncLocation(location.latitude, location.longitude);
-          }
-        );
-      } catch (err) { console.warn("Native tracking skipped (running on web)."); }
+      await BackgroundGeolocation.addWatcher(
+        { 
+          backgroundMessage: "Tracking duty status and geofence safety.", 
+          backgroundTitle: "Lizza Duty Tracking Active", 
+          requestPermissions: true, 
+          stale: false, 
+          interval: 300000, 
+          distanceFilter: 0,
+          allowBackgroundLocationUpdates: true, 
+          autoSync: true,
+          stopOnTerminate: false, 
+          startOnBoot: true       
+        },
+        (location, error) => {
+          if (location) syncLocation(location.latitude, location.longitude);
+        }
+      );
     };
     startBackgroundTracking();
-    return () => { try { BackgroundGeolocation.removeWatcher(); } catch (e) {} };
+    return () => { BackgroundGeolocation.removeWatcher(); };
   }, [dbUser, syncLocation]);
 
-  // --- 8. WEB GEOLOCATION FALLBACK ---
   useEffect(() => {
     if (!dbUser) return;
     const pingLocation = () => {
       if ("geolocation" in navigator) {
         navigator.geolocation.getCurrentPosition(
           (pos) => syncLocation(pos.coords.latitude, pos.coords.longitude),
-          (err) => console.error("Web GPS Error. Please allow location access:", err),
+          null,
           { enableHighAccuracy: true }
         );
       }
@@ -236,96 +211,97 @@ const UserDashboard = () => {
     return () => clearInterval(intervalId);
   }, [dbUser, syncLocation]);
 
-  // --- 9. ACTION HANDLERS ---
   const handleCheckIn = async () => {
     if (actionLoading || status.code !== 'inside') return;
     setActionLoading(true);
-    try {
-      if (!navigator.geolocation) throw new Error('Location access is required for geofence validation.');
-      const coords = await new Promise((resolve, reject) => {
-        navigator.geolocation.getCurrentPosition(
-          (pos) => resolve(pos.coords),
-          (err) => reject(err),
-          { enableHighAccuracy: true }
-        );
-      });
+    
+    if (!navigator.geolocation) throw new Error('Location access is required for geofence validation.');
+    const coords = await new Promise((resolve) => {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => resolve(pos.coords),
+        null,
+        { enableHighAccuracy: true }
+      );
+    });
 
-      const res = await fetch('/api/user/checkin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: userEmail, lat: coords.latitude, lon: coords.longitude }) });
-      const data = await res.json();
-      if (res.ok) {
-        setCheckedIn(true);
-        setCurrentSite(data.site_name || currentSite);
-        setStatus({ type: 'success', msg: data.message || `Checked In at ${data.site_name || 'current geofence'}`, code: 'inside' });
-        if (data.updated_user) setDbUser(data.updated_user);
-      } else {
-        setStatus({ type: 'danger', msg: data.detail || data.message || 'Check-in failed', code: 'error' });
-      }
-    } catch (err) {
-      const msg = err?.message || 'Network error during check-in';
-      setStatus({ type: 'danger', msg, code: 'error' });
-    } finally { setActionLoading(false); }
+    const res = await fetch(`${API_BASE_URL}/api/user/checkin`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: userEmail, lat: coords.latitude, lon: coords.longitude }) });
+    const data = await res.json();
+    if (res.ok) {
+      setCheckedIn(true);
+      setCurrentSite(data.site_name || currentSite);
+      setStatus({ type: 'success', msg: data.message || `Checked In at ${data.site_name || 'current geofence'}`, code: 'inside' });
+      if (data.updated_user) setDbUser(data.updated_user);
+    } else {
+      setStatus({ type: 'danger', msg: data.detail || data.message || 'Check-in failed', code: 'error' });
+    }
+    setActionLoading(false);
   };
 
   const handleCheckOut = async () => {
     if (actionLoading || !checkedIn) return;
     setActionLoading(true);
-    try {
-      if (!navigator.geolocation) throw new Error('Location access is required for geofence validation.');
-      const coords = await new Promise((resolve, reject) => {
-        navigator.geolocation.getCurrentPosition(
-          (pos) => resolve(pos.coords),
-          (err) => reject(err),
-          { enableHighAccuracy: true }
-        );
-      });
+    
+    if (!navigator.geolocation) throw new Error('Location access is required for geofence validation.');
+    const coords = await new Promise((resolve) => {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => resolve(pos.coords),
+        null,
+        { enableHighAccuracy: true }
+      );
+    });
 
-      const checkoutData = {
-        email: userEmail,
-        lat: coords.latitude,
-        lon: coords.longitude,
-        timestamp: new Date().toISOString()
-      };
+    const checkoutData = {
+      email: userEmail,
+      lat: coords.latitude,
+      lon: coords.longitude,
+      timestamp: new Date().toISOString()
+    };
 
-      if (!isOnline) {
-        const offlineAttendance = JSON.parse(localStorage.getItem('offlineAttendance') || 'null');
-        if (offlineAttendance) {
-          offlineAttendance.checkoutData = checkoutData;
-          localStorage.setItem('offlineAttendance', JSON.stringify(offlineAttendance));
-        }
-        setCheckedIn(false);
-        setCurrentSite(null);
-        setStatus({ type: 'warning', msg: 'Check-out stored offline, will sync when online', code: 'off_duty' });
-        setActionLoading(false);
-        return;
+    if (!isOnline) {
+      const offlineAttendance = JSON.parse(localStorage.getItem('offlineAttendance') || 'null');
+      if (offlineAttendance) {
+        offlineAttendance.checkoutData = checkoutData;
+        localStorage.setItem('offlineAttendance', JSON.stringify(offlineAttendance));
       }
+      setCheckedIn(false);
+      setCurrentSite(null);
+      setStatus({ type: 'warning', msg: 'Check-out stored offline, will sync when online', code: 'off_duty' });
+      setActionLoading(false);
+      return;
+    }
 
-      const res = await fetch('/api/user/checkout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(checkoutData) });
-      const data = await res.json();
-      if (res.ok) {
-        setCheckedIn(false);
-        setCurrentSite(null);
-        setStatus({ type: 'secondary', msg: data.message || 'Checked Out', code: 'off_duty' });
-        localStorage.removeItem('offlineAttendance');
-        if (data.updated_user) setDbUser(data.updated_user);
-      } else {
-        setStatus({ type: 'danger', msg: data.detail || data.message || 'Check-out failed', code: 'error' });
-      }
-    } catch (err) {
-      const msg = err?.message || 'Network error during check-out';
-      setStatus({ type: 'danger', msg, code: 'error' });
-    } finally { setActionLoading(false); }
+    const res = await fetch(`${API_BASE_URL}/api/user/checkout`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(checkoutData) });
+    const data = await res.json();
+    if (res.ok) {
+      setCheckedIn(false);
+      setCurrentSite(null);
+      setStatus({ type: 'secondary', msg: data.message || 'Checked Out', code: 'off_duty' });
+      localStorage.removeItem('offlineAttendance');
+      if (data.updated_user) setDbUser(data.updated_user);
+    } else {
+      setStatus({ type: 'danger', msg: data.detail || data.message || 'Check-out failed', code: 'error' });
+    }
+    setActionLoading(false);
   };
 
   const handlePasswordSubmit = async (e) => {
-    e.preventDefault(); setPassError('');
+    e.preventDefault(); 
+    setPassError('');
     if (passForm.newPass !== passForm.confirmPass) return setPassError("Passwords do not match.");
     if (passForm.newPass.length < 8) return setPassError("At least 8 characters long.");
-    try {
-        const res = await fetch('/api/change-password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: userEmail, old_password: passForm.oldPass, new_password: passForm.newPass }) });
-        const data = await res.json();
-        if (res.ok) { alert("Password updated!"); localStorage.removeItem('forcePasswordChange'); setIsForceChange(false); setShowPassModal(false); setPassForm({ oldPass: '', newPass: '', confirmPass: '' }); } 
-        else setPassError(data.detail || "Failed to update");
-    } catch (err) { setPassError("Network error."); }
+    
+    const res = await fetch(`${API_BASE_URL}/api/change-password`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: userEmail, old_password: passForm.oldPass, new_password: passForm.newPass }) });
+    const data = await res.json();
+    if (res.ok) { 
+      alert("Password updated!"); 
+      localStorage.removeItem('forcePasswordChange'); 
+      setIsForceChange(false); 
+      setShowPassModal(false); 
+      setPassForm({ oldPass: '', newPass: '', confirmPass: '' }); 
+    } 
+    else {
+      setPassError(data.detail || "Failed to update");
+    }
   };
 
   const isOnDuty = checkedIn && status.code === 'inside';
@@ -339,7 +315,6 @@ const UserDashboard = () => {
       <Row className="justify-content-center">
         <Col md={8} lg={6}>
           <Card className={`border-0 shadow-lg overflow-hidden ${status.code === 'warning' ? 'border-danger border-5' : ''}`}>
-            {/* Dynamic Header Background based on status */}
             <div className={`p-4 text-white text-center position-relative ${status.code === 'warning' ? 'bg-danger' : status.code === 'off_duty' ? 'bg-secondary' : 'bg-dark'}`}>
               <Button variant="outline-light" size="sm" className="position-absolute top-0 end-0 m-3 d-flex align-items-center" onClick={() => setShowPassModal(true)}><KeyRound size={14} className="me-1" /> Security</Button>
               <h2 className="fw-bold mb-1 mt-3">
@@ -386,7 +361,6 @@ const UserDashboard = () => {
         </Col>
       </Row>
 
-      {/* Password Modal */}
       <Modal show={showPassModal} onHide={() => !isForceChange && setShowPassModal(false)} backdrop={isForceChange ? 'static' : true} keyboard={!isForceChange} centered>
         <Modal.Header closeButton={!isForceChange} className="border-0 bg-light"><Modal.Title className="fw-bold h5 d-flex align-items-center"><KeyRound className="me-2 text-danger" size={20}/> {isForceChange ? 'Mandatory Security Update' : 'Change Password'}</Modal.Title></Modal.Header>
         <Modal.Body className="p-4">
