@@ -8,6 +8,9 @@ import { registerPlugin } from '@capacitor/core';
 import { PushNotifications } from '@capacitor/push-notifications';
 const BackgroundGeolocation = registerPlugin('BackgroundGeolocation');
 
+// CRITICAL FIX: Base URL for all Capacitor mobile requests
+const API_BASE_URL = 'https://lizza-facility-management.vercel.app';
+
 const compressImage = async (file, maxWidth = 1000, quality = 0.7) => {
   return new Promise((resolve) => {
     const reader = new FileReader();
@@ -77,7 +80,7 @@ const FieldOfficerDashboard = () => {
   // --- 1. FCM PUSH NOTIFICATION REGISTRATION ---
   const sendTokenToBackend = async (email, token) => {
       try {
-          await fetch('/api/user/update-fcm-token', {
+          await fetch(`${API_BASE_URL}/api/user/update-fcm-token`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ email: email, fcm_token: token })
@@ -87,37 +90,35 @@ const FieldOfficerDashboard = () => {
           console.error("Failed to sync token with backend:", err);
       }
   };
-const registerFCM = async (email) => {
-    try {
-        console.log("Checking push permissions...");
-        let status = await PushNotifications.checkPermissions();
-        
-        if (status.receive !== 'granted') {
-            status = await PushNotifications.requestPermissions();
-        }
 
-        if (status.receive === 'granted') {
-            // This is the call that triggers the Android native registration
-            await PushNotifications.register();
-            
-            // Listen for success
-            PushNotifications.addListener('registration', async (token) => {
-                console.log("SUCCESS: FCM Token received:", token.value);
-                await sendTokenToBackend(email, token.value);
-            });
+  const registerFCM = async (email) => {
+      try {
+          console.log("Checking push permissions...");
+          let status = await PushNotifications.checkPermissions();
+          
+          if (status.receive !== 'granted') {
+              status = await PushNotifications.requestPermissions();
+          }
 
-            // LISTEN FOR ERRORS - This is where you will see the REAL problem
-            PushNotifications.addListener('registrationError', (err) => {
-                console.error("FATAL: FCM Registration Error from Android:", err.error);
-            });
-        }
-    } catch (e) {
-        console.error("FCM Logic Error:", e);
-    }
-};
+          if (status.receive === 'granted') {
+              await PushNotifications.register();
+              
+              PushNotifications.addListener('registration', async (token) => {
+                  console.log("SUCCESS: FCM Token received:", token.value);
+                  await sendTokenToBackend(email, token.value);
+              });
+
+              PushNotifications.addListener('registrationError', (err) => {
+                  console.error("FATAL: FCM Registration Error from Android:", err.error);
+              });
+          }
+      } catch (e) {
+          console.error("FCM Logic Error:", e);
+      }
+  };
 
   useEffect(() => {
-      if (userEmail) {
+      if (userEmail && userEmail !== 'null' && userEmail !== '') {
           registerFCM(userEmail);
       }
   }, [userEmail]);
@@ -125,9 +126,9 @@ const registerFCM = async (email) => {
   // --- 2. DATA FETCHING ---
   const fetchData = useCallback(async () => {
     const [locRes, histRes, profileRes] = await Promise.all([
-      fetch(`/api/admin/locations`),
-      fetch(`/api/field-officer/my-visits?email=${userEmail}`),
-      fetch(`/api/user/profile?email=${userEmail}`)
+      fetch(`${API_BASE_URL}/api/admin/locations`),
+      fetch(`${API_BASE_URL}/api/field-officer/my-visits?email=${userEmail}`),
+      fetch(`${API_BASE_URL}/api/user/profile?email=${userEmail}`)
     ]);
     
     if (locRes.ok) {
@@ -152,7 +153,7 @@ const registerFCM = async (email) => {
       setIsOnline(true);
       const offlineLocations = JSON.parse(localStorage.getItem('offlineLocations') || '[]');
       if (offlineLocations.length > 0) {
-        const res = await fetch('/api/user/sync-offline-locations', {
+        const res = await fetch(`${API_BASE_URL}/api/user/sync-offline-locations`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ 
@@ -168,7 +169,7 @@ const registerFCM = async (email) => {
       const pendingAutoCheckout = localStorage.getItem(`pendingAutoCheckout:${userEmail}`);
       if (pendingAutoCheckout && checkedIn) {
         const checkoutData = JSON.parse(pendingAutoCheckout);
-        const res = await fetch('/api/user/checkout', {
+        const res = await fetch(`${API_BASE_URL}/api/user/checkout`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(checkoutData)
@@ -222,7 +223,7 @@ const registerFCM = async (email) => {
         offlineLocations.push(locData);
         localStorage.setItem('offlineLocations', JSON.stringify(offlineLocations));
       } else {
-        fetch(`/api/user/update-location?email=${userEmail}&lat=${lat}&lon=${lon}`, { method: 'POST' });
+        fetch(`${API_BASE_URL}/api/user/update-location?email=${userEmail}&lat=${lat}&lon=${lon}`, { method: 'POST' });
       }
     }
   }, [locations, userEmail, isOnline]);
@@ -282,7 +283,7 @@ const registerFCM = async (email) => {
     
     const formattedLocalTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-    const res = await fetch('/api/user/checkin', { 
+    const res = await fetch(`${API_BASE_URL}/api/user/checkin`, { 
       method: 'POST', 
       headers: { 'Content-Type': 'application/json' }, 
       body: JSON.stringify({ email: userEmail, lat: myLoc.lat, lon: myLoc.lon }) 
@@ -308,7 +309,7 @@ const registerFCM = async (email) => {
     
     const formattedLocalTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-    const res = await fetch('/api/user/checkout', { 
+    const res = await fetch(`${API_BASE_URL}/api/user/checkout`, { 
       method: 'POST', 
       headers: { 'Content-Type': 'application/json' }, 
       body: JSON.stringify({ email: userEmail, lat: myLoc.lat, lon: myLoc.lon }) 
@@ -348,7 +349,7 @@ const registerFCM = async (email) => {
     formData.append('timestamp', exactTimestamp);
     formData.append('photo', compressedPhoto);
 
-    const res = await fetch('/api/field-officer/log-visit', { method: 'POST', body: formData });
+    const res = await fetch(`${API_BASE_URL}/api/field-officer/log-visit`, { method: 'POST', body: formData });
     const data = await res.json();
     
     if (res.ok) {
@@ -510,7 +511,7 @@ const registerFCM = async (email) => {
                               size="sm" 
                               className="rounded-pill px-3 fw-bold"
                               style={{fontSize: '0.8rem'}}
-                              onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=$${site.lat},${site.lon}`, '_blank')}
+                              onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=${site.lat},${site.lon}`, '_blank')}
                             >
                               Directions
                             </Button>
