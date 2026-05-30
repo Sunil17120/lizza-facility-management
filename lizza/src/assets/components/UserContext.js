@@ -9,7 +9,8 @@ export const UserProvider = ({ children }) => {
   useEffect(() => {
     const email = localStorage.getItem('userEmail');
     if (email) {
-      fetch(`/api/user/profile?email=${email}`)
+      // Must use absolute URL for Capacitor mobile requests
+      fetch(`https://lizza-facility-management.vercel.app/api/user/profile?email=${email}`)
         .then(res => res.json())
         .then(data => {
             setUser(data);
