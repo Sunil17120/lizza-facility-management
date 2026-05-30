@@ -4,6 +4,12 @@ import 'bootstrap/dist/css/bootstrap.min.css';
 import './App.css';
 import AOS from 'aos';
 import 'aos/dist/aos.css';
+
+// Capgo Updater & Capacitor
+import { CapacitorUpdater } from '@capgo/capacitor-updater';
+import { App as CapacitorApp } from '@capacitor/app';
+import { registerPlugin } from '@capacitor/core';
+
 // Component Imports
 import Header from './assets/components/Header';
 import Hero from './assets/components/Hero';
@@ -17,13 +23,8 @@ import FieldOfficerDashboard from './assets/components/FieldOfficerDashboard';
 import Footer from './assets/components/Footer'; 
 import { UserProvider, useUser } from './assets/components/UserContext';
 
-// Capacitor Native Bridge
-import { registerPlugin } from '@capacitor/core';
 const BackgroundGeolocation = registerPlugin('BackgroundGeolocation');
 
-
-
-// Scalable Protected Route component
 const RoleRoute = ({ children, allowedRoles }) => {
   const { user, loading } = useUser();
 
@@ -50,32 +51,40 @@ function AppContent() {
   useEffect(() => {
     AOS.init({ duration: 1200 });
 
+    // 1. Notify that the app is ready to clear the splash/boot verification
+    CapacitorUpdater.notifyAppReady();
+
+    // 2. Clear background update check executed when app returns to focus
+    CapacitorApp.addListener('appStateChange', async (state) => {
+      if (state.isActive) {
+        const latest = await CapacitorUpdater.download();
+        if (latest) {
+          await CapacitorUpdater.set({ id: latest.id });
+        }
+      }
+    });
+
+    // 3. Native Background Geolocation Tracking
     if (user && user.user_type === 'field_officer') {
       BackgroundGeolocation.addWatcher(
         {
-          backgroundMessage: "Lizza Facility Management is tracking your location to log site visits.",
-          backgroundTitle: "Active Field Tracking",
+          backgroundMessage: "Tracking duty status and geofence safety.",
+          backgroundTitle: "Lizza Duty Tracking Active",
           requestPermissions: true,
           stale: false,
           distanceFilter: 20 
         },
-        (location, error) => {
+        (location) => {
           const email = localStorage.getItem('userEmail');
           if (location && email) {
             fetch('https://lizza-facility-management.vercel.app/api/user/update-location', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                email: email,
-                lat: location.latitude,
-                lon: location.longitude
-              })
+              body: JSON.stringify({ email, lat: location.latitude, lon: location.longitude })
             });
           }
         }
-      ).then((watcher_id) => {
-        localStorage.setItem('geo_watcher_id', watcher_id);
-      });
+      ).then((watcher_id) => localStorage.setItem('geo_watcher_id', watcher_id));
     }
   }, [user]);
 
@@ -84,38 +93,12 @@ function AppContent() {
       <Header />
       <div className="flex-grow-1">
         <Routes>
-          <Route path="/" element={
-            <>
-              <Hero />
-              <About />
-              <Services />
-            </>
-          } />
+          <Route path="/" element={<><Hero /><About /><Services /></>} />
           <Route path="/auth" element={<Auth />} />
-          
-          <Route path="/dashboard" element={
-            <PrivateRoute>
-              <UserDashboard />
-            </PrivateRoute>
-          } />
-          
-          <Route path="/manager" element={
-            <RoleRoute allowedRoles={['manager']}>
-              <ManagerDashboard />
-            </RoleRoute>
-          } />
-
-          <Route path="/field-operations" element={
-            <RoleRoute allowedRoles={['field_officer']}>
-              <FieldOfficerDashboard />
-            </RoleRoute>
-          } />
-          
-          <Route path="/admin" element={
-            <RoleRoute allowedRoles={['admin']}>
-              <AdminDashboard />
-            </RoleRoute>
-          } />
+          <Route path="/dashboard" element={<PrivateRoute><UserDashboard /></PrivateRoute>} />
+          <Route path="/manager" element={<RoleRoute allowedRoles={['manager']}><ManagerDashboard /></RoleRoute>} />
+          <Route path="/field-operations" element={<RoleRoute allowedRoles={['field_officer']}><FieldOfficerDashboard /></RoleRoute>} />
+          <Route path="/admin" element={<RoleRoute allowedRoles={['admin']}><AdminDashboard /></RoleRoute>} />
         </Routes>
       </div>
       <Footer />

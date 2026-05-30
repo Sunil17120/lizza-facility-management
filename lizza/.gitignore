@@ -22,3 +22,12 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 firebase-adminsdk.json
+# Ignore the generated build artifacts (don't push these)
+android/app/build/
+android/build/
+node_modules/
+build/
+
+# Keep the source files (DO push these)
+android/app/src/
+android/app/build.gradle
