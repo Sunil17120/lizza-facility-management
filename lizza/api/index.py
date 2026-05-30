@@ -13,7 +13,7 @@ import cv2
 import numpy as np
 import zlib
 import zxingcpp
-
+from fastapi.middleware.cors import CORSMiddleware
 # Upstash Serverless Redis SDK
 from upstash_redis import Redis as UpstashRedis
 
@@ -44,7 +44,13 @@ if not firebase_admin._apps:
     firebase_admin.initialize_app(cred)
 
 app = FastAPI()
-
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins, including mobile 'localhost'
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows POST, GET, OPTIONS, etc.
+    allow_headers=["*"],
+)
 class SafeRedisClient:
     def __init__(self, client):
         self._client = client

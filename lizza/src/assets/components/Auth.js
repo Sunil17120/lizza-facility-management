@@ -3,6 +3,8 @@ import { Container, Row, Col, Form, Button, Card } from 'react-bootstrap';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Mail, Lock, Eye, EyeOff } from 'lucide-react';
 
+const API_BASE_URL = 'https://lizza-facility-management.vercel.app';
+
 const Auth = () => {
   const isLogin = true; 
   const [showPassword, setShowPassword] = useState(false);
@@ -23,52 +25,49 @@ const Auth = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     
-    try {
-      const response = await fetch('/api/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: formData.email,
-          password: formData.password
-        }),
-      });
-      
-      const contentType = response.headers.get("content-type");
-      if (contentType && contentType.includes("application/json")) {
-        const data = await response.json();
-        if (response.ok) {
-          localStorage.clear();
-          
-          // Save core user data
-          localStorage.setItem('userId', data.user_id); 
-          localStorage.setItem('userName', data.user);
-          localStorage.setItem('userEmail', formData.email); 
-          
-          // --- FORCE PASSWORD CHANGE LOGIC ---
-          // Save the flag so UserDashboard knows to trigger the modal
-          if (data.force_password_change) {
-            localStorage.setItem('forcePasswordChange', 'true');
-          } else {
-            localStorage.removeItem('forcePasswordChange');
-          }
-          
-          // Navigate based on role
-          if (data.user_type === 'admin') {
-             navigate('/admin');
-          } else if (data.user_type === 'manager') {
-             navigate('/manager');
-          } else {
-             navigate('/dashboard');
-          }
-
+    const response = await fetch(`${API_BASE_URL}/api/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: formData.email,
+        password: formData.password
+      }),
+    });
+    
+    const contentType = response.headers.get("content-type");
+    if (contentType && contentType.includes("application/json")) {
+      const data = await response.json();
+      if (response.ok) {
+        localStorage.clear();
+        
+        // Save core user data
+        localStorage.setItem('userId', data.user_id); 
+        localStorage.setItem('userName', data.user);
+        localStorage.setItem('userEmail', formData.email); 
+        
+        // --- FORCE PASSWORD CHANGE LOGIC ---
+        if (data.force_password_change) {
+          localStorage.setItem('forcePasswordChange', 'true');
         } else {
-          alert(data.detail || "Authentication failed");
+          localStorage.removeItem('forcePasswordChange');
         }
+        
+        // --- UPDATED ROUTING LOGIC ---
+        if (data.user_type === 'admin') {
+           navigate('/admin');
+        } else if (data.user_type === 'manager') {
+           navigate('/manager');
+        } else if (data.user_type === 'field_officer') {
+           navigate('/field-operations'); // Instantly routes Field Officers correctly
+        } else {
+           navigate('/dashboard');
+        }
+
       } else {
-        alert("Server Error: Please check backend logs.");
+        alert(data.detail || "Authentication failed");
       }
-    } catch (error) {
-      alert("Connection error. Please try again later.");
+    } else {
+      alert("Server Error: Please check backend logs.");
     }
   };
 
