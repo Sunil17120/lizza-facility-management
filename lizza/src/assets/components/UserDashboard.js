@@ -1,16 +1,21 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom'; 
 import { Container, Row, Col, Card, Spinner, Button, Alert, Badge, Modal, Form } from 'react-bootstrap';
-import { ShieldCheck, MapPin, Map as MapIcon, AlertTriangle, KeyRound, EyeOff } from 'lucide-react';
+import { ShieldCheck, MapPin, MapIcon, AlertTriangle, KeyRound, EyeOff } from 'lucide-react';
 
 import { registerPlugin } from '@capacitor/core';
 import { PushNotifications } from '@capacitor/push-notifications';
-const BackgroundGeolocation = registerPlugin('BackgroundGeolocation');
+import { useUser } from './UserContext'; // <-- CONTEXT IMPORTED
 
+const BackgroundGeolocation = registerPlugin('BackgroundGeolocation');
 const API_BASE_URL = 'https://lizza-facility-management.vercel.app';
 
 const UserDashboard = () => {
   const navigate = useNavigate(); 
+  
+  // Grab the user data that UserContext already fetched!
+  const { user: contextUser, loading: contextLoading } = useUser();
+
   const [dbUser, setDbUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState({ type: 'info', msg: 'Initializing...', code: 'off_duty' });
@@ -30,18 +35,17 @@ const UserDashboard = () => {
       if (permStatus.receive === 'prompt') {
         permStatus = await PushNotifications.requestPermissions();
       }
-      if (permStatus.receive !== 'granted') return;
-
-      await PushNotifications.register();
-
-      PushNotifications.addListener('registration', async (token) => {
-        const fcmToken = token.value;
-        await fetch(`${API_BASE_URL}/api/user/update-fcm-token`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: userEmail, fcm_token: fcmToken })
+      if (permStatus.receive === 'granted') {
+        await PushNotifications.register();
+        PushNotifications.addListener('registration', async (token) => {
+          const fcmToken = token.value;
+          fetch(`${API_BASE_URL}/api/user/update-fcm-token`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: userEmail, fcm_token: fcmToken })
+          });
         });
-      });
+      }
     };
 
     if (userEmail) registerPush();
@@ -116,22 +120,28 @@ const UserDashboard = () => {
     };
   }, [userEmail]);
 
+  // --- THE NEW SYNCHRONIZED ROUTING LOGIC ---
   useEffect(() => {
-    if (localStorage.getItem('forcePasswordChange') === 'true') { setIsForceChange(true); setShowPassModal(true); }
-
-    if (userEmail) {
-      fetch(`${API_BASE_URL}/api/user/profile?email=${userEmail}`)
-        .then(res => res.json())
-        .then(data => { 
-          if (data.user_type === 'field_officer') return navigate('/field-operations', { replace: true });
-          if (data.user_type === 'manager') return navigate('/manager', { replace: true });
-          if (data.user_type === 'admin') return navigate('/admin', { replace: true });
-          setDbUser(data); 
-          setCheckedIn(Boolean(data.checked_in));
-          setLoading(false); 
-        });
+    if (localStorage.getItem('forcePasswordChange') === 'true') { 
+        setIsForceChange(true); 
+        setShowPassModal(true); 
     }
-  }, [userEmail, navigate]);
+
+    // Wait for the context to finish loading, then use its data
+    if (!contextLoading && contextUser) {
+      if (contextUser.user_type === 'field_officer') return navigate('/field-operations', { replace: true });
+      if (contextUser.user_type === 'manager') return navigate('/manager', { replace: true });
+      if (contextUser.user_type === 'admin') return navigate('/admin', { replace: true });
+      
+      // If they are a standard user, set the dashboard up
+      setDbUser(contextUser); 
+      setCheckedIn(Boolean(contextUser.checked_in));
+      setLoading(false); 
+    } else if (!contextLoading && !contextUser) {
+      // Safety catch: If context loaded but no user found, kick them to login
+      navigate('/auth', { replace: true });
+    }
+  }, [contextUser, contextLoading, navigate]);
 
   const syncLocation = useCallback(async (lat, lon) => {
     const locData = {
@@ -201,7 +211,7 @@ const UserDashboard = () => {
       if ("geolocation" in navigator) {
         navigator.geolocation.getCurrentPosition(
           (pos) => syncLocation(pos.coords.latitude, pos.coords.longitude),
-          null,
+          () => {}, 
           { enableHighAccuracy: true }
         );
       }
@@ -215,24 +225,26 @@ const UserDashboard = () => {
     if (actionLoading || status.code !== 'inside') return;
     setActionLoading(true);
     
-    if (!navigator.geolocation) throw new Error('Location access is required for geofence validation.');
+    if (!navigator.geolocation) return setActionLoading(false);
     const coords = await new Promise((resolve) => {
       navigator.geolocation.getCurrentPosition(
         (pos) => resolve(pos.coords),
-        null,
+        () => resolve(null), 
         { enableHighAccuracy: true }
       );
     });
 
-    const res = await fetch(`${API_BASE_URL}/api/user/checkin`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: userEmail, lat: coords.latitude, lon: coords.longitude }) });
-    const data = await res.json();
-    if (res.ok) {
-      setCheckedIn(true);
-      setCurrentSite(data.site_name || currentSite);
-      setStatus({ type: 'success', msg: data.message || `Checked In at ${data.site_name || 'current geofence'}`, code: 'inside' });
-      if (data.updated_user) setDbUser(data.updated_user);
-    } else {
-      setStatus({ type: 'danger', msg: data.detail || data.message || 'Check-in failed', code: 'error' });
+    if (coords) {
+      const res = await fetch(`${API_BASE_URL}/api/user/checkin`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: userEmail, lat: coords.latitude, lon: coords.longitude }) });
+      const data = await res.json();
+      if (res.ok) {
+        setCheckedIn(true);
+        setCurrentSite(data.site_name || currentSite);
+        setStatus({ type: 'success', msg: data.message || `Checked In at ${data.site_name || 'current geofence'}`, code: 'inside' });
+        if (data.updated_user) setDbUser(data.updated_user);
+      } else {
+        setStatus({ type: 'danger', msg: data.detail || data.message || 'Check-in failed', code: 'error' });
+      }
     }
     setActionLoading(false);
   };
@@ -241,45 +253,47 @@ const UserDashboard = () => {
     if (actionLoading || !checkedIn) return;
     setActionLoading(true);
     
-    if (!navigator.geolocation) throw new Error('Location access is required for geofence validation.');
+    if (!navigator.geolocation) return setActionLoading(false);
     const coords = await new Promise((resolve) => {
       navigator.geolocation.getCurrentPosition(
         (pos) => resolve(pos.coords),
-        null,
+        () => resolve(null), 
         { enableHighAccuracy: true }
       );
     });
 
-    const checkoutData = {
-      email: userEmail,
-      lat: coords.latitude,
-      lon: coords.longitude,
-      timestamp: new Date().toISOString()
-    };
+    if (coords) {
+      const checkoutData = {
+        email: userEmail,
+        lat: coords.latitude,
+        lon: coords.longitude,
+        timestamp: new Date().toISOString()
+      };
 
-    if (!isOnline) {
-      const offlineAttendance = JSON.parse(localStorage.getItem('offlineAttendance') || 'null');
-      if (offlineAttendance) {
-        offlineAttendance.checkoutData = checkoutData;
-        localStorage.setItem('offlineAttendance', JSON.stringify(offlineAttendance));
+      if (!isOnline) {
+        const offlineAttendance = JSON.parse(localStorage.getItem('offlineAttendance') || 'null');
+        if (offlineAttendance) {
+          offlineAttendance.checkoutData = checkoutData;
+          localStorage.setItem('offlineAttendance', JSON.stringify(offlineAttendance));
+        }
+        setCheckedIn(false);
+        setCurrentSite(null);
+        setStatus({ type: 'warning', msg: 'Check-out stored offline, will sync when online', code: 'off_duty' });
+        setActionLoading(false);
+        return;
       }
-      setCheckedIn(false);
-      setCurrentSite(null);
-      setStatus({ type: 'warning', msg: 'Check-out stored offline, will sync when online', code: 'off_duty' });
-      setActionLoading(false);
-      return;
-    }
 
-    const res = await fetch(`${API_BASE_URL}/api/user/checkout`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(checkoutData) });
-    const data = await res.json();
-    if (res.ok) {
-      setCheckedIn(false);
-      setCurrentSite(null);
-      setStatus({ type: 'secondary', msg: data.message || 'Checked Out', code: 'off_duty' });
-      localStorage.removeItem('offlineAttendance');
-      if (data.updated_user) setDbUser(data.updated_user);
-    } else {
-      setStatus({ type: 'danger', msg: data.detail || data.message || 'Check-out failed', code: 'error' });
+      const res = await fetch(`${API_BASE_URL}/api/user/checkout`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(checkoutData) });
+      const data = await res.json();
+      if (res.ok) {
+        setCheckedIn(false);
+        setCurrentSite(null);
+        setStatus({ type: 'secondary', msg: data.message || 'Checked Out', code: 'off_duty' });
+        localStorage.removeItem('offlineAttendance');
+        if (data.updated_user) setDbUser(data.updated_user);
+      } else {
+        setStatus({ type: 'danger', msg: data.detail || data.message || 'Check-out failed', code: 'error' });
+      }
     }
     setActionLoading(false);
   };
@@ -308,10 +322,18 @@ const UserDashboard = () => {
   const dutyLabel = isOnDuty ? 'ON DUTY' : (!checkedIn && status.code === 'inside') ? 'READY TO CHECK IN' : status.code === 'off_duty' ? 'OFF DUTY (Privacy Active)' : status.code === 'warning' ? 'OFF DUTY / OUTSIDE' : status.code === 'error' ? 'ERROR' : 'OFF DUTY / OUTSIDE';
   const dutyDotClass = isOnDuty ? 'bg-success' : 'bg-secondary';
 
-  if (loading) return <div className="text-center py-5"><Spinner animation="border" variant="danger" /></div>;
+  // Make sure we wait for the context to finish loading before rendering
+  if (loading || contextLoading) return <div className="text-center py-5"><Spinner animation="border" variant="danger" /></div>;
 
   return (
     <Container className="py-5">
+      
+      {/* 🔵 NEW TEST BANNER FOR V 0.1.4 🔵 */}
+      <div className="bg-info text-white text-center p-2 fw-bold rounded mb-4 shadow border border-primary border-2">
+        🚀 CAPGO UPDATE 0.1.4: CONTEXT RACE FIX APPLIED! 🚀
+      </div>
+      {/* --------------------------- */}
+
       <Row className="justify-content-center">
         <Col md={8} lg={6}>
           <Card className={`border-0 shadow-lg overflow-hidden ${status.code === 'warning' ? 'border-danger border-5' : ''}`}>
