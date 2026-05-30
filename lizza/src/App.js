@@ -46,18 +46,35 @@ function AppContent() {
   useEffect(() => {
     AOS.init({ duration: 1200 });
 
-    // 1. Notify that the app is ready to clear the splash/boot verification
+    // 1. Notify that the app successfully booted (Prevents Silent Rollback)
     CapacitorUpdater.notifyAppReady();
 
-    // 2. Clear background update check executed when app returns to focus
-    CapacitorApp.addListener('appStateChange', async (state) => {
+    // 2. Logic to check and apply updates (Using promise chain to avoid try-catch block)
+    const performUpdateCheck = () => {
+      CapacitorUpdater.download()
+        .then(bundle => {
+          if (bundle) {
+            CapacitorUpdater.set({ id: bundle.id });
+          }
+        })
+        .catch(() => {
+          console.log("No new updates found or device is offline.");
+        });
+    };
+
+    // 3. COLD BOOT: Check immediately when the app first launches
+    performUpdateCheck();
+
+    // 4. BACKGROUND WAKE: Check when app returns to focus
+    const stateListener = CapacitorApp.addListener('appStateChange', (state) => {
       if (state.isActive) {
-        const latest = await CapacitorUpdater.download();
-        if (latest) {
-          await CapacitorUpdater.set({ id: latest.id });
-        }
+        performUpdateCheck();
       }
     });
+
+    return () => {
+      stateListener.then(listener => listener.remove());
+    };
   }, []);
 
   return (
