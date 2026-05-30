@@ -8,7 +8,6 @@ import 'aos/dist/aos.css';
 // Capgo Updater & Capacitor
 import { CapacitorUpdater } from '@capgo/capacitor-updater';
 import { App as CapacitorApp } from '@capacitor/app';
-import { registerPlugin } from '@capacitor/core';
 
 // Component Imports
 import Header from './assets/components/Header';
@@ -23,8 +22,6 @@ import FieldOfficerDashboard from './assets/components/FieldOfficerDashboard';
 import Footer from './assets/components/Footer'; 
 import { UserProvider, useUser } from './assets/components/UserContext';
 
-const BackgroundGeolocation = registerPlugin('BackgroundGeolocation');
-
 const RoleRoute = ({ children, allowedRoles }) => {
   const { user, loading } = useUser();
 
@@ -37,7 +34,7 @@ const RoleRoute = ({ children, allowedRoles }) => {
   
   if (!user) return <Navigate to="/auth" replace />;
   
-  return allowedRoles.includes(user.user_type.toLowerCase()) ? children : <Navigate to="/dashboard" replace />;
+  return (user.user_type && allowedRoles.includes(user.user_type.toLowerCase())) ? children : <Navigate to="/dashboard" replace />;
 };
 
 const PrivateRoute = ({ children }) => {
@@ -46,8 +43,6 @@ const PrivateRoute = ({ children }) => {
 };
 
 function AppContent() {
-  const { user } = useUser();
-
   useEffect(() => {
     AOS.init({ duration: 1200 });
 
@@ -63,30 +58,7 @@ function AppContent() {
         }
       }
     });
-
-    // 3. Native Background Geolocation Tracking
-    if (user && user.user_type === 'field_officer') {
-      BackgroundGeolocation.addWatcher(
-        {
-          backgroundMessage: "Tracking duty status and geofence safety.",
-          backgroundTitle: "Lizza Duty Tracking Active",
-          requestPermissions: true,
-          stale: false,
-          distanceFilter: 20 
-        },
-        (location) => {
-          const email = localStorage.getItem('userEmail');
-          if (location && email) {
-            fetch('https://lizza-facility-management.vercel.app/api/user/update-location', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ email, lat: location.latitude, lon: location.longitude })
-            });
-          }
-        }
-      ).then((watcher_id) => localStorage.setItem('geo_watcher_id', watcher_id));
-    }
-  }, [user]);
+  }, []);
 
   return (
     <div className="App d-flex flex-column min-vh-100">
