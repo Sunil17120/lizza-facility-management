@@ -30,7 +30,6 @@ android {
         }
     }
 }
-npx @capgo/cli doctor
 repositories {
     flatDir{
         dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
