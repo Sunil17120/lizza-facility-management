@@ -329,10 +329,9 @@ const UserDashboard = () => {
     <Container className="py-5">
       
       {/* 🔵 NEW TEST BANNER FOR V 0.1.4 🔵 */}
-      <div className="bg-info text-white text-center p-2 fw-bold rounded mb-4 shadow border border-primary border-2">
-        🚀 CAPGO UPDATE 0.1.4: CONTEXT RACE FIX APPLIED! 🚀
-      </div>
-      {/* --------------------------- */}
+      <div className="bg-success text-white text-center p-3 fw-bold mb-4">
+  🚀 CAPGO OTA UPDATE SUCCESSFUL - VERSION 0.1.7 🚀
+</div>
 
       <Row className="justify-content-center">
         <Col md={8} lg={6}>

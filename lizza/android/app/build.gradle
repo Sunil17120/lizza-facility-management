@@ -1,10 +1,12 @@
 apply plugin: 'com.android.application'
 
 android {
-    namespace = "com.lizza.app"
+    // 1. UPDATE THE NAMESPACE
+    namespace = "com.lizza.facility.management.lizza"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "com.lizza.app"
+        // 2. UPDATE THE APPLICATION ID
+        applicationId "com.lizza.facility.management.lizza"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
