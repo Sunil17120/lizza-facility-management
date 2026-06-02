@@ -533,15 +533,27 @@ async def sync_offline_locations(payload: dict, db: Session = Depends(get_db)):
                 r.set(f"last_inside_time:{email}", ping_time.isoformat(), ex=86400)
                 r.set(f"ping_time:{email}", ping_time.isoformat(), ex=86400)
             
-            if not user.is_present:
-                open_att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
-                if not open_att:
-                    att = Attendance(user_id=user.id, checkin_time=ping_time, date=ping_time, location_id=current_site.id)
+            open_att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
+            if not open_att:
+                att = Attendance(user_id=user.id, checkin_time=ping_time, date=ping_time, location_id=current_site.id)
+                user.is_present = True
+                db.add(att)
+                if user.user_type == 'field_officer':
+                    db.add(SiteStay(officer_id=user.id, location_id=current_site.id, entry_time=ping_time))
+                db.commit()
+            else:
+                if not user.is_present:
                     user.is_present = True
-                    db.add(att)
-                    if user.user_type == 'field_officer':
-                        db.add(SiteStay(officer_id=user.id, location_id=current_site.id, entry_time=ping_time))
                     db.commit()
+                if user.user_type == 'field_officer':
+                    active_stay = db.query(SiteStay).filter(
+                        SiteStay.officer_id == user.id,
+                        SiteStay.location_id == current_site.id,
+                        SiteStay.exit_time == None
+                    ).first()
+                    if not active_stay:
+                        db.add(SiteStay(officer_id=user.id, location_id=current_site.id, entry_time=ping_time))
+                        db.commit()
         else:
             if r: r.set(f"ping_time:{email}", ping_time.isoformat(), ex=86400)
             if user.is_present:
@@ -575,16 +587,28 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
             r.set(f"last_inside_time:{email}", now_utc.isoformat(), ex=86400)
             r.set(f"ping_time:{email}", now_utc.isoformat(), ex=86400)
 
-        if not user.is_present:
-            open_attendance = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
-            if not open_attendance:
-                attendance = Attendance(user_id=user.id, checkin_time=now_utc, date=now_utc, location_id=current_site.id)
+        open_attendance = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
+        if not open_attendance:
+            attendance = Attendance(user_id=user.id, checkin_time=now_utc, date=now_utc, location_id=current_site.id)
+            user.is_present = True
+            db.add(attendance)
+            if user.user_type == 'field_officer':
+                db.add(SiteStay(officer_id=user.id, location_id=current_site.id, entry_time=now_utc))
+            db.commit()
+            if getattr(user, 'fcm_token', None): send_push_notification(user.fcm_token, "✅ Auto Check-In Done", f"You are inside {current_site.name} and have been checked in.")
+        else:
+            if not user.is_present:
                 user.is_present = True
-                db.add(attendance)
-                if user.user_type == 'field_officer':
-                    db.add(SiteStay(officer_id=user.id, location_id=current_site.id, entry_time=now_utc))
                 db.commit()
-                if getattr(user, 'fcm_token', None): send_push_notification(user.fcm_token, "✅ Auto Check-In Done", f"You are inside {current_site.name} and have been checked in.")
+            if user.user_type == 'field_officer':
+                active_stay = db.query(SiteStay).filter(
+                    SiteStay.officer_id == user.id,
+                    SiteStay.location_id == current_site.id,
+                    SiteStay.exit_time == None
+                ).first()
+                if not active_stay:
+                    db.add(SiteStay(officer_id=user.id, location_id=current_site.id, entry_time=now_utc))
+                    db.commit()
     else:
         if r: r.set(f"ping_time:{email}", now_utc.isoformat(), ex=86400)
 
@@ -775,10 +799,39 @@ def get_monthly_field_visits(month: int, year: int, officer_id: Optional[int] = 
     return report_data
 
 @app.get("/api/admin/reports/monthly-attendance")
-def get_monthly_attendance(month: int, year: int, user_id: Optional[int] = None, location_id: Optional[int] = None, user_type: Optional[str] = None, db: Session = Depends(get_db)):
-    _, last_day = calendar.monthrange(year, month)
-    start_utc = datetime(year, month, 1, 0, 0, 0) - timedelta(hours=5, minutes=30)
-    end_utc = datetime(year, month, last_day, 23, 59, 59) - timedelta(hours=5, minutes=30)
+def get_monthly_attendance(
+    month: Optional[int] = None,
+    year: Optional[int] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    user_id: Optional[int] = None,
+    location_id: Optional[int] = None,
+    user_type: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    if start_date or end_date:
+        if start_date:
+            start_utc = parse_iso_timestamp(start_date)
+        elif month and year:
+            start_utc = datetime(year, month, 1, 0, 0, 0) - timedelta(hours=5, minutes=30)
+        else:
+            raise HTTPException(status_code=400, detail="start_date or month/year required")
+
+        if end_date:
+            end_utc = parse_iso_timestamp(end_date)
+            if len(end_date) <= 10 and 'T' not in end_date:
+                end_utc = datetime.fromisoformat(end_date) + timedelta(hours=23, minutes=59, seconds=59)
+        elif month and year:
+            _, last_day = calendar.monthrange(year, month)
+            end_utc = datetime(year, month, last_day, 23, 59, 59) - timedelta(hours=5, minutes=30)
+        else:
+            raise HTTPException(status_code=400, detail="end_date or month/year required")
+    else:
+        if month is None or year is None:
+            raise HTTPException(status_code=400, detail="month and year are required")
+        _, last_day = calendar.monthrange(year, month)
+        start_utc = datetime(year, month, 1, 0, 0, 0) - timedelta(hours=5, minutes=30)
+        end_utc = datetime(year, month, last_day, 23, 59, 59) - timedelta(hours=5, minutes=30)
 
     from .database import Attendance
     query = db.query(Attendance, User, OfficeLocation).join(User, Attendance.user_id == User.id).outerjoin(OfficeLocation, Attendance.location_id == OfficeLocation.id)

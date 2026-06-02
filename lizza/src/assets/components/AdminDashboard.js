@@ -93,6 +93,8 @@ const AdminDashboard = () => {
   
   const [reportMonth, setReportMonth] = useState(new Date().getMonth() + 1);
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
+  const [reportStartDate, setReportStartDate] = useState('');
+  const [reportEndDate, setReportEndDate] = useState('');
   const [filterRole, setFilterRole] = useState('all');
   const [reportOfficerSearch, setReportOfficerSearch] = useState('');
   const [showReportSuggestions, setShowReportSuggestions] = useState(false);
@@ -180,6 +182,8 @@ const AdminDashboard = () => {
     if (mainTab !== 'reports') return;
     setAttendanceLoading(true);
       let url = `/api/admin/reports/monthly-attendance?month=${reportMonth}&year=${reportYear}`;
+      if (reportStartDate) url += `&start_date=${encodeURIComponent(reportStartDate)}`;
+      if (reportEndDate) url += `&end_date=${encodeURIComponent(reportEndDate)}`;
       if (reportOfficerSearch && employees.length > 0) {
         const matchedOfficer = employees.find(o => 
           o.is_verified &&
@@ -201,7 +205,7 @@ const AdminDashboard = () => {
           setAttendanceRecords([]);
       }
     setAttendanceLoading(false);
-  }, [reportMonth, reportYear, reportOfficerSearch, filterSite, filterRole, mainTab, employees]);
+  }, [reportMonth, reportYear, reportStartDate, reportEndDate, reportOfficerSearch, filterSite, filterRole, mainTab, employees]);
 
   useEffect(() => {
     if (mainTab !== 'reports') return;
@@ -830,6 +834,14 @@ const AdminDashboard = () => {
                 <option value="2026">2026</option>
                 <option value="2027">2027</option>
               </Form.Select>
+            </div>
+            <div className="d-flex gap-2 align-items-center border-start ps-4 flex-wrap">
+              <span className="small fw-bold text-muted text-uppercase">Date Range:</span>
+              <Form.Control size="sm" type="date" value={reportStartDate} onChange={e => setReportStartDate(e.target.value)} style={{width: '160px'}} />
+              <Form.Control size="sm" type="date" value={reportEndDate} onChange={e => setReportEndDate(e.target.value)} style={{width: '160px'}} />
+              <Button variant="outline-secondary" size="sm" onClick={() => { setReportStartDate(''); setReportEndDate(''); }}>
+                Clear
+              </Button>
             </div>
 
             <div className="d-flex gap-2 align-items-center border-start ps-4 flex-wrap">
