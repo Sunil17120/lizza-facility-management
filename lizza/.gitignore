@@ -32,3 +32,4 @@ build/
 android/app/src/
 android/app/build.gradle
 .env
+google-services.json

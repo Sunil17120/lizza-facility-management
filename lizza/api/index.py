@@ -688,14 +688,26 @@ def cron_auto_checkout(db: Session = Depends(get_db)):
     
     for user in active_users:
         last_ping_str = r.get(f"ping_time:{user.email}")
-        needs_checkout = False
+        warning_key = f"warning_sent:{user.email}"
+        warning_sent = r.get(warning_key) if r else None
         
-        if not last_ping_str: needs_checkout = True
-        else:
+        if last_ping_str:
             last_ping_time = datetime.fromisoformat(last_ping_str)
-            if (now_utc - last_ping_time).total_seconds() / 60.0 >= 60: needs_checkout = True
-                    
-        if needs_checkout:
+            minutes_since_last_ping = (now_utc - last_ping_time).total_seconds() / 60.0
+        else:
+            minutes_since_last_ping = float('inf')
+
+        if minutes_since_last_ping >= 5 and not warning_sent:
+            if getattr(user, 'fcm_token', None):
+                send_push_notification(
+                    token=user.fcm_token,
+                    title="⚠️ Location Lost",
+                    body="We haven't received your location update for 5 minutes. Please open the app and verify location access."
+                )
+            if r:
+                r.set(warning_key, '1', ex=3600)
+
+        if minutes_since_last_ping >= 60:
             att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
             if att:
                 att.checkout_time = now_utc
@@ -710,7 +722,7 @@ def cron_auto_checkout(db: Session = Depends(get_db)):
             if r:
                 r.delete(f"ping_time:{user.email}")
                 r.delete(f"last_inside_time:{user.email}")
-                r.delete(f"warning_sent:{user.email}")
+                r.delete(warning_key)
             swept_users.append(user.email)
             
     return {"status": "success", "message": "Hourly cron sweep complete", "auto_checked_out": swept_users}

@@ -75,8 +75,9 @@ const FieldOfficerDashboard = () => {
   const [alertMsg, setAlertMsg] = useState(null);
   
   // Offline Sync State
-  const [pendingVisits, setPendingVisits] = useState(0);
+  const [pendingOfflineActions, setPendingOfflineActions] = useState(0);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [offlineSyncMsg, setOfflineSyncMsg] = useState(null);
 
   const fileInputRef = useRef(null);
   const userEmail = localStorage.getItem('userEmail');
@@ -84,7 +85,8 @@ const FieldOfficerDashboard = () => {
   const updateQueueCounts = useCallback(() => {
       if (!isApp) return;
       const queuedReports = JSON.parse(localStorage.getItem('offlineVisitQueue') || '[]');
-      setPendingVisits(queuedReports.length);
+      const queuedAttendance = JSON.parse(localStorage.getItem('offlineAttendanceQueue') || '[]');
+      setPendingOfflineActions(queuedReports.length + queuedAttendance.length);
   }, []);
 
   const fetchData = useCallback(async () => {
@@ -122,12 +124,20 @@ const FieldOfficerDashboard = () => {
 
     const attendanceQueue = JSON.parse(localStorage.getItem('offlineAttendanceQueue') || '[]');
     let failedAtt = [];
+    let lastSuccessfulAction = null;
     for (let act of attendanceQueue) {
       try {
         const ep = act.actionType === 'CHECK_IN' ? '/api/user/checkin' : '/api/user/checkout';
         const res = await fetch(`${API_BASE_URL}${ep}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: act.email, lat: act.lat, lon: act.lon, timestamp: act.timestamp }) });
-        if (!res.ok) failedAtt.push(act);
+        if (res.ok) {
+          lastSuccessfulAction = act;
+        } else {
+          failedAtt.push(act);
+        }
       } catch (e) { failedAtt.push(act); }
+    }
+    if (lastSuccessfulAction) {
+      setCheckedIn(lastSuccessfulAction.actionType === 'CHECK_IN');
     }
     localStorage.setItem('offlineAttendanceQueue', JSON.stringify(failedAtt));
 
@@ -158,6 +168,14 @@ const FieldOfficerDashboard = () => {
     localStorage.setItem('offlineVisitQueue', JSON.stringify(failedVisits));
     updateQueueCounts();
     setIsSyncing(false);
+
+    if (pings.length + attendanceQueue.length + visitQueue.length > 0) {
+      if (failedAtt.length === 0 && failedVisits.length === 0) {
+        setOfflineSyncMsg('Offline data synced successfully. Attendance and visits are up to date.');
+      } else {
+        setOfflineSyncMsg('Offline sync completed with some failures. Please retry or check connectivity.');
+      }
+    }
     fetchData(); 
 
   }, [isSyncing, userEmail, fetchData, updateQueueCounts]);
@@ -169,7 +187,10 @@ const FieldOfficerDashboard = () => {
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
     fetchData(); 
-    if (isApp) updateQueueCounts();
+    if (isApp) {
+      updateQueueCounts();
+      if (navigator.onLine) syncOfflineData();
+    }
 
     return () => { window.removeEventListener('online', handleOnline); window.removeEventListener('offline', handleOffline); };
   }, [fetchData, syncOfflineData, updateQueueCounts]);
@@ -198,9 +219,18 @@ const FieldOfficerDashboard = () => {
         localStorage.setItem('offlineLocations', JSON.stringify(q));
       } else if (navigator.onLine) {
         fetch(`${API_BASE_URL}/api/user/update-location?email=${userEmail}&lat=${lat}&lon=${lon}`, { method: 'POST' });
+
+        if (isApp && !isSyncing) {
+          const queuedLocations = JSON.parse(localStorage.getItem('offlineLocations') || '[]');
+          const queuedAttendance = JSON.parse(localStorage.getItem('offlineAttendanceQueue') || '[]');
+          const queuedVisit = JSON.parse(localStorage.getItem('offlineVisitQueue') || '[]');
+          if (queuedLocations.length || queuedAttendance.length || queuedVisit.length) {
+            syncOfflineData();
+          }
+        }
       }
     }
-  }, [locations, userEmail]);
+  }, [locations, userEmail, isApp, isSyncing, syncOfflineData]);
 
   // BACKGROUND TRACKER: APP ONLY
   useEffect(() => {
@@ -237,18 +267,34 @@ const FieldOfficerDashboard = () => {
 
   // --- ACTIONS (SPLIT LOGIC) ---
   const handleAttendance = async (type) => {
-    if (!activeSite || !myLoc) return alert("You must be inside the site boundary.");
+    if (type === 'CHECK_IN' && (!activeSite || !myLoc)) {
+      return alert("You must be inside the site boundary.");
+    }
+    if (!myLoc) {
+      return alert("Current location unavailable. Please retry when location is available.");
+    }
     setIsSubmitting(true);
     
     const payload = { email: userEmail, lat: myLoc.lat, lon: myLoc.lon, timestamp: new Date().toISOString(), actionType: type };
 
     if (!isOnline) {
       if (isApp) {
+        if (type === 'CHECK_IN' && !activeSite) {
+          setAlertMsg({ type: 'danger', text: 'You must be inside the site boundary to check in.' });
+          setIsSubmitting(false);
+          return;
+        }
+        if (!myLoc) {
+          setAlertMsg({ type: 'danger', text: 'Current location unavailable. Please retry when location is available.' });
+          setIsSubmitting(false);
+          return;
+        }
         const q = JSON.parse(localStorage.getItem('offlineAttendanceQueue') || '[]');
         q.push(payload);
         localStorage.setItem('offlineAttendanceQueue', JSON.stringify(q));
         setCheckedIn(type === 'CHECK_IN');
-        setAlertMsg({ type: 'warning', text: `Offline ${type} Queued.` });
+        setAlertMsg({ type: 'warning', text: `Offline ${type === 'CHECK_IN' ? 'Check-In' : 'Check-Out'} queued.` });
+        updateQueueCounts();
       } else {
         setAlertMsg({ type: 'danger', text: 'Network connection lost. Action failed.' });
       }
@@ -259,6 +305,9 @@ const FieldOfficerDashboard = () => {
         if (res.ok) {
           setCheckedIn(type === 'CHECK_IN');
           setAlertMsg({ type: 'success', text: `Successfully ${type === 'CHECK_IN' ? 'Checked In' : 'Checked Out'}` });
+        } else {
+          const errorData = await res.json().catch(() => null);
+          setAlertMsg({ type: 'danger', text: errorData?.detail || 'Action failed.' });
         }
       } catch (err) {
         setAlertMsg({ type: 'danger', text: 'Server communication failed.' });
@@ -328,14 +377,14 @@ const FieldOfficerDashboard = () => {
       </div>
 
       {/* ONLY SHOW OFFLINE SYNC BANNERS IF IT IS THE MOBILE APP */}
-      {(!isOnline || pendingVisits > 0) && isApp && (
+      {(!isOnline || pendingOfflineActions > 0) && isApp && (
         <Alert variant="warning" className="d-flex justify-content-between align-items-center mb-4 py-2">
             <span>
                 {isOnline ? <RefreshCw size={18} className="me-2 text-primary" /> : <WifiOff size={18} className="me-2 text-danger" />}
                 <strong className="me-2">{isOnline ? 'Syncing Backlog...' : 'Offline Mode'}</strong> 
-                {pendingVisits} un-synced reports saved on device.
+                {pendingOfflineActions} pending offline action{pendingOfflineActions === 1 ? '' : 's'} saved on device.
             </span>
-            {isOnline && pendingVisits > 0 && (
+            {isOnline && pendingOfflineActions > 0 && (
                 <Button size="sm" variant="outline-dark" onClick={syncOfflineData} disabled={isSyncing}>
                     {isSyncing ? 'Syncing...' : 'Force Sync'}
                 </Button>
@@ -371,6 +420,7 @@ const FieldOfficerDashboard = () => {
                 <h5 className="fw-bold mb-3 d-flex align-items-center"><MapPin className="me-2 text-danger"/> Current Status</h5>
                 
                 {alertMsg && <Alert variant={alertMsg.type} className="mb-3 small">{alertMsg.text}</Alert>}
+                {offlineSyncMsg && <Alert variant="success" className="mb-3 small">{offlineSyncMsg}</Alert>}
                 
                 {activeSite ? (
                   <Alert variant="success" className="d-flex align-items-center fw-bold mb-3"><CheckCircle className="me-2"/> At Site: {activeSite.name}</Alert>

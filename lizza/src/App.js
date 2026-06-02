@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { Alert, ProgressBar } from 'react-bootstrap';
 import 'bootstrap/dist/css/bootstrap.min.css';
 import './App.css';
 import AOS from 'aos';
@@ -38,6 +39,8 @@ const PrivateRoute = ({ children }) => {
 // --- APP CONTENT ---
 function AppContent() {
   const [updateStatus, setUpdateStatus] = useState('');
+  const [updateProgress, setUpdateProgress] = useState(0);
+  const { pushMessage, pushMessageType } = useUser();
 
   useEffect(() => {
     AOS.init({ duration: 1200 });
@@ -50,6 +53,7 @@ function AppContent() {
         
         if (update && update.url) {
           setUpdateStatus('Downloading update...');
+          setUpdateProgress(20);
           
           // 2. Download the bundle
           const download = await CapacitorUpdater.download({ 
@@ -58,9 +62,11 @@ function AppContent() {
           });
 
           if (download) {
-            setUpdateStatus('Restarting...');
+            setUpdateStatus('Applying update...');
+            setUpdateProgress(80);
             // 3. Apply and reload
             await CapacitorUpdater.set({ version: update.version });
+            setUpdateProgress(100);
             await CapacitorUpdater.reload();
           }
         }
@@ -77,7 +83,22 @@ function AppContent() {
       {updateStatus && (
         <div className="alert alert-info text-center m-0 fixed-top" style={{ zIndex: 9999 }}>
           {updateStatus}
+          {updateProgress > 0 && updateProgress < 100 && (
+            <ProgressBar
+              now={updateProgress}
+              animated
+              striped
+              variant="info"
+              className="mt-2"
+              style={{ height: '6px' }}
+            />
+          )}
         </div>
+      )}
+      {pushMessage && (
+        <Alert variant={pushMessageType} className="text-center m-0 w-100" style={{ zIndex: 9998 }}>
+          {pushMessage}
+        </Alert>
       )}
       <Header />
       <div className="flex-grow-1">
