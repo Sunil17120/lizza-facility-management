@@ -207,7 +207,7 @@ const FieldOfficerDashboard = () => {
     if (!userEmail || !isApp) return;
     const startTracking = async () => {
       await BackgroundGeolocation.addWatcher(
-        { backgroundMessage: "Tracking active", requestPermissions: true, stale: false, distanceFilter: 0, interval: 300000, allowBackgroundLocationUpdates: true, autoSync: true, startOnBoot: true },
+        { backgroundMessage: "Tracking active", requestPermissions: true, stale: false, distanceFilter: 20, interval: 300000, allowBackgroundLocationUpdates: true, autoSync: true, startOnBoot: true },
         (location) => { if (location) processNewLocation(location.latitude, location.longitude); }
       );
     };
