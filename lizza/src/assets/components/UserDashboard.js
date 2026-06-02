@@ -105,7 +105,10 @@ const UserDashboard = () => {
 
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
-    if (isApp) updatePendingCount();
+    if (isApp) {
+      updatePendingCount();
+      if (navigator.onLine) processOfflineQueues();
+    }
 
     return () => {
       window.removeEventListener('online', handleOnline);
