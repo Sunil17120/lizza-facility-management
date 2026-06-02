@@ -31,3 +31,4 @@ build/
 # Keep the source files (DO push these)
 android/app/src/
 android/app/build.gradle
+.env

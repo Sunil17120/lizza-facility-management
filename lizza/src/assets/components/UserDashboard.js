@@ -5,7 +5,8 @@ import { ShieldCheck, MapPin, MapIcon, AlertTriangle, KeyRound, EyeOff } from 'l
 
 import { registerPlugin } from '@capacitor/core';
 import { PushNotifications } from '@capacitor/push-notifications';
-import { useUser } from './UserContext'; // <-- CONTEXT IMPORTED
+import { CapacitorUpdater } from '@capgo/capacitor-updater';
+import { useUser } from './UserContext'; 
 
 const BackgroundGeolocation = registerPlugin('BackgroundGeolocation');
 const API_BASE_URL = 'https://lizza-facility-management.vercel.app';
@@ -13,7 +14,6 @@ const API_BASE_URL = 'https://lizza-facility-management.vercel.app';
 const UserDashboard = () => {
   const navigate = useNavigate(); 
   
-  // Grab the user data that UserContext already fetched!
   const { user: contextUser, loading: contextLoading } = useUser();
 
   const [dbUser, setDbUser] = useState(null);
@@ -120,25 +120,21 @@ const UserDashboard = () => {
     };
   }, [userEmail]);
 
-  // --- THE NEW SYNCHRONIZED ROUTING LOGIC ---
   useEffect(() => {
     if (localStorage.getItem('forcePasswordChange') === 'true') { 
         setIsForceChange(true); 
         setShowPassModal(true); 
     }
 
-    // Wait for the context to finish loading, then use its data
     if (!contextLoading && contextUser) {
       if (contextUser.user_type === 'field_officer') return navigate('/field-operations', { replace: true });
       if (contextUser.user_type === 'manager') return navigate('/manager', { replace: true });
       if (contextUser.user_type === 'admin') return navigate('/admin', { replace: true });
       
-      // If they are a standard user, set the dashboard up
       setDbUser(contextUser); 
       setCheckedIn(Boolean(contextUser.checked_in));
       setLoading(false); 
     } else if (!contextLoading && !contextUser) {
-      // Safety catch: If context loaded but no user found, kick them to login
       navigate('/auth', { replace: true });
     }
   }, [contextUser, contextLoading, navigate]);
@@ -322,17 +318,10 @@ const UserDashboard = () => {
   const dutyLabel = isOnDuty ? 'ON DUTY' : (!checkedIn && status.code === 'inside') ? 'READY TO CHECK IN' : status.code === 'off_duty' ? 'OFF DUTY (Privacy Active)' : status.code === 'warning' ? 'OFF DUTY / OUTSIDE' : status.code === 'error' ? 'ERROR' : 'OFF DUTY / OUTSIDE';
   const dutyDotClass = isOnDuty ? 'bg-success' : 'bg-secondary';
 
-  // Make sure we wait for the context to finish loading before rendering
   if (loading || contextLoading) return <div className="text-center py-5"><Spinner animation="border" variant="danger" /></div>;
 
   return (
     <Container className="py-5">
-      
-      {/* 🔵 NEW TEST BANNER FOR V 0.1.4 🔵 */}
-      <div className="bg-success text-white text-center p-3 fw-bold mb-4">
-  🚀 CAPGO OTA UPDATE SUCCESSFUL - VERSION 0.1.7 🚀
-</div>
-
       <Row className="justify-content-center">
         <Col md={8} lg={6}>
           <Card className={`border-0 shadow-lg overflow-hidden ${status.code === 'warning' ? 'border-danger border-5' : ''}`}>

@@ -2,15 +2,15 @@ apply plugin: 'com.android.application'
 
 android {
     // 1. UPDATE THE NAMESPACE
-    namespace = "com.lizza.facility.management.lizza"
+    namespace = "com.lizza.facility.management.v2"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
         // 2. UPDATE THE APPLICATION ID
-        applicationId "com.lizza.facility.management.lizza"
+        applicationId "com.lizza.facility.management.v2"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
-        versionName "1.0"
+        versionName "1.0.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -28,7 +28,7 @@ android {
     // Automate renaming the compiled APK to lizza-app.apk
     applicationVariants.all { variant ->
         variant.outputs.all {
-            outputFileName = "lizza-app.apk"
+            outputFileName = "lizza-app1.apk"
         }
     }
 }
