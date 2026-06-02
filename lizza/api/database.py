@@ -12,7 +12,17 @@ PEPPER = os.environ.get("SECRET_PEPPER", "lizza_super_secret_fallback_key")
 FERNET_KEY = base64.urlsafe_b64encode(hashlib.sha256(PEPPER.encode()).digest())
 cipher = Fernet(FERNET_KEY)
 DATABASE_URL = os.environ.get("DATABASE_URL")
-engine = create_engine(DATABASE_URL)
+
+connect_args = {}
+if DATABASE_URL and DATABASE_URL.startswith("postgres"):
+    connect_args = {"sslmode": "require"}
+
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True,
+    pool_recycle=1800,
+    connect_args=connect_args
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
