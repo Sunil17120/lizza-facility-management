@@ -251,6 +251,9 @@ class FCMTokenUpdate(BaseModel):
     email: str
     fcm_token: str
 
+# Request model for logout notification
+class LogoutNotify(BaseModel):
+    email: str
 # --- AUTH & PROFILES ---
 
 @app.post("/api/login")
@@ -270,6 +273,20 @@ def update_fcm_token(data: FCMTokenUpdate, db: Session = Depends(get_db)):
         db.commit()
         return {"status": "success"}
     raise HTTPException(404, "User not found")
+
+
+@app.post("/api/user/send-logout-notification")
+def send_logout_notification(data: LogoutNotify, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == data.email.lower().strip()).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    token = getattr(user, 'fcm_token', None)
+    if not token:
+        return {"status": "no_token"}
+    ok = send_push_notification(token, "Signed out", "You have been signed out of the app.")
+    if ok:
+        return {"status": "sent"}
+    raise HTTPException(status_code=500, detail="Failed to send notification")
 
 @app.get("/api/user/profile")
 def get_user_profile(email: str, db: Session = Depends(get_db)):
