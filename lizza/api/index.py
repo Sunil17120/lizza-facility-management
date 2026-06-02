@@ -149,13 +149,37 @@ def get_db():
 def send_push_notification(token: str, title: str, body: str):
     if not token: 
         return False
+        
     message = messaging.Message(
         notification=messaging.Notification(
             title=title,
             body=body
         ),
+        # Forces Android to wake up and display immediately
+        android=messaging.AndroidConfig(
+            priority='high',
+            notification=messaging.AndroidNotification(
+                sound='default',
+                default_vibrate_timings=True
+            )
+        ),
+        # Forces iOS to process in the background
+        apns=messaging.APNSConfig(
+            payload=messaging.APNSPayload(
+                aps=messaging.Aps(
+                    sound='default',
+                    content_available=True,
+                )
+            )
+        ),
+        # Ensures Capacitor plugins can read the payload if the user clicks it
+        data={
+            "title": title,
+            "body": body
+        },
         token=token,
     )
+    
     messaging.send(message)
     return True
 

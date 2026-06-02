@@ -5,10 +5,6 @@ import './App.css';
 import AOS from 'aos';
 import 'aos/dist/aos.css';
 
-// Capgo Updater & Capacitor
-import { CapacitorUpdater } from '@capgo/capacitor-updater';
-import { App as CapacitorApp } from '@capacitor/app';
-
 // Component Imports
 import Header from './assets/components/Header';
 import Hero from './assets/components/Hero';
@@ -44,37 +40,8 @@ const PrivateRoute = ({ children }) => {
 
 function AppContent() {
   useEffect(() => {
+    // Just initialize your UI animations. Capgo is handled natively now!
     AOS.init({ duration: 1200 });
-
-    // 1. Notify that the app successfully booted (Prevents Silent Rollback)
-    CapacitorUpdater.notifyAppReady();
-
-    // 2. Logic to check and apply updates (Using promise chain to avoid try-catch block)
-    const performUpdateCheck = () => {
-      CapacitorUpdater.download()
-        .then(bundle => {
-          if (bundle) {
-            CapacitorUpdater.set({ id: bundle.id });
-          }
-        })
-        .catch(() => {
-          console.log("No new updates found or device is offline.");
-        });
-    };
-
-    // 3. COLD BOOT: Check immediately when the app first launches
-    performUpdateCheck();
-
-    // 4. BACKGROUND WAKE: Check when app returns to focus
-    const stateListener = CapacitorApp.addListener('appStateChange', (state) => {
-      if (state.isActive) {
-        performUpdateCheck();
-      }
-    });
-
-    return () => {
-      stateListener.then(listener => listener.remove());
-    };
   }, []);
 
   return (

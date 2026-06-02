@@ -1,6 +1,6 @@
 {
   "name": "lizza",
-  "version": "0.1.0",
+  "version": "1.0.5",
   "private": true,
   "dependencies": {
     "@capacitor-community/background-geolocation": "^1.2.26",
@@ -31,7 +31,8 @@
     "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "eject": "react-scripts eject",
+  "release": "npm run build && npx @capgo/cli@latest bundle upload com.lizza.facility.management.v2 -c production"
   },
   "eslintConfig": {
     "extends": [
