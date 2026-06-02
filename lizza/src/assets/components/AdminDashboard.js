@@ -65,6 +65,8 @@ const parseReferencesJSON = (jsonStr) => {
     }
 };
 
+const API_BASE_URL = 'https://lizza-facility-management.vercel.app';
+
 const AdminDashboard = () => {
   const [mainTab, setMainTab] = useState('overview');
   const [employees, setEmployees] = useState([]);
@@ -124,9 +126,9 @@ const AdminDashboard = () => {
 
   const fetchBaseData = useCallback(async () => {
       const [empRes, locRes, liveRes] = await Promise.all([
-        fetch(`/api/admin/employees?admin_email=${adminEmail}`),
-        fetch(`/api/admin/locations`),
-        fetch(`/api/admin/live-tracking?admin_email=${adminEmail}`)
+        fetch(`${API_BASE_URL}/api/admin/employees?admin_email=${adminEmail}`),
+        fetch(`${API_BASE_URL}/api/admin/locations`),
+        fetch(`${API_BASE_URL}/api/admin/live-tracking?admin_email=${adminEmail}`)
       ]);
       if (empRes.ok && locRes.ok) {
         setEmployees(await empRes.json());
@@ -141,7 +143,7 @@ const AdminDashboard = () => {
   useEffect(() => {
     if (mainTab !== 'overview' || !autoRefreshEnabled) return;
     const interval = setInterval(async () => {
-        const res = await fetch(`/api/admin/live-tracking?admin_email=${adminEmail}`);
+        const res = await fetch(`${API_BASE_URL}/api/admin/live-tracking?admin_email=${adminEmail}`);
         if (res.ok) setLiveLocations(await res.json());
     }, 15000); 
     return () => clearInterval(interval);
@@ -150,7 +152,7 @@ const AdminDashboard = () => {
   const fetchReportsData = useCallback(async () => {
     if (mainTab !== 'reports') return;
     setReportsLoading(true);
-      let url = `/api/admin/reports/monthly-field-visits?month=${reportMonth}&year=${reportYear}`;
+      let url = `${API_BASE_URL}/api/admin/reports/monthly-field-visits?month=${reportMonth}&year=${reportYear}`;
       
       if (reportOfficerSearch && employees.length > 0) {
         const matchedOfficer = employees.find(o => 
@@ -218,12 +220,12 @@ const AdminDashboard = () => {
   }, [fetchAttendanceData, fetchReportsData, mainTab, reportsSubTab, autoRefreshEnabled]);
 
   const handleVerify = async (email) => {
-      const res = await fetch(`/api/admin/verify-employee?target_email=${email}&admin_email=${adminEmail}`, { method: 'POST' });
+      const res = await fetch(`${API_BASE_URL}/api/admin/verify-employee?target_email=${email}&admin_email=${adminEmail}`, { method: 'POST' });
       if (res.ok) { alert("Verified!"); setSelectedStaff(null); fetchBaseData(); }
   };
 
   const handleInlineSave = async (emp) => {
-    const res = await fetch('/api/admin/update-employee-inline', {
+    const res = await fetch(`${API_BASE_URL}/api/admin/update-employee-inline`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(emp)
@@ -233,28 +235,28 @@ const AdminDashboard = () => {
 
   const handleDeleteEmp = async (id) => {
     if(window.confirm("Permanently delete this employee?")) {
-        await fetch(`/api/admin/delete-employee/${id}`, { method: 'DELETE' });
+        await fetch(`${API_BASE_URL}/api/admin/delete-employee/${id}`, { method: 'DELETE' });
         fetchBaseData();
     }
   };
 
   const handleDeleteVisit = async (id) => {
     if (window.confirm('Permanently delete this visit record?')) {
-      await fetch(`/api/admin/delete-visit/${id}`, { method: 'DELETE' });
+      await fetch(`${API_BASE_URL}/api/admin/delete-visit/${id}`, { method: 'DELETE' });
       fetchReportsData();
     }
   };
 
   const handleDeleteAttendance = async (id) => {
     if (window.confirm('Permanently delete this attendance record?')) {
-      await fetch(`/api/admin/delete-attendance/${id}`, { method: 'DELETE' });
+      await fetch(`${API_BASE_URL}/api/admin/delete-attendance/${id}`, { method: 'DELETE' });
       fetchAttendanceData();
     }
   };
 
   const handleEditEmpSave = async (e) => {
     e.preventDefault();
-      const res = await fetch('/api/admin/update-employee-inline', {
+      const res = await fetch(`${API_BASE_URL}/api/admin/update-employee-inline`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(editingEmp)
@@ -280,14 +282,14 @@ const AdminDashboard = () => {
 
   const handleAddBranch = async (e) => {
     e.preventDefault();
-    await fetch('/api/admin/add-location', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newLoc) });
+    await fetch(`${API_BASE_URL}/api/admin/add-location`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newLoc) });
     setNewLoc({ name: '', lat: '', lon: '', radius: 200 });
     fetchBaseData();
   };
 
   const handleUpdateBranch = async (e) => {
     e.preventDefault();
-    await fetch(`/api/admin/update-location/${editingLoc.id}`, {
+    await fetch(`${API_BASE_URL}/api/admin/update-location/${editingLoc.id}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: editingLoc.name, lat: parseFloat(editingLoc.lat), lon: parseFloat(editingLoc.lon), radius: parseInt(editingLoc.radius) })
     });
@@ -296,7 +298,7 @@ const AdminDashboard = () => {
 
   const deleteLoc = async (id) => {
     if(window.confirm("Delete Branch?")) {
-        await fetch(`/api/admin/delete-location/${id}`, { method: 'DELETE' });
+        await fetch(`${API_BASE_URL}/api/admin/delete-location/${id}`, { method: 'DELETE' });
         fetchBaseData();
     }
   };
@@ -439,7 +441,7 @@ const AdminDashboard = () => {
 
   const handlePrintProfile = async (userId) => {
     try {
-      const response = await fetch(`/api/admin/employee-dossier/${userId}?admin_email=${adminEmail}`);
+      const response = await fetch(`${API_BASE_URL}/api/admin/employee-dossier/${userId}?admin_email=${adminEmail}`);
       const result = await response.json();
       
       if (!response.ok) {

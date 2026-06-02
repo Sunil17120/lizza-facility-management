@@ -144,11 +144,11 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
       if (mode === 'xml') {
         if (!ekycZip || shareCode.length !== 4) { setError("Upload ZIP and enter 4-digit code."); setIsProcessing(false); return; }
         kycFormData.append('file', ekycZip); kycFormData.append('share_code', shareCode);
-        res = await fetch('/api/manager/extract-ekyc', { method: 'POST', body: kycFormData });
+        res = await fetch('https://lizza-facility-management.vercel.app/api/manager/extract-ekyc', { method: 'POST', body: kycFormData });
       } else if (mode === 'qr') {
         if (!qrImage) { setError("Upload/capture a QR Code."); setIsProcessing(false); return; }
         kycFormData.append('file', qrImage);
-        res = await fetch('/api/manager/extract-qr', { method: 'POST', body: kycFormData });
+        res = await fetch('https://lizza-facility-management.vercel.app/api/manager/extract-qr', { method: 'POST', body: kycFormData });
       }
 
       data = await res.json();
@@ -260,7 +260,7 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
 
     setIsProcessing(true);
     try {
-        const res = await fetch(`/api/manager/add-employee`, { method: 'POST', body: submitData });
+        const res = await fetch(`https://lizza-facility-management.vercel.app/api/manager/add-employee`, { method: 'POST', body: submitData });
         const data = await res.json();
         if (res.ok) { 
             alert(`✅ Registration Successful!\n\nThe application has been successfully submitted to the Admin Panel for final verification.\n\nTemporary Login: ${formData.dob.split('-').reverse().join('')}`); 
