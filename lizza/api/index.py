@@ -27,20 +27,61 @@ from .database import SessionLocal, User, EmployeeLocation, OfficeLocation, Site
 
 # Firebase Initialization from Vercel Environment Variables
 firebase_env = os.environ.get("FIREBASE_CREDENTIALS")
+firebase_available = False
+cred = None
+
+def _parse_firebase_credentials(raw_value: str):
+    if not raw_value:
+        return None
+    candidates = [raw_value]
+
+    if "\\n" in raw_value:
+        candidates.append(raw_value.replace("\\n", "\n"))
+
+    for candidate in candidates:
+        try:
+            return json.loads(candidate)
+        except Exception:
+            continue
+
+    try:
+        decoded = base64.b64decode(raw_value).decode("utf-8")
+        return json.loads(decoded)
+    except Exception:
+        pass
+
+    try:
+        import ast
+        return ast.literal_eval(raw_value)
+    except Exception:
+        return None
 
 if firebase_env:
-    try:
-        cred_dict = json.loads(firebase_env)
-        cred = credentials.Certificate(cred_dict)
-        print("Successfully loaded Firebase credentials from environment variable.")
-    except Exception as e:
-        print(f"CRITICAL ERROR: Failed to parse FIREBASE_CREDENTIALS: {e}")
-        raise e 
-else:
-    print("Warning: FIREBASE_CREDENTIALS not found, attempting to use local file.")
-    cred = credentials.Certificate("firebase-adminsdk.json")
+    cred_dict = _parse_firebase_credentials(firebase_env)
+    if cred_dict:
+        try:
+            cred = credentials.Certificate(cred_dict)
+            firebase_available = True
+            print("Successfully loaded Firebase credentials from environment variable.")
+        except Exception as e:
+            print(f"CRITICAL ERROR: Failed to create Firebase credentials: {e}")
+            cred = None
+    else:
+        print("CRITICAL ERROR: Failed to parse FIREBASE_CREDENTIALS from environment.")
 
-if not firebase_admin._apps:
+if not cred:
+    local_cred_path = os.path.join(os.path.dirname(__file__), "firebase-adminsdk.json")
+    if os.path.exists(local_cred_path):
+        try:
+            cred = credentials.Certificate(local_cred_path)
+            firebase_available = True
+            print("Loaded Firebase credentials from local file.")
+        except Exception as e:
+            print(f"Failed to load local Firebase credentials: {e}")
+    else:
+        print("Warning: No valid Firebase credentials available. Firebase messaging will be disabled.")
+
+if firebase_available and not firebase_admin._apps:
     firebase_admin.initialize_app(cred)
 
 app = FastAPI()
@@ -144,16 +185,21 @@ def upload_to_cloud(upload_file: UploadFile) -> str:
     return None
 
 def send_push_notification(token: str, title: str, body: str):
-    if not token: return False
-    message = messaging.Message(
-        notification=messaging.Notification(title=title, body=body),
-        android=messaging.AndroidConfig(priority='high', notification=messaging.AndroidNotification(sound='default', default_vibrate_timings=True)),
-        apns=messaging.APNSConfig(payload=messaging.APNSPayload(aps=messaging.Aps(sound='default', content_available=True))),
-        data={"title": title, "body": body},
-        token=token,
-    )
-    messaging.send(message)
-    return True
+    if not token or not firebase_available:
+        return False
+    try:
+        message = messaging.Message(
+            notification=messaging.Notification(title=title, body=body),
+            android=messaging.AndroidConfig(priority='high', notification=messaging.AndroidNotification(sound='default', default_vibrate_timings=True)),
+            apns=messaging.APNSConfig(payload=messaging.APNSPayload(aps=messaging.Aps(sound='default', content_available=True))),
+            data={"title": title, "body": body},
+            token=token,
+        )
+        messaging.send(message)
+        return True
+    except Exception as e:
+        print(f"Push notification failed: {e}")
+        return False
 
 def send_onboarding_email(to_email, full_name, temp_password, login_email):
     user = os.environ.get("SMTP_USER") 
