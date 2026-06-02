@@ -394,6 +394,9 @@ const FieldOfficerDashboard = () => {
                         <option value="">Select Purpose...</option>
                         <option value="Site visit">Site visit</option>
                         <option value="Training">Training</option>
+                        <option value="Client Meeting">Client Meeting</option>
+                        <option value="Attendance">Attendance</option>
+                        <option value="Bill Submission">Bill Submission</option>
                     </Form.Select>
                     <Form.Control size="sm" as="textarea" rows={2} className="mb-2" placeholder="Remarks..." value={remarks} onChange={e => setRemarks(e.target.value)} />
                     <Form.Group className="mb-3">
