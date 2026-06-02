@@ -9,20 +9,31 @@ export const UserProvider = ({ children }) => {
   useEffect(() => {
     const email = localStorage.getItem('userEmail');
     if (email) {
-      // Must use absolute URL for Capacitor mobile requests
       fetch(`https://lizza-facility-management.vercel.app/api/user/profile?email=${email}`)
         .then(res => res.json())
         .then(data => {
             setUser(data);
             setLoading(false);
-        });
+        })
+        .catch(() => setLoading(false));
     } else {
       setLoading(false);
     }
   }, []);
 
+  const loginUser = (userData) => {
+    setUser(userData);
+    localStorage.setItem('userName', userData.full_name);
+    localStorage.setItem('userRole', userData.user_type);
+  };
+
+  const logoutUser = () => {
+    setUser(null);
+    localStorage.clear();
+  };
+
   return (
-    <UserContext.Provider value={{ user, loading }}>
+    <UserContext.Provider value={{ user, loading, loginUser, logoutUser }}>
       {children}
     </UserContext.Provider>
   );
