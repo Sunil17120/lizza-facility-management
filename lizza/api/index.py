@@ -599,6 +599,10 @@ async def sync_offline_locations(payload: dict, db: Session = Depends(get_db)):
         ping_time = parse_iso_timestamp(ts_str)
         current_site = get_site_at_location(lat, lon, db)
         
+        # Write synced location coordinates to Redis
+        if r:
+            r.set(f"loc:{email}", f"{lat},{lon}", ex=86400)
+            
         if current_site:
             if r:
                 r.set(f"last_inside_time:{email}", ping_time.isoformat(), ex=86400)
@@ -653,6 +657,10 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
     current_site = get_site_at_location(lat, lon, db)
     from .database import Attendance
 
+    # Write the actual coordinates to Redis so the admin dashboard can read them
+    if r:
+        r.set(f"loc:{email}", f"{lat},{lon}", ex=86400)
+
     if current_site:
         if r: 
             r.set(f"last_inside_time:{email}", now_utc.isoformat(), ex=86400)
@@ -701,7 +709,6 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
                 if r: r.delete(f"last_inside_time:{email}")
 
     return { "is_inside": current_site is not None, "status": "inside" if current_site is not None else "outside", "message": "Inside Geofence" if current_site is not None else "Outside Geofence", "site_name": current_site.name if current_site else None }
-
 @app.post("/api/user/checkin")
 def user_checkin(data: CheckAction, db: Session = Depends(get_db)):
     site = get_site_at_location(data.lat, data.lon, db)
