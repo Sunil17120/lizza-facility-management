@@ -155,9 +155,37 @@ const UserDashboard = () => {
     }
   }, [userEmail, updatePendingCount]);
 
+  // WEB GEOLOCATION TRACKER: ONLY START ON WEBSITE
+  useEffect(() => {
+    if (!dbUser || isApp || !navigator.geolocation) return; // Website only
+    
+    // Get initial location
+    navigator.geolocation.getCurrentPosition(
+      (pos) => syncLocation(pos.coords.latitude, pos.coords.longitude),
+      (err) => {
+        console.error("Initial web geolocation failed:", err);
+        setStatus({ type: 'warning', msg: 'Location permission required. Please enable location access.', code: 'outside' });
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+
+    // Watch for continuous location updates
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => syncLocation(pos.coords.latitude, pos.coords.longitude),
+      (err) => console.error("Web geolocation watch failed:", err),
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 }
+    );
+
+    return () => {
+      if (navigator.geolocation && watchId !== null) {
+        navigator.geolocation.clearWatch(watchId);
+      }
+    };
+  }, [dbUser, syncLocation]);
+
   // BACKGROUND TRACKER: ONLY START ON MOBILE APP
   useEffect(() => {
-    if (!dbUser || !isApp) return; // Skip entirely on Website
+    if (!dbUser || !isApp) return; // Skip on Website
     const startBackgroundTracking = async () => {
       await BackgroundGeolocation.addWatcher(
         { 
