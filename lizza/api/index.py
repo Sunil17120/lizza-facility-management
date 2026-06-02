@@ -14,6 +14,7 @@ import numpy as np
 import zlib
 import zxingcpp
 from fastapi.middleware.cors import CORSMiddleware
+
 # Upstash Serverless Redis SDK
 from upstash_redis import Redis as UpstashRedis
 
@@ -34,7 +35,6 @@ if firebase_env:
         print("Successfully loaded Firebase credentials from environment variable.")
     except Exception as e:
         print(f"CRITICAL ERROR: Failed to parse FIREBASE_CREDENTIALS: {e}")
-        # Optionally, you could trigger a fallback here if needed
         raise e 
 else:
     print("Warning: FIREBASE_CREDENTIALS not found, attempting to use local file.")
@@ -46,11 +46,12 @@ if not firebase_admin._apps:
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins, including mobile 'localhost'
+    allow_origins=["*"], 
     allow_credentials=True,
-    allow_methods=["*"],  # Allows POST, GET, OPTIONS, etc.
+    allow_methods=["*"], 
     allow_headers=["*"],
 )
+
 class SafeRedisClient:
     def __init__(self, client):
         self._client = client
@@ -59,18 +60,15 @@ class SafeRedisClient:
         return bool(self._client)
 
     def get(self, key):
-        if not self._client:
-            return None
+        if not self._client: return None
         return self._client.get(key)
 
     def set(self, key, value, ex=None):
-        if not self._client:
-            return None
+        if not self._client: return None
         return self._client.set(key, value, ex=ex)
 
     def delete(self, *keys):
-        if not self._client:
-            return None
+        if not self._client: return None
         return self._client.delete(*keys)
 
 upstash_url = os.environ.get("Redis_url_KV_REST_API_URL")
@@ -82,17 +80,28 @@ init_db()
 
 PEPPER = os.environ.get("SECRET_PEPPER", "change_me_in_vercel_settings")
 
+# --- HELPER FUNCTIONS ---
+
+def parse_iso_timestamp(ts_str: Optional[str]) -> datetime:
+    """Parses frontend ISO strings to UTC datetimes safely."""
+    if not ts_str: return datetime.utcnow()
+    try:
+        clean_ts = ts_str.replace('Z', '+00:00')
+        return datetime.fromisoformat(clean_ts).replace(tzinfo=None)
+    except:
+        return datetime.utcnow()
+
 def convert_utc_to_ist(utc_dt):
     if not utc_dt: return None
     if utc_dt.tzinfo is not None: utc_dt = utc_dt.replace(tzinfo=None)
     return utc_dt + timedelta(hours=5, minutes=30)
 
-def is_time_between(start_str, end_str, check_str):
-    if not start_str or not end_str: return False
-    if start_str <= end_str:
-        return start_str <= check_str <= end_str
-    else: 
-        return start_str <= check_str or check_str <= end_str
+def get_distance(lat1, lon1, lat2, lon2):
+    R = 6371000 
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi, dlambda = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
+    a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
 
 def get_site_at_location(lat, lon, db):
     offices = db.query(OfficeLocation).all()
@@ -105,17 +114,70 @@ def get_site_at_location(lat, lon, db):
         if distance <= office.radius:
             return office
     return None
+
 def safe_decrypt(encrypted_data: str) -> str:
     if not encrypted_data or str(encrypted_data).strip() == "" or encrypted_data in ["null", "undefined"]:
         return "N/A"
     try:
         from .database import cipher
-        # Ensure it is explicitly converted to a string before encoding
         return cipher.decrypt(str(encrypted_data).encode()).decode()
     except Exception as e:
-        # THIS WILL PRINT THE EXACT REASON TO VERCEL LOGS
-        print(f"CRITICAL DECRYPTION FAILURE -> Data: {encrypted_data} | Error: {str(e)}") 
         return "Decryption Error"
+
+def safe_encrypt(data: str) -> str:
+    if not data or str(data).strip() == "" or data == "null" or data == "undefined":
+        return None
+    return cipher.encrypt(str(data).encode()).decode()
+
+def get_secure_hash(password: str, salt: str):
+    return hashlib.sha256((password + salt + PEPPER).encode()).hexdigest()
+
+def upload_to_cloud(upload_file: UploadFile) -> str:
+    if not upload_file or not upload_file.filename: return None
+    image_bytes = upload_file.file.read()
+    encoded_image = base64.b64encode(image_bytes).decode('utf-8')
+    url = "https://api.imgbb.com/1/upload"
+    payload = {"key": os.environ.get("IMGBB_API_KEY"), "image": encoded_image}
+    response = requests.post(url, data=payload)
+    res_data = response.json()
+    if res_data.get("success"): return res_data["data"]["url"]
+    return None
+
+def send_push_notification(token: str, title: str, body: str):
+    if not token: return False
+    message = messaging.Message(
+        notification=messaging.Notification(title=title, body=body),
+        android=messaging.AndroidConfig(priority='high', notification=messaging.AndroidNotification(sound='default', default_vibrate_timings=True)),
+        apns=messaging.APNSConfig(payload=messaging.APNSPayload(aps=messaging.Aps(sound='default', content_available=True))),
+        data={"title": title, "body": body},
+        token=token,
+    )
+    messaging.send(message)
+    return True
+
+def send_onboarding_email(to_email, full_name, temp_password, login_email):
+    user = os.environ.get("SMTP_USER") 
+    pw = os.environ.get("SMTP_PASS")
+    host = os.environ.get("SMTP_SERVER", "smtp.gmail.com")
+    if not user or not pw: return False
+    
+    body = f"Hello {full_name},\n\nYour account is verified.\nEmail: {login_email}\nPassword: Date of Birth"
+    msg = MIMEText(body)
+    msg['Subject'], msg['From'], msg['To'] = "LIZZA - Verification Successful", user, to_email
+    
+    server = smtplib.SMTP(host, 587)
+    server.starttls()
+    server.login(user, pw)
+    server.sendmail(user, to_email, msg.as_string()) 
+    server.quit()
+    return True
+
+def get_db():
+    db = SessionLocal()
+    yield db
+    db.close()
+
+# --- PYDANTIC SCHEMAS ---
 
 class AuthRequest(BaseModel): 
     email: str
@@ -136,104 +198,12 @@ class CheckAction(BaseModel):
     email: str
     lat: Optional[float] = None
     lon: Optional[float] = None
+    timestamp: Optional[str] = None
+    actionType: Optional[str] = None
 
 class FCMTokenUpdate(BaseModel):
     email: str
     fcm_token: str
-
-def get_db():
-    db = SessionLocal()
-    yield db
-    db.close()
-
-def send_push_notification(token: str, title: str, body: str):
-    if not token: 
-        return False
-        
-    message = messaging.Message(
-        notification=messaging.Notification(
-            title=title,
-            body=body
-        ),
-        # Forces Android to wake up and display immediately
-        android=messaging.AndroidConfig(
-            priority='high',
-            notification=messaging.AndroidNotification(
-                sound='default',
-                default_vibrate_timings=True
-            )
-        ),
-        # Forces iOS to process in the background
-        apns=messaging.APNSConfig(
-            payload=messaging.APNSPayload(
-                aps=messaging.Aps(
-                    sound='default',
-                    content_available=True,
-                )
-            )
-        ),
-        # Ensures Capacitor plugins can read the payload if the user clicks it
-        data={
-            "title": title,
-            "body": body
-        },
-        token=token,
-    )
-    
-    messaging.send(message)
-    return True
-
-def validate_geofence_for_user(db, user, latitude: float, longitude: float):
-    if not user.location_id: return
-    office = db.query(OfficeLocation).filter(OfficeLocation.id == user.location_id).first()
-    if not office: return
-    distance = get_distance(latitude, longitude, office.lat, office.lon)
-    if distance > office.radius:
-        raise HTTPException(400, f"Geofence validation failed. You are {int(distance)}m away.")
-
-def get_secure_hash(password: str, salt: str):
-    return hashlib.sha256((password + salt + PEPPER).encode()).hexdigest()
-
-def upload_to_cloud(upload_file: UploadFile) -> str:
-    if not upload_file or not upload_file.filename: 
-        return None
-    image_bytes = upload_file.file.read()
-    encoded_image = base64.b64encode(image_bytes).decode('utf-8')
-    url = "https://api.imgbb.com/1/upload"
-    payload = {"key": os.environ.get("IMGBB_API_KEY"), "image": encoded_image}
-    response = requests.post(url, data=payload)
-    res_data = response.json()
-    if res_data.get("success"): return res_data["data"]["url"]
-    return None
-
-def send_onboarding_email(to_email, full_name, temp_password, login_email):
-    user = os.environ.get("SMTP_USER") 
-    pw = os.environ.get("SMTP_PASS")
-    host = os.environ.get("SMTP_SERVER", "smtp.gmail.com")
-    if not user or not pw: return False
-    
-    body = f"Hello {full_name},\n\nYour account is verified.\nEmail: {login_email}\nPassword: Date of Birth"
-    msg = MIMEText(body)
-    msg['Subject'], msg['From'], msg['To'] = "LIZZA - Verification Successful", user, to_email
-    
-    server = smtplib.SMTP(host, 587)
-    server.starttls()
-    server.login(user, pw)
-    server.sendmail(user, to_email, msg.as_string()) 
-    server.quit()
-    return True
-
-def get_distance(lat1, lon1, lat2, lon2):
-    R = 6371000 
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    dphi, dlambda = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
-    a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2
-    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
-
-def safe_encrypt(data: str) -> str:
-    if not data or str(data).strip() == "" or data == "null" or data == "undefined":
-        return None
-    return cipher.encrypt(str(data).encode()).decode()
 
 # --- AUTH & PROFILES ---
 
@@ -249,10 +219,8 @@ def login(data: AuthRequest, db: Session = Depends(get_db)):
 @app.post("/api/user/update-fcm-token")
 def update_fcm_token(data: FCMTokenUpdate, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == data.email.lower().strip()).first()
-
     if user:
         user.fcm_token = data.fcm_token
-    
         db.commit()
         return {"status": "success"}
     raise HTTPException(404, "User not found")
@@ -260,9 +228,7 @@ def update_fcm_token(data: FCMTokenUpdate, db: Session = Depends(get_db)):
 @app.get("/api/user/profile")
 def get_user_profile(email: str, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == email.lower().strip()).first()
-    print(f"FCM TOKEN: {user.fcm_token if user else None}")
     if not user: raise HTTPException(status_code=404, detail="User not found")
-    
     from .database import Attendance
     checked_in = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).count() > 0
     return {
@@ -290,7 +256,6 @@ async def add_employee(
     first_name: str = Form(...), last_name: str = Form(...), phone_number: str = Form(...), 
     personal_email: str = Form(...), dob: str = Form(...), designation: str = Form(...), 
     kyc_mode: str = Form(...), userType: str = Form("employee"), 
-    
     gender: Optional[str] = Form(None), marital_status: Optional[str] = Form(None), 
     identity_mark: Optional[str] = Form(None), father_name: Optional[str] = Form(None), 
     mother_name: Optional[str] = Form(None), blood_group: Optional[str] = Form(None), 
@@ -298,42 +263,32 @@ async def add_employee(
     category: Optional[str] = Form(None), religion: Optional[str] = Form(None), 
     nationality: Optional[str] = Form(None), medical_remarks: Optional[str] = Form(None), 
     unit_name: Optional[str] = Form(None),
-    
     perm_address: Optional[str] = Form(None), perm_state: Optional[str] = Form(None), 
     perm_pin: Optional[str] = Form(None), perm_mobile: Optional[str] = Form(None),
     temp_address: Optional[str] = Form(None), temp_state: Optional[str] = Form(None), 
     temp_pin: Optional[str] = Form(None), temp_mobile: Optional[str] = Form(None),
-    
     languages_json: Optional[str] = Form(None), education_json: Optional[str] = Form(None), 
     experience_json: Optional[str] = Form(None), family_json: Optional[str] = Form(None), 
     references_json: Optional[str] = Form(None),
-    
     bank_name: Optional[str] = Form(None), account_number: Optional[str] = Form(None), 
     ifsc_code: Optional[str] = Form(None), aadhar_number: Optional[str] = Form(None), 
     pan_number: Optional[str] = Form(None), voter_id: Optional[str] = Form(None), 
     driving_licence: Optional[str] = Form(None), passport_no: Optional[str] = Form(None),
-    
     department: Optional[str] = Form("Operations"), manager_id: Optional[int] = Form(None),
     location_id: Optional[int] = Form(None), shift_start: Optional[str] = Form(None), shift_end: Optional[str] = Form(None),
-    
     profile_photo: Optional[UploadFile] = File(None), aadhar_photo: Optional[UploadFile] = File(None),
     pan_photo: Optional[UploadFile] = File(None), voter_photo: Optional[UploadFile] = File(None),
     dl_photo: Optional[UploadFile] = File(None), passport_photo: Optional[UploadFile] = File(None),
     fingerprints_left: Optional[UploadFile] = File(None), fingerprints_right: Optional[UploadFile] = File(None),
     bank_passbook: Optional[UploadFile] = File(None),
-    
-    extra_files: Optional[List[UploadFile]] = File(None),
-    extra_docs_info: Optional[str] = Form(None),
-    
+    extra_files: Optional[List[UploadFile]] = File(None), extra_docs_info: Optional[str] = Form(None),
     db: Session = Depends(get_db)
 ):
     if not phone_number.isdigit() or len(phone_number) != 10:
         raise HTTPException(status_code=422, detail="Primary Mobile Number must be exactly 10 digits.")
-        
     email_regex = r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$"
     if not re.match(email_regex, personal_email):
         raise HTTPException(status_code=422, detail="Invalid Personal Email format.")
-
     if kyc_mode == 'without_aadhaar' and aadhar_number:
         if not aadhar_number.isdigit() or len(aadhar_number) != 12:
             raise HTTPException(status_code=422, detail="Aadhaar Number must be exactly 12 digits.")
@@ -361,11 +316,7 @@ async def add_employee(
             if matched_info:
                 uploaded_url = upload_to_cloud(file)
                 if uploaded_url:
-                    final_extra_docs.append({
-                        "title": matched_info.get("title", "Untitled Document"),
-                        "path": uploaded_url
-                    })
-
+                    final_extra_docs.append({"title": matched_info.get("title", "Untitled Document"), "path": uploaded_url})
     extra_documents_json_str = json.dumps(final_extra_docs) if final_extra_docs else None
 
     new_user = User(
@@ -377,27 +328,19 @@ async def add_employee(
         father_name=father_name, mother_name=mother_name, blood_group=blood_group,
         height=height, caste=caste, category=category, religion=religion, nationality=nationality, 
         medical_remarks=medical_remarks, unit_name=unit_name, designation=designation, department=department, kyc_mode=kyc_mode,
-        
         perm_address=perm_address, perm_state=perm_state, perm_pin=perm_pin, perm_mobile=perm_mobile,
         temp_address=temp_address, temp_state=temp_state, temp_pin=temp_pin, temp_mobile=temp_mobile,
-        
         languages_json=languages_json, education_json=education_json, experience_json=experience_json, 
-        family_json=family_json, references_json=references_json,
-        extra_documents_json=extra_documents_json_str, 
-        
+        family_json=family_json, references_json=references_json, extra_documents_json=extra_documents_json_str, 
         aadhar_enc=safe_encrypt(aadhar_number), pan_enc=safe_encrypt(pan_number),
         account_number_enc=safe_encrypt(account_number), voter_id_enc=safe_encrypt(voter_id),
         driving_licence_enc=safe_encrypt(driving_licence), passport_no_enc=safe_encrypt(passport_no),
         bank_name=bank_name, ifsc_code=ifsc_code,
-        
         profile_photo_path=profile_url, aadhar_photo_path=aadhar_url,
         pan_photo_path=pan_url, voter_photo_path=voter_url, dl_photo_path=dl_url, passport_photo_path=passport_url,
-        fingerprints_left_path=left_fp_url, fingerprints_right_path=right_fp_url,
-        bank_passbook_path=passbook_url, 
-        
+        fingerprints_left_path=left_fp_url, fingerprints_right_path=right_fp_url, bank_passbook_path=passbook_url, 
         shift_start=shift_start if shift_start else None, shift_end=shift_end if shift_end else None
     )
-    
     db.add(new_user)
     db.commit()
     return {"status": "success", "official_email": base_email, "message": "Employee registered successfully."}
@@ -470,37 +413,25 @@ def get_live_tracking(admin_email: str, db: Session = Depends(get_db)):
             site_name = site.name if site else None
         
         results.append({
-            "user_id": u.id,
-            "email": u.email,
-            "name": u.full_name,
-            "user_type": u.user_type,
-            "lat": lat,
-            "lon": lon,
-            "present": u.is_present,
-            "site_name": site_name,
-            "manager_id": u.manager_id,
-            "last_ping": r.get(f"ping_time:{u.email}") if r else None
+            "user_id": u.id, "email": u.email, "name": u.full_name, "user_type": u.user_type,
+            "lat": lat, "lon": lon, "present": u.is_present, "site_name": site_name,
+            "manager_id": u.manager_id, "last_ping": r.get(f"ping_time:{u.email}") if r else None
         })
     return results
 
 @app.post("/api/admin/update-employee-inline")
 def update_employee_inline(data: dict, db: Session = Depends(get_db)):
     user_id = data.get("id")
-    if user_id:
-        user = db.query(User).filter(User.id == user_id).first()
-    else:
-        user = db.query(User).filter(User.email == data.get("email")).first()
-        
+    if user_id: user = db.query(User).filter(User.id == user_id).first()
+    else: user = db.query(User).filter(User.email == data.get("email")).first()
     if not user: raise HTTPException(404, "User not found")
     
-    # 1. Standard Info
     if "full_name" in data: user.full_name = data.get("full_name")
     if "email" in data: user.email = data.get("email")
     if "phone_number" in data: user.phone_number = data.get("phone_number")
     if "personal_email" in data: user.personal_email = data.get("personal_email")
     if "dob" in data: user.dob = data.get("dob")
     
-    # 2. Work & Role
     if "designation" in data: user.designation = data.get("designation")
     if "department" in data: user.department = data.get("department")
     if "user_type" in data: user.user_type = data.get("user_type")
@@ -509,7 +440,6 @@ def update_employee_inline(data: dict, db: Session = Depends(get_db)):
     if "shift_start" in data: user.shift_start = data.get("shift_start")
     if "shift_end" in data: user.shift_end = data.get("shift_end")
 
-    # 3. Addresses
     if "perm_address" in data: user.perm_address = data.get("perm_address")
     if "perm_state" in data: user.perm_state = data.get("perm_state")
     if "perm_pin" in data: user.perm_pin = data.get("perm_pin")
@@ -519,24 +449,14 @@ def update_employee_inline(data: dict, db: Session = Depends(get_db)):
     if "temp_pin" in data: user.temp_pin = data.get("temp_pin")
     if "temp_mobile" in data: user.temp_mobile = data.get("temp_mobile")
 
-    # 4. Secure Bank & KYC (Only update and encrypt if Admin typed a NEW value)
     if "bank_name" in data: user.bank_name = data.get("bank_name")
     if "ifsc_code" in data: user.ifsc_code = data.get("ifsc_code")
     
-    if data.get("account_number_raw") and data.get("account_number_raw").strip() != "":
-        user.account_number_enc = safe_encrypt(data.get("account_number_raw"))
-        
-    if data.get("aadhar_raw") and data.get("aadhar_raw").strip() != "":
-        user.aadhar_enc = safe_encrypt(data.get("aadhar_raw"))
-        
-    if data.get("pan_raw") and data.get("pan_raw").strip() != "":
-        user.pan_enc = safe_encrypt(data.get("pan_raw"))
-        
-    if data.get("voter_id_raw") and data.get("voter_id_raw").strip() != "":
-        user.voter_id_enc = safe_encrypt(data.get("voter_id_raw"))
-
-    if data.get("dl_raw") and data.get("dl_raw").strip() != "":
-        user.driving_licence_enc = safe_encrypt(data.get("dl_raw"))
+    if data.get("account_number_raw") and data.get("account_number_raw").strip() != "": user.account_number_enc = safe_encrypt(data.get("account_number_raw"))
+    if data.get("aadhar_raw") and data.get("aadhar_raw").strip() != "": user.aadhar_enc = safe_encrypt(data.get("aadhar_raw"))
+    if data.get("pan_raw") and data.get("pan_raw").strip() != "": user.pan_enc = safe_encrypt(data.get("pan_raw"))
+    if data.get("voter_id_raw") and data.get("voter_id_raw").strip() != "": user.voter_id_enc = safe_encrypt(data.get("voter_id_raw"))
+    if data.get("dl_raw") and data.get("dl_raw").strip() != "": user.driving_licence_enc = safe_encrypt(data.get("dl_raw"))
 
     db.commit()
     return {"status": "updated"}
@@ -547,17 +467,13 @@ def delete_employee(user_id: int, db: Session = Depends(get_db)):
     if not user: raise HTTPException(status_code=404, detail="Employee not found.")
     if user.user_type == 'admin' or user.email == 'admin@lizza.com':
         raise HTTPException(status_code=403, detail="Security protocol prevents deleting the Super Admin account.")
-
     db.query(User).filter(User.manager_id == user_id).update({"manager_id": None})
     db.query(EmployeeLocation).filter(EmployeeLocation.user_id == user_id).delete()
     db.query(SiteVisit).filter(SiteVisit.officer_id == user_id).delete()
     db.query(SiteStay).filter(SiteStay.officer_id == user_id).delete()
-    
     from .database import Attendance
     db.query(Attendance).filter(Attendance.user_id == user_id).delete()
-
     db.execute(text("DELETE FROM field_visit_logs WHERE officer_id = :uid"), {"uid": user_id})
-
     db.delete(user)
     db.commit()
     return {"status": "success", "message": "Employee and all related records deleted."}
@@ -583,20 +499,202 @@ def delete_attendance(attendance_id: int, db: Session = Depends(get_db)):
     from .database import Attendance
     att = db.query(Attendance).filter(Attendance.id == attendance_id).first()
     if not att: raise HTTPException(status_code=404, detail="Attendance record not found")
-
     if att.checkout_time is None:
         user = db.query(User).filter(User.id == att.user_id).first()
-        if user:
-            user.is_present = False
-
+        if user: user.is_present = False
     db.delete(att)
     db.commit()
     return {"status": "success"}
 
+# --- OFFLINE/ONLINE GEOFENCING & ATTENDANCE ACTIONS ---
+
+@app.post("/api/user/sync-offline-locations")
+async def sync_offline_locations(payload: dict, db: Session = Depends(get_db)):
+    """Retroactively parses background location queues to build timeline blocks."""
+    email = payload.get("email")
+    locations = payload.get("locations", [])
+    if not email or not locations: return {"status": "success", "synced": 0}
+        
+    user = db.query(User).filter(User.email == email.lower().strip()).first()
+    if not user: raise HTTPException(404, "User not found")
+    
+    locations.sort(key=lambda x: x.get("timestamp", ""))
+    from .database import Attendance
+    
+    for loc in locations:
+        lat, lon, ts_str = loc.get("lat"), loc.get("lon"), loc.get("timestamp")
+        if not lat or not lon or not ts_str: continue
+        
+        ping_time = parse_iso_timestamp(ts_str)
+        current_site = get_site_at_location(lat, lon, db)
+        
+        if current_site:
+            if r:
+                r.set(f"last_inside_time:{email}", ping_time.isoformat(), ex=86400)
+                r.set(f"ping_time:{email}", ping_time.isoformat(), ex=86400)
+            
+            if not user.is_present:
+                open_att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
+                if not open_att:
+                    att = Attendance(user_id=user.id, checkin_time=ping_time, date=ping_time, location_id=current_site.id)
+                    user.is_present = True
+                    db.add(att)
+                    if user.user_type == 'field_officer':
+                        db.add(SiteStay(officer_id=user.id, location_id=current_site.id, entry_time=ping_time))
+                    db.commit()
+        else:
+            if r: r.set(f"ping_time:{email}", ping_time.isoformat(), ex=86400)
+            if user.is_present:
+                last_inside_str = r.get(f"last_inside_time:{email}")
+                last_inside_time = datetime.fromisoformat(last_inside_str) if last_inside_str else ping_time
+                
+                if (ping_time - last_inside_time).total_seconds() / 60.0 >= 1.0:
+                    open_att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
+                    if open_att:
+                        open_att.checkout_time = ping_time
+                        open_att.duration_seconds = int((ping_time - open_att.checkin_time).total_seconds())
+                    stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
+                    if stay: stay.exit_time = ping_time
+                    user.is_present = False
+                    db.commit()
+                    if r: r.delete(f"last_inside_time:{email}")
+                    
+    return {"status": "success", "synced": len(locations)}
+
+@app.post("/api/user/update-location")
+async def update_location(email: str, lat: float, lon: float, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == email.lower().strip()).first()
+    if not user: return {"status": "error", "message": "User not found"}
+    
+    now_utc = datetime.utcnow()
+    current_site = get_site_at_location(lat, lon, db)
+    from .database import Attendance
+
+    if current_site:
+        if r: 
+            r.set(f"last_inside_time:{email}", now_utc.isoformat(), ex=86400)
+            r.set(f"ping_time:{email}", now_utc.isoformat(), ex=86400)
+
+        if not user.is_present:
+            open_attendance = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
+            if not open_attendance:
+                attendance = Attendance(user_id=user.id, checkin_time=now_utc, date=now_utc, location_id=current_site.id)
+                user.is_present = True
+                db.add(attendance)
+                if user.user_type == 'field_officer':
+                    db.add(SiteStay(officer_id=user.id, location_id=current_site.id, entry_time=now_utc))
+                db.commit()
+                if getattr(user, 'fcm_token', None): send_push_notification(user.fcm_token, "✅ Auto Check-In Done", f"You are inside {current_site.name} and have been checked in.")
+    else:
+        if r: r.set(f"ping_time:{email}", now_utc.isoformat(), ex=86400)
+
+        if user.is_present:
+            last_inside_str = r.get(f"last_inside_time:{email}")
+            last_inside_time = datetime.fromisoformat(last_inside_str) if last_inside_str else now_utc
+            
+            if (now_utc - last_inside_time).total_seconds() / 60.0 >= 1.0:
+                open_attendance = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
+                if open_attendance:
+                    open_attendance.checkout_time = now_utc
+                    open_attendance.duration_seconds = int((now_utc - open_attendance.checkin_time).total_seconds())
+                active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
+                if active_stay:
+                    active_stay.exit_time = now_utc
+                user.is_present = False
+                db.commit()
+                if getattr(user, 'fcm_token', None): send_push_notification(user.fcm_token, "🚪 Auto Check-Out Done", "You left the site boundary and have been automatically checked out.")
+                if r: r.delete(f"last_inside_time:{email}")
+
+    return { "is_inside": current_site is not None, "status": "inside" if current_site is not None else "outside", "message": "Inside Geofence" if current_site is not None else "Outside Geofence", "site_name": current_site.name if current_site else None }
+
+@app.post("/api/user/checkin")
+def user_checkin(data: CheckAction, db: Session = Depends(get_db)):
+    site = get_site_at_location(data.lat, data.lon, db)
+    if not site: raise HTTPException(400, "You are not inside any valid geofence area.")
+    user = db.query(User).filter(User.email == data.email.lower().strip()).first()
+    if not user: raise HTTPException(404, "User not found")
+    
+    from .database import Attendance
+    now_utc = parse_iso_timestamp(data.timestamp)
+
+    open_attendance = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
+    if open_attendance: return {"status": "success", "message": "Already checked in.", "checked_in": True}
+
+    attendance = Attendance(user_id=user.id, checkin_time=now_utc, date=now_utc, location_id=site.id)
+    user.is_present = True
+    db.add(attendance)
+    if user.user_type == 'field_officer': db.add(SiteStay(officer_id=user.id, location_id=site.id, entry_time=now_utc))
+    db.commit()
+    
+    if r:
+        r.set(f"ping_time:{user.email}", now_utc.isoformat(), ex=86400)
+        r.delete(f"warning_sent:{user.email}")
+    return {"status": "success", "message": f"Checked In at {site.name}", "site_name": site.name}
+
+@app.post("/api/user/checkout")
+def user_checkout(data: CheckAction, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == data.email.lower().strip()).first()
+    if not user: raise HTTPException(404, "User not found")
+        
+    from .database import Attendance
+    now_utc = parse_iso_timestamp(data.timestamp)
+    
+    open_attendance = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
+    if open_attendance:
+        open_attendance.checkout_time = now_utc
+        open_attendance.duration_seconds = int((now_utc - open_attendance.checkin_time).total_seconds())
+        
+    active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
+    if active_stay: active_stay.exit_time = now_utc
+        
+    user.is_present = False
+    db.commit()
+    
+    if r:
+        r.delete(f"ping_time:{user.email}")
+        r.delete(f"warning_sent:{user.email}")
+    return {"status": "success", "message": "Successfully checked out."}
+
+@app.get("/api/cron/auto-checkout")
+def cron_auto_checkout(db: Session = Depends(get_db)):
+    from .database import Attendance
+    now_utc = datetime.utcnow()
+    active_users = db.query(User).filter(User.is_present == True).all()
+    swept_users = []
+    
+    for user in active_users:
+        last_ping_str = r.get(f"ping_time:{user.email}")
+        needs_checkout = False
+        
+        if not last_ping_str: needs_checkout = True
+        else:
+            last_ping_time = datetime.fromisoformat(last_ping_str)
+            if (now_utc - last_ping_time).total_seconds() / 60.0 >= 60: needs_checkout = True
+                    
+        if needs_checkout:
+            att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
+            if att:
+                att.checkout_time = now_utc
+                att.duration_seconds = int((att.checkout_time - att.checkin_time).total_seconds())
+            active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
+            if active_stay: active_stay.exit_time = now_utc
+                
+            user.is_present = False
+            db.commit()
+            if getattr(user, 'fcm_token', None):
+                send_push_notification(token=user.fcm_token, title="⏱️ Hourly Sweep Check-Out", body="You were automatically checked out by the system due to loss of background location data.")
+            if r:
+                r.delete(f"ping_time:{user.email}")
+                r.delete(f"last_inside_time:{user.email}")
+                r.delete(f"warning_sent:{user.email}")
+            swept_users.append(user.email)
+            
+    return {"status": "success", "message": "Hourly cron sweep complete", "auto_checked_out": swept_users}
+
 @app.post("/api/field-officer/log-visit")
 async def log_site_visit(
     email: str = Form(...), location_id: int = Form(...), purpose: str = Form(...), remarks: str = Form(""),
-    lat: float = Form(...), lon: float = Form(...), photo: UploadFile = File(...), db: Session = Depends(get_db)
+    lat: float = Form(...), lon: float = Form(...), timestamp: str = Form(None), photo: UploadFile = File(...), db: Session = Depends(get_db)
 ):
     user = db.query(User).filter(User.email == email.lower().strip()).first()
     if not user or user.user_type != 'field_officer': raise HTTPException(403, "Unauthorized")
@@ -604,15 +702,23 @@ async def log_site_visit(
     if not site: raise HTTPException(404, "Site not found")
 
     distance = get_distance(lat, lon, site.lat, site.lon)
-    if distance > site.radius: raise HTTPException(400, f"Geotag validation failed. You are {int(distance)}m away from the site. Must be within {site.radius}m.")
+    if distance > site.radius: raise HTTPException(400, f"Geotag validation failed. You are {int(distance)}m away from the site.")
 
-    now_utc = datetime.utcnow()
-    active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
-    if not active_stay or active_stay.location_id != site.id:
+    now_utc = parse_iso_timestamp(timestamp)
+    
+    # Verify stay at time of offline capture OR current time
+    active_stay = db.query(SiteStay).filter(
+        SiteStay.officer_id == user.id, 
+        SiteStay.location_id == site.id,
+        SiteStay.entry_time <= now_utc,
+        (SiteStay.exit_time == None) | (SiteStay.exit_time >= now_utc)
+    ).first()
+    
+    if not active_stay:
         raise HTTPException(400, "You must Check-In at the site before uploading a visit photo.")
 
     photo_url = upload_to_cloud(photo)
-    visit = SiteVisit(officer_id=user.id, location_id=site.id, purpose=purpose, remarks=remarks, photo_path=photo_url)
+    visit = SiteVisit(officer_id=user.id, location_id=site.id, purpose=purpose, remarks=remarks, photo_path=photo_url, visit_time=now_utc)
     db.add(visit)
     db.commit()
     
@@ -630,10 +736,7 @@ def get_my_visits(email: str, db: Session = Depends(get_db)):
     } for v, loc in visits]
 
 @app.get("/api/admin/reports/monthly-field-visits")
-def get_monthly_field_visits(
-    month: int, year: int, officer_id: Optional[int] = None, location_id: Optional[int] = None,
-    user_type: Optional[str] = None, db: Session = Depends(get_db)
-):
+def get_monthly_field_visits(month: int, year: int, officer_id: Optional[int] = None, location_id: Optional[int] = None, user_type: Optional[str] = None, db: Session = Depends(get_db)):
     _, last_day = calendar.monthrange(year, month)
     start_utc = datetime(year, month, 1, 0, 0, 0) - timedelta(hours=5, minutes=30)
     end_utc = datetime(year, month, last_day, 23, 59, 59) - timedelta(hours=5, minutes=30)
@@ -649,15 +752,9 @@ def get_monthly_field_visits(
     
     for v, u, loc in results:
         ist_time = convert_utc_to_ist(v.visit_time)
-        
-        stay = db.query(SiteStay).filter(
-            SiteStay.officer_id == v.officer_id, 
-            SiteStay.location_id == v.location_id, 
-            SiteStay.entry_time <= v.visit_time + timedelta(minutes=5) 
-        ).order_by(SiteStay.entry_time.desc()).first()
+        stay = db.query(SiteStay).filter(SiteStay.officer_id == v.officer_id, SiteStay.location_id == v.location_id, SiteStay.entry_time <= v.visit_time + timedelta(minutes=5)).order_by(SiteStay.entry_time.desc()).first()
 
         entry_str, exit_str, duration_str = "N/A", "N/A", "N/A"
-        
         if stay and (stay.exit_time is None or stay.exit_time >= v.visit_time - timedelta(minutes=5)):
             entry_ist = convert_utc_to_ist(stay.entry_time)
             entry_str = entry_ist.strftime("%I:%M %p") if entry_ist else "N/A"
@@ -678,10 +775,7 @@ def get_monthly_field_visits(
     return report_data
 
 @app.get("/api/admin/reports/monthly-attendance")
-def get_monthly_attendance(
-    month: int, year: int, user_id: Optional[int] = None, location_id: Optional[int] = None,
-    user_type: Optional[str] = None, db: Session = Depends(get_db)
-):
+def get_monthly_attendance(month: int, year: int, user_id: Optional[int] = None, location_id: Optional[int] = None, user_type: Optional[str] = None, db: Session = Depends(get_db)):
     _, last_day = calendar.monthrange(year, month)
     start_utc = datetime(year, month, 1, 0, 0, 0) - timedelta(hours=5, minutes=30)
     end_utc = datetime(year, month, last_day, 23, 59, 59) - timedelta(hours=5, minutes=30)
@@ -703,252 +797,12 @@ def get_monthly_attendance(
             hours, remainder = divmod(att.duration_seconds, 3600)
             duration_str = f"{int(hours)}h {int(remainder // 60)}m"
         report_data.append({
-            "attendance_id": att.id,
-            "date": checkin_ist.strftime("%d-%b-%Y") if checkin_ist else "N/A",
-            "employee_id": u.blockchain_id or f"EMP-{u.id}",
-            "employee_name": u.full_name,
-            "user_type": u.user_type,
-            "site_name": loc.name if loc else 'N/A',
-            "checkin_time": checkin_ist.strftime("%I:%M %p") if checkin_ist else "N/A",
-            "checkout_time": checkout_ist.strftime("%I:%M %p") if checkout_ist else "N/A",
-            "duration": duration_str,
+            "attendance_id": att.id, "date": checkin_ist.strftime("%d-%b-%Y") if checkin_ist else "N/A",
+            "employee_id": u.blockchain_id or f"EMP-{u.id}", "employee_name": u.full_name, "user_type": u.user_type,
+            "site_name": loc.name if loc else 'N/A', "checkin_time": checkin_ist.strftime("%I:%M %p") if checkin_ist else "N/A",
+            "checkout_time": checkout_ist.strftime("%I:%M %p") if checkout_ist else "N/A", "duration": duration_str,
         })
     return report_data
-
-# --- GEOFENCING & ATTENDANCE ACTIONS ---
-
-@app.post("/api/user/update-location")
-async def update_location(email: str, lat: float, lon: float, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == email.lower().strip()).first()
-    if not user: return {"status": "error", "message": "User not found"}
-    
-    now_utc = datetime.utcnow()
-    if r: r.set(f"ping_time:{email}", now_utc.isoformat(), ex=86400)
-
-    current_site = get_site_at_location(lat, lon, db)
-    
-    if user.user_type == 'field_officer' and current_site and user.is_present:
-        active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
-        if not active_stay or active_stay.location_id != current_site.id:
-            if active_stay: active_stay.exit_time = now_utc
-            db.add(SiteStay(officer_id=user.id, location_id=current_site.id, entry_time=now_utc))
-            db.commit()
-
-    response = {
-        "is_inside": current_site is not None,
-        "status": "inside" if current_site is not None else "outside",
-        "message": "Inside Geofence" if current_site is not None else "Outside Geofence",
-        "site_name": current_site.name if current_site else None
-    }
-    return response
-
-@app.post("/api/user/checkin")
-def user_checkin(data: CheckAction, db: Session = Depends(get_db)):
-    site = get_site_at_location(data.lat, data.lon, db)
-    if not site:
-        raise HTTPException(400, "You are not inside any valid geofence area.")
-
-    user = db.query(User).filter(User.email == data.email.lower().strip()).first()
-    if not user:
-        raise HTTPException(404, "User not found")
-    
-    from .database import Attendance
-    open_attendance = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
-    if open_attendance:
-        return {"status": "success", "message": "Already checked in.", "checked_in": True}
-
-    now_utc = datetime.utcnow()
-    attendance = Attendance(user_id=user.id, checkin_time=now_utc, date=now_utc, location_id=site.id)
-    user.is_present = True
-    db.add(attendance)
-
-    if user.user_type == 'field_officer':
-        db.add(SiteStay(officer_id=user.id, location_id=site.id, entry_time=now_utc))
-    db.commit()
-    
-    if r:
-        r.set(f"ping_time:{user.email}", now_utc.isoformat(), ex=86400)
-        r.delete(f"warning_sent:{user.email}")
-        
-    return {"status": "success", "message": f"Checked In at {site.name}", "site_name": site.name}
-
-@app.post("/api/user/checkout")
-def user_checkout(data: CheckAction, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == data.email.lower().strip()).first()
-    if not user:
-        raise HTTPException(404, "User not found")
-        
-    from .database import Attendance
-    now_utc = datetime.utcnow()
-    
-    open_attendance = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
-    if open_attendance:
-        open_attendance.checkout_time = now_utc
-        open_attendance.duration_seconds = int((now_utc - open_attendance.checkin_time).total_seconds())
-        
-    active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
-    if active_stay:
-        active_stay.exit_time = now_utc
-        
-    user.is_present = False
-    db.commit()
-    
-    if r:
-        r.delete(f"ping_time:{user.email}")
-        r.delete(f"warning_sent:{user.email}")
-        
-    return {"status": "success", "message": "Successfully checked out."}
-
-@app.get("/api/cron/auto-checkout")
-def cron_auto_checkout(db: Session = Depends(get_db)):
-    from .database import Attendance
-    
-    now_utc = datetime.utcnow()
-    active_users = db.query(User).filter(User.is_present == True).all()
-    swept_users = []
-    warned_users = []
-    
-    for user in active_users:
-        last_ping_str = r.get(f"ping_time:{user.email}")
-        needs_checkout = False
-        needs_warning = False
-        
-        if not last_ping_str:
-            needs_checkout = True
-            
-        if last_ping_str:
-            last_ping_time = datetime.fromisoformat(last_ping_str)
-            inactivity_delta = now_utc - last_ping_time
-            inactivity_mins = inactivity_delta.total_seconds() / 60.0
-            
-            if user.user_type == 'field_officer':
-                if inactivity_mins >= 5:
-                    needs_checkout = True
-                elif inactivity_mins >= 3:
-                    needs_warning = True
-            else:
-                if inactivity_mins >= 5:
-                    needs_checkout = True
-                    
-        if needs_warning:
-            already_warned = r.get(f"warning_sent:{user.email}")
-            if not already_warned:
-                if getattr(user, 'fcm_token', None):
-                    send_push_notification(
-                        token=user.fcm_token,
-                        title="⚠️ Location Inactive",
-                        body="Are you still in? Open the app to sync your location or you will be automatically checked out in 2 minutes."
-                    )
-                r.set(f"warning_sent:{user.email}", "1", ex=600)
-                warned_users.append(user.email)
-                
-        if needs_checkout:
-            att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
-            if att:
-                att.checkout_time = now_utc
-                att.duration_seconds = int((att.checkout_time - att.checkin_time).total_seconds())
-                
-            active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
-            if active_stay:
-                active_stay.exit_time = now_utc
-                
-            user.is_present = False
-            db.commit()
-            
-            if getattr(user, 'fcm_token', None):
-                send_push_notification(
-                    token=user.fcm_token,
-                    title="⏱️ Auto-Checked Out",
-                    body="You have been automatically checked out due to prolonged inactivity or leaving the site."
-                )
-            
-            r.delete(f"ping_time:{user.email}")
-            r.delete(f"warning_sent:{user.email}")
-            swept_users.append(user.email)
-            
-    return {"status": "success", "message": "Cron sweep complete", "warned_officers": warned_users, "auto_checked_out": swept_users}
-
-# --- OFFLINE SYNC ---
-
-@app.post("/api/user/sync-offline-locations")
-async def sync_offline_locations(email: str, locations: List[dict], db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == email.lower().strip()).first()
-    if not user: raise HTTPException(404, "User not found")
-    if not locations: return {"status": "success", "synced": 0, "message": "No locations to sync"}
-    
-    synced = 0
-    for loc_data in locations:
-        lat, lon = loc_data.get('lat'), loc_data.get('lon')
-        if lat and lon: synced += 1
-            
-    if r and locations:
-        r.set(f"ping_time:{email}", datetime.utcnow().isoformat(), ex=86400)
-    
-    return {"status": "success", "synced": synced, "message": f"Synced {synced} location pings"}
-
-@app.post("/api/user/sync-offline-state")
-async def sync_offline_state(email: str, locations: List[dict], attendanceState: dict = None, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == email.lower().strip()).first()
-    if not user: raise HTTPException(404, "User not found")
-    
-    from .database import Attendance
-    now_utc = datetime.utcnow()
-    synced_locations = 0
-    current_site = None
-    
-    for loc_data in locations:
-        lat, lon = loc_data.get('lat'), loc_data.get('lon')
-        if lat and lon:
-            current_site = get_site_at_location(lat, lon, db)
-            synced_locations += 1
-    
-    checked_in = False
-    site_name = None
-    
-    if attendanceState:
-        checked_in = attendanceState.get('checkedIn', False)
-        site_name = attendanceState.get('currentSite', None)
-        if checked_in:
-            open_att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
-            if not open_att and current_site:
-                att = Attendance(user_id=user.id, checkin_time=now_utc - timedelta(minutes=5), date=now_utc, location_id=current_site.id)
-                db.add(att)
-                db.commit()
-                checked_in = True
-                site_name = current_site.name
-                
-    if r: r.set(f"ping_time:{email}", now_utc.isoformat(), ex=86400)
-    return {"status": "success", "synced": synced_locations, "checked_in": checked_in, "current_site": site_name, "message": f"Synced {synced_locations} location pings and attendance state"}
-
-@app.post("/api/field-officer/manual-sync")
-async def manual_sync(email: str = Form(...), location_id: int = Form(...), type: str = Form(...), lat: float = Form(...), lon: float = Form(...), db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == email.lower().strip()).first()
-    if not user or user.user_type != 'field_officer': raise HTTPException(403, "Unauthorized")
-    site = db.query(OfficeLocation).filter(OfficeLocation.id == location_id).first()
-    if not site: raise HTTPException(404, "Site not found")
-
-    distance = get_distance(lat, lon, site.lat, site.lon)
-    if distance > site.radius: raise HTTPException(400, f"Validation failed. You are outside the {site.radius}m geofence.")
-
-    now_utc = datetime.utcnow()
-    active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
-
-    if type == 'in':
-        if not active_stay or active_stay.location_id != site.id:
-            if active_stay: active_stay.exit_time = now_utc
-            db.add(SiteStay(officer_id=user.id, location_id=site.id, entry_time=now_utc))
-            db.commit()
-            return {"status": "success", "message": "Manual Check-In recorded."}
-        return {"status": "success", "message": "Already checked in."}
-
-    elif type == 'out':
-        if active_stay and active_stay.location_id == site.id:
-            active_stay.exit_time = now_utc
-            db.commit()
-            return {"status": "success", "message": "Manual Check-Out recorded."}
-        return {"status": "error", "detail": "No active check-in found at this location."}
-        
-    raise HTTPException(400, "Invalid sync type")
 
 # --- DOCUMENT PARSERS ---
 
@@ -965,13 +819,10 @@ async def extract_ekyc(file: UploadFile = File(...), share_code: str = Form(...)
         if '}' in elem.tag: elem.tag = elem.tag.split('}', 1)[1]
             
     poi, pht = root.find('.//Poi'), root.find('.//Pht')
-    
     name = poi.attrib.get('name', '')
     dob_val = poi.attrib.get('dob', '')
-    if "-" in dob_val:
-        dob_formatted = datetime.strptime(dob_val, "%d-%m-%Y").strftime("%Y-%m-%d")
-    else:
-        dob_formatted = dob_val
+    if "-" in dob_val: dob_formatted = datetime.strptime(dob_val, "%d-%m-%Y").strftime("%Y-%m-%d")
+    else: dob_formatted = dob_val
         
     name_parts = name.split(' ', 1)
     photo_base64 = f"data:image/jpeg;base64,{pht.text}" if (pht is not None and pht.text) else ""
@@ -984,7 +835,6 @@ async def extract_qr(file: UploadFile = File(...)):
     image_bytes = await file.read()
     nparr = np.frombuffer(image_bytes, np.uint8)
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-    
     barcodes = zxingcpp.read_barcodes(img)
     qr_text = barcodes[0].text.strip()
 
@@ -1018,24 +868,11 @@ async def extract_qr(file: UploadFile = File(...)):
         first_name = name_parts[0]
         last_name = ' '.join(name_parts[1:]) if len(name_parts) > 1 else ''
         
-        if "-" in dob_raw:
-            dob_formatted = datetime.strptime(dob_raw, "%d-%m-%Y").strftime("%Y-%m-%d")
-        else:
-            dob_formatted = dob_raw
+        if "-" in dob_raw: dob_formatted = datetime.strptime(dob_raw, "%d-%m-%Y").strftime("%Y-%m-%d")
+        else: dob_formatted = dob_raw
 
         father_name = care_of.replace('S/O', '').replace('D/O', '').replace('C/O', '').replace(':', '').strip()
-        
-        return {
-            "status": "success", 
-            "data": { 
-                "firstName": first_name, 
-                "lastName": last_name, 
-                "dob": dob_formatted, 
-                "gender": "Male" if gender_raw == 'M' else "Female" if gender_raw == 'F' else gender_raw,
-                "fatherName": father_name, 
-                "aadhar_reference": "XXXX-XXXX-VERIFIED"
-            }
-        }
+        return { "status": "success", "data": { "firstName": first_name, "lastName": last_name, "dob": dob_formatted, "gender": "Male" if gender_raw == 'M' else "Female" if gender_raw == 'F' else gender_raw, "fatherName": father_name, "aadhar_reference": "XXXX-XXXX-VERIFIED" } }
     else:
         root = ET.fromstring(qr_text)
         attribs = root.attrib
@@ -1044,29 +881,13 @@ async def extract_qr(file: UploadFile = File(...)):
         last_name = name_parts[1] if len(name_parts) > 1 else ''
         
         dob_val = attribs.get('dob', '')
-        if "/" in dob_val:
-            dob_formatted = datetime.strptime(dob_val, "%d/%m/%Y").strftime("%Y-%m-%d")
-        elif "-" in dob_val:
-            dob_formatted = datetime.strptime(dob_val, "%Y-%m-%d").strftime("%Y-%m-%d")
-        else:
-            dob_formatted = dob_val
+        if "/" in dob_val: dob_formatted = datetime.strptime(dob_val, "%d/%m/%Y").strftime("%Y-%m-%d")
+        elif "-" in dob_val: dob_formatted = datetime.strptime(dob_val, "%Y-%m-%d").strftime("%Y-%m-%d")
+        else: dob_formatted = dob_val
 
         uid = attribs.get('uid', '')
         masked_aadhar = f"XXXX-XXXX-{uid[-4:]}" if len(uid) >= 4 else "XXXX"
-
-        return {
-            "status": "success", 
-            "data": { 
-                "firstName": first_name, 
-                "lastName": last_name, 
-                "dob": dob_formatted, 
-                "gender": "Male" if attribs.get('gender') == 'M' else "Female" if attribs.get('gender') == 'F' else attribs.get('gender', ''),
-                "fatherName": attribs.get('co', '').replace('S/O', '').replace('D/O', '').replace('C/O', '').strip(),
-                "aadhar_reference": masked_aadhar 
-            }
-        }
-
-# --- TEST ROUTE ---
+        return { "status": "success", "data": { "firstName": first_name, "lastName": last_name, "dob": dob_formatted, "gender": "Male" if attribs.get('gender') == 'M' else "Female" if attribs.get('gender') == 'F' else attribs.get('gender', ''), "fatherName": attribs.get('co', '').replace('S/O', '').replace('D/O', '').replace('C/O', '').strip(), "aadhar_reference": masked_aadhar } }
 
 @app.get("/api/test-fcm")
 def test_fcm(email: str, db: Session = Depends(get_db)):
@@ -1081,19 +902,12 @@ def test_fcm(email: str, db: Session = Depends(get_db)):
 
 @app.get("/api/admin/employee-dossier/{user_id}")
 def get_decrypted_dossier(user_id: int, admin_email: str, db: Session = Depends(get_db)):
-    # Security Check: Ensure the person requesting this is actually the Admin
     admin = db.query(User).filter(User.email == admin_email.lower().strip(), User.user_type == 'admin').first()
-    if not admin:
-        raise HTTPException(403, "Unauthorized. Only admins can view decrypted dossiers.")
-        
+    if not admin: raise HTTPException(403, "Unauthorized. Only admins can view decrypted dossiers.")
     user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(404, "Employee not found.")
+    if not user: raise HTTPException(404, "Employee not found.")
         
-    # Convert database row to dictionary
     user_data = {c.name: getattr(user, c.name) for c in user.__table__.columns}
-    
-    # DECRYPT SENSITIVE FIELDS (Overriding the encrypted hashes)
     user_data['aadhar_raw'] = safe_decrypt(user.aadhar_enc)
     user_data['pan_raw'] = safe_decrypt(user.pan_enc)
     user_data['account_number_raw'] = safe_decrypt(user.account_number_enc)
@@ -1101,7 +915,6 @@ def get_decrypted_dossier(user_id: int, admin_email: str, db: Session = Depends(
     user_data['dl_raw'] = safe_decrypt(user.driving_licence_enc)
     user_data['passport_raw'] = safe_decrypt(user.passport_no_enc)
     
-    # We do not send the password hash or salt to the frontend, even for admins
     user_data.pop('password', None)
     user_data.pop('salt', None)
     

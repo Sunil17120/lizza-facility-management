@@ -2,12 +2,14 @@ import React, { useState } from 'react';
 import { Container, Row, Col, Form, Button, Card } from 'react-bootstrap';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Mail, Lock, Eye, EyeOff } from 'lucide-react';
+import { useUser } from './UserContext';
 
 const API_BASE_URL = 'https://lizza-facility-management.vercel.app';
 
 const Auth = () => {
   const isLogin = true; 
   const [showPassword, setShowPassword] = useState(false);
+  const { loginUser } = useUser();
   
   const [formData, setFormData] = useState({
     email: '',
@@ -40,25 +42,27 @@ const Auth = () => {
       if (response.ok) {
         localStorage.clear();
         
-        // Save core user data
         localStorage.setItem('userId', data.user_id); 
         localStorage.setItem('userName', data.user);
         localStorage.setItem('userEmail', formData.email); 
         
-        // --- FORCE PASSWORD CHANGE LOGIC ---
         if (data.force_password_change) {
           localStorage.setItem('forcePasswordChange', 'true');
         } else {
           localStorage.removeItem('forcePasswordChange');
         }
+
+        loginUser({
+          full_name: data.user,
+          user_type: data.user_type
+        });
         
-        // --- UPDATED ROUTING LOGIC ---
         if (data.user_type === 'admin') {
            navigate('/admin');
         } else if (data.user_type === 'manager') {
            navigate('/manager');
         } else if (data.user_type === 'field_officer') {
-           navigate('/field-operations'); // Instantly routes Field Officers correctly
+           navigate('/field-operations'); 
         } else {
            navigate('/dashboard');
         }
