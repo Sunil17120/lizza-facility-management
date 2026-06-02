@@ -94,7 +94,20 @@ export const UserProvider = ({ children }) => {
     localStorage.setItem('userRole', userData.user_type);
   };
 
-  const logoutUser = () => {
+  const logoutUser = async () => {
+    try {
+      if (user && user.email) {
+        await fetch(`${API_BASE_URL}/api/user/send-logout-notification`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: user.email })
+        });
+      }
+    } catch (e) {
+      console.warn('Logout notification failed', e);
+    }
+    setPushMessage('You have been logged out.');
+    setPushMessageType('info');
     setUser(null);
     localStorage.clear();
   };
