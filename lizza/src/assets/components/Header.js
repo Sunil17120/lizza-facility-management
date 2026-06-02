@@ -2,32 +2,22 @@ import React, { useState, useEffect } from 'react';
 import { Navbar, Nav, Container, Button, Dropdown, Spinner } from 'react-bootstrap';
 import { UserCheck, LogOut, Settings, LayoutDashboard, Users } from 'lucide-react'; // Added Users icon
 import { useNavigate, useLocation } from 'react-router-dom';
+import { useUser } from './UserContext';
 import logoImg from './logo.png'; 
 
 const Header = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const [user, setUser] = useState({ name: null, email: null });
+  const { user, loading, logoutUser } = useUser();
   const [dbRole, setDbRole] = useState(null);
-  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    const storedName = localStorage.getItem('userName'); 
-    const storedEmail = localStorage.getItem('userEmail');
-    
-    if (storedName && storedEmail) {
-      setUser({ name: storedName, email: storedEmail });
-      setLoading(true);
-      
-      fetch(`https://lizza-facility-management.vercel.app/api/user/profile?email=${storedEmail}`)
-        .then(res => res.json())
-        .then(data => {
-          if (data && data.user_type) setDbRole(data.user_type.toLowerCase());
-          setLoading(false);
-        })
-        .catch(() => setLoading(false));
+    if (user && user.user_type) {
+      setDbRole(user.user_type.toLowerCase());
+    } else {
+      setDbRole(null);
     }
-  }, []);
+  }, [user]);
 
   const handleNavClick = (sectionId) => {
     if (location.pathname !== '/') {
@@ -40,9 +30,12 @@ const Header = () => {
     }
   };
 
-  const handleLogout = () => {
-    localStorage.clear();
-    setUser({ name: null, email: null });
+  const handleLogout = async () => {
+    try {
+      if (logoutUser) await logoutUser();
+    } catch (e) {
+      console.warn('logout error', e);
+    }
     navigate('/');
   };
 
@@ -62,11 +55,11 @@ const Header = () => {
             <Nav.Link onClick={() => handleNavClick('services')}>Services</Nav.Link>
           </Nav>
 
-          {user.name ? (
+          {user && user.full_name ? (
             <Dropdown align="end">
               <Dropdown.Toggle variant="light" className="fw-bold text-danger border-0">
                 <UserCheck size={18} className="me-2" />
-                {loading ? <Spinner size="sm"/> : `Hi, ${user.name.split(' ')[0]}`}
+                {loading ? <Spinner size="sm"/> : `Hi, ${user.full_name.split(' ')[0]}`}
               </Dropdown.Toggle>
               <Dropdown.Menu className="shadow border-0">
                 {dbRole === 'admin' && (

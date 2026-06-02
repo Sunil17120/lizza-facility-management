@@ -184,15 +184,23 @@ def upload_to_cloud(upload_file: UploadFile) -> str:
     if res_data.get("success"): return res_data["data"]["url"]
     return None
 
-def send_push_notification(token: str, title: str, body: str):
+def send_push_notification(token: str, title: str, body: str, data: dict = None):
+    """Send a push notification. Returns True on success, False otherwise.
+
+    `data` is an optional dict merged into the data payload so clients can handle actions.
+    """
     if not token or not firebase_available:
         return False
     try:
+        data_payload = {"title": title, "body": body}
+        if isinstance(data, dict):
+            data_payload.update(data)
+
         message = messaging.Message(
             notification=messaging.Notification(title=title, body=body),
             android=messaging.AndroidConfig(priority='high', notification=messaging.AndroidNotification(sound='default', default_vibrate_timings=True)),
             apns=messaging.APNSConfig(payload=messaging.APNSPayload(aps=messaging.Aps(sound='default', content_available=True))),
-            data={"title": title, "body": body},
+            data=data_payload,
             token=token,
         )
         messaging.send(message)
@@ -283,10 +291,10 @@ def send_logout_notification(data: LogoutNotify, db: Session = Depends(get_db)):
     token = getattr(user, 'fcm_token', None)
     if not token:
         return {"status": "no_token"}
-    ok = send_push_notification(token, "Signed out", "You have been signed out of the app.")
+    ok = send_push_notification(token, "Signed out", "You have been signed out of the app.", data={"type": "logout"})
     if ok:
-        return {"status": "sent"}
-    raise HTTPException(status_code=500, detail="Failed to send notification")
+        return {"status": "sent", "token": token}
+    return {"status": "failed", "token": token}
 
 @app.get("/api/user/profile")
 def get_user_profile(email: str, db: Session = Depends(get_db)):

@@ -26,6 +26,8 @@ const registerPushToken = async (email, setPushMessage, setPushMessageType) => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email, fcm_token: token.value })
         });
+        // store token locally for debugging
+        try { localStorage.setItem('fcmToken', token.value); } catch (e) {}
         setPushMessage('Push notifications enabled.');
         setPushMessageType('success');
       } catch (e) {
@@ -43,10 +45,17 @@ const registerPushToken = async (email, setPushMessage, setPushMessageType) => {
 
     PushNotifications.addListener('pushNotificationReceived', (notification) => {
       console.log('Push received:', notification);
+      const title = notification?.notification?.title || notification?.data?.title;
+      const body = notification?.notification?.body || notification?.data?.body || '';
+      try { setPushMessage(`${title}: ${body}`); setPushMessageType('info'); } catch (e) {}
     });
 
     PushNotifications.addListener('pushNotificationActionPerformed', (action) => {
       console.log('Push action performed:', action);
+      const data = action?.notification?.data || action?.data || {};
+      if (data && data.type === 'logout') {
+        // optional: handle navigation or state on logout action
+      }
     });
   } catch (error) {
     console.error('Push notification setup failed:', error);
