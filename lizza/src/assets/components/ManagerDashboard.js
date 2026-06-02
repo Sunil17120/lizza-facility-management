@@ -27,6 +27,8 @@ const getStatusIcon = (isPresent) => {
   });
 };
 
+const API_BASE_URL = 'https://lizza-facility-management.vercel.app';
+
 const ManagerDashboard = () => {
   const [myEmployees, setMyEmployees] = useState([]);
   const [locations, setLocations] = useState([]); 
@@ -34,7 +36,6 @@ const ManagerDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [showAddEmp, setShowAddEmp] = useState(false);
   const [empSearch, setEmpSearch] = useState('');
-  const [isOnline, setIsOnline] = useState(navigator.onLine);
   
   const managerId = localStorage.getItem('userId'); 
 
@@ -47,9 +48,9 @@ const ManagerDashboard = () => {
     try {
         const cleanId = parseInt(managerId, 10);
         const [staffRes, liveRes, locRes] = await Promise.all([
-            fetch(`/api/manager/my-employees?manager_id=${cleanId}`),
-            fetch(`/api/manager/live-tracking?manager_id=${cleanId}`),
-            fetch(`/api/admin/locations`)
+            fetch(`${API_BASE_URL}/api/manager/my-employees?manager_id=${cleanId}`),
+            fetch(`${API_BASE_URL}/api/manager/live-tracking?manager_id=${cleanId}`),
+            fetch(`${API_BASE_URL}/api/admin/locations`)
         ]);
 
         if (staffRes.ok) {
@@ -88,7 +89,7 @@ const ManagerDashboard = () => {
 
     const interval = setInterval(async () => {
         try {
-            const res = await fetch(`/api/manager/live-tracking?manager_id=${cleanId}`);
+            const res = await fetch(`${API_BASE_URL}/api/manager/live-tracking?manager_id=${cleanId}`);
             if (res.ok) {
                 const liveData = await res.json();
                 const liveMap = {};
@@ -107,18 +108,6 @@ const ManagerDashboard = () => {
     return () => clearInterval(interval);
   }, [managerId]);
 
-  useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
-
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-
-    return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-    };
-  }, []);
 
   if (loading) {
       return (

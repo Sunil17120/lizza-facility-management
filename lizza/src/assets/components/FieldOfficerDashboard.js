@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Container, Card, Row, Col, Badge, Form, Button, Alert, Spinner, Table } from 'react-bootstrap';
-import { MapPin, Camera, Navigation, UserPlus, CheckCircle, FileText, Map as MapIcon, LogIn, LogOut, WifiOff, RefreshCw } from 'lucide-react';
+import { Container, Card, Row, Col, Form, Button, Alert, Spinner, Table } from 'react-bootstrap';
+import { MapPin, Camera, Navigation, CheckCircle, FileText, Map as MapIcon, LogIn, LogOut, WifiOff, RefreshCw } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
-import EmployeeOnboardForm from './EmployeeOnboardForm'; 
 
 // IMPORT CAPACITOR TO DETECT PLATFORM
 import { Capacitor, registerPlugin } from '@capacitor/core';
@@ -68,13 +67,11 @@ const FieldOfficerDashboard = () => {
   
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [checkedIn, setCheckedIn] = useState(false);
-  const [reportSubmitted, setReportSubmitted] = useState(false);
   
   const [purpose, setPurpose] = useState('');
   const [remarks, setRemarks] = useState('');
   const [photo, setPhoto] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [showAddEmp, setShowAddEmp] = useState(false);
   const [alertMsg, setAlertMsg] = useState(null);
   
   // Offline Sync State
@@ -218,6 +215,26 @@ const FieldOfficerDashboard = () => {
     return () => { BackgroundGeolocation.removeWatcher(); };
   }, [userEmail, processNewLocation]);
 
+  useEffect(() => {
+    if (Capacitor.isNativePlatform() || !userEmail || !navigator.geolocation) return;
+
+    const handlePosition = (position) => {
+      processNewLocation(position.coords.latitude, position.coords.longitude);
+    };
+    const handleError = (error) => {
+      console.error('Browser geolocation failed:', error);
+    };
+
+    navigator.geolocation.getCurrentPosition(handlePosition, handleError, { enableHighAccuracy: true, timeout: 10000 });
+    const id = navigator.geolocation.watchPosition(handlePosition, handleError, { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 });
+
+    return () => {
+      if (navigator.geolocation && id !== null) {
+        navigator.geolocation.clearWatch(id);
+      }
+    };
+  }, [userEmail, processNewLocation]);
+
   // --- ACTIONS (SPLIT LOGIC) ---
   const handleAttendance = async (type) => {
     if (!activeSite || !myLoc) return alert("You must be inside the site boundary.");
@@ -273,7 +290,7 @@ const FieldOfficerDashboard = () => {
                 localStorage.setItem('offlineVisitQueue', JSON.stringify(q));
                 
                 setAlertMsg({ type: 'warning', text: 'No internet. Visit report safely queued for upload.' });
-                setPurpose(''); setRemarks(''); setPhoto(null); setReportSubmitted(true);
+                setPurpose(''); setRemarks(''); setPhoto(null);
                 if(fileInputRef.current) fileInputRef.current.value = "";
                 updateQueueCounts();
             } catch(err) {
@@ -293,7 +310,7 @@ const FieldOfficerDashboard = () => {
             const res = await fetch(`${API_BASE_URL}/api/field-officer/log-visit`, { method: 'POST', body: formData });
             if (res.ok) {
                 setAlertMsg({ type: 'success', text: 'Visit logged successfully!' });
-                setPurpose(''); setRemarks(''); setPhoto(null); setReportSubmitted(true);
+                setPurpose(''); setRemarks(''); setPhoto(null);
                 if(fileInputRef.current) fileInputRef.current.value = "";
                 fetchData();
             }
@@ -308,7 +325,6 @@ const FieldOfficerDashboard = () => {
     <Container className="py-4">
       <div className="d-flex justify-content-between align-items-center mb-3">
         <h2 className="fw-bold m-0"><Navigation className="text-primary me-2" />Field Operations</h2>
-        <Button variant="danger" onClick={() => setShowAddEmp(true)}><UserPlus className="me-2" size={18}/>Onboard</Button>
       </div>
 
       {/* ONLY SHOW OFFLINE SYNC BANNERS IF IT IS THE MOBILE APP */}
@@ -371,7 +387,7 @@ const FieldOfficerDashboard = () => {
                   )}
                 </div>
 
-                {activeSite && checkedIn && !reportSubmitted && (
+                {activeSite && checkedIn && (
                   <Form onSubmit={handleVisitSubmit} className="mt-2 border-top pt-3">
                     <h6 className="fw-bold mb-3"><FileText className="me-2" size={18}/>Log Visit Report</h6>
                     <Form.Select size="sm" className="mb-2" value={purpose} onChange={e => setPurpose(e.target.value)} required>
@@ -410,6 +426,42 @@ const FieldOfficerDashboard = () => {
               </Card.Body>
             </Card>
           </div>
+        </Col>
+      </Row>
+
+      <Row className="mt-4">
+        <Col>
+          <Card className="border-0 shadow-sm">
+            <Card.Header className="bg-white py-3 border-bottom-0">
+              <h6 className="fw-bold m-0"><MapPin className="me-2 text-primary" size={18} />Recent Visit History</h6>
+            </Card.Header>
+            <Card.Body className="p-3">
+              {visitHistory.length === 0 ? (
+                <div className="text-center text-muted py-4">No visit records available yet.</div>
+              ) : (
+                <Table responsive hover className="mb-0 small">
+                  <thead className="table-light">
+                    <tr>
+                      <th>Date</th>
+                      <th>Site</th>
+                      <th>Purpose</th>
+                      <th>Remarks</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visitHistory.map((visit, idx) => (
+                      <tr key={`${idx}-${visit.visit_time}`}>
+                        <td>{visit.visit_time || 'N/A'}</td>
+                        <td>{visit.site_name || 'N/A'}</td>
+                        <td>{visit.purpose || 'N/A'}</td>
+                        <td>{visit.remarks || '-'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </Table>
+              )}
+            </Card.Body>
+          </Card>
         </Col>
       </Row>
     </Container>

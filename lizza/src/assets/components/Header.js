@@ -19,7 +19,7 @@ const Header = () => {
       setUser({ name: storedName, email: storedEmail });
       setLoading(true);
       
-      fetch(`/api/user/profile?email=${storedEmail}`)
+      fetch(`https://lizza-facility-management.vercel.app/api/user/profile?email=${storedEmail}`)
         .then(res => res.json())
         .then(data => {
           if (data && data.user_type) setDbRole(data.user_type.toLowerCase());

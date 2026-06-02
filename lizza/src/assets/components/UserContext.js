@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 
 const UserContext = createContext();
+const API_BASE_URL = 'https://lizza-facility-management.vercel.app';
 
 export const UserProvider = ({ children }) => {
   const [user, setUser] = useState(null);
@@ -9,7 +10,7 @@ export const UserProvider = ({ children }) => {
   useEffect(() => {
     const email = localStorage.getItem('userEmail');
     if (email) {
-      fetch(`https://lizza-facility-management.vercel.app/api/user/profile?email=${email}`)
+      fetch(`${API_BASE_URL}/api/user/profile?email=${email}`)
         .then(res => res.json())
         .then(data => {
             setUser(data);
