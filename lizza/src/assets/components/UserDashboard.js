@@ -191,7 +191,7 @@ const UserDashboard = () => {
         { 
           backgroundMessage: "Tracking duty status and geofence safety.", 
           backgroundTitle: "Lizza Duty Tracking Active", 
-          requestPermissions: true, stale: false, interval: 300000, distanceFilter: 0,
+          requestPermissions: true, stale: false, interval: 300000, distanceFilter: 20,
           allowBackgroundLocationUpdates: true, autoSync: true, stopOnTerminate: false, startOnBoot: true       
         },
         (location) => { if (location) syncLocation(location.latitude, location.longitude); }
