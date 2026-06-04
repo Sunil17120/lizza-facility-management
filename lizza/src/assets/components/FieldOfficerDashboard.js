@@ -4,8 +4,8 @@ import { MapPin, Camera, Navigation, CheckCircle, FileText, Map as MapIcon, LogI
 import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 
 import { Capacitor } from '@capacitor/core';
-import { BackgroundGeolocation } from '@capacitor-community/background-geolocation';
-
+import { registerPlugin } from '@capacitor/core';
+const BackgroundGeolocation = registerPlugin('BackgroundGeolocation');
 const API_BASE_URL = 'https://lizza-facility-management.vercel.app';
 const isApp = Capacitor.isNativePlatform();
 
