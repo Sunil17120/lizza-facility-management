@@ -4,12 +4,12 @@ import { Container, Row, Col, Card, Spinner, Button, Alert, Badge, Modal, Form }
 import { ShieldCheck, MapPin, MapIcon, AlertTriangle, KeyRound, EyeOff, WifiOff } from 'lucide-react';
 
 import { Capacitor } from '@capacitor/core';
-import { BackgroundGeolocation } from '@capacitor-community/background-geolocation';
+import { registerPlugin } from '@capacitor/core';
 import { useUser } from './UserContext'; 
 
 const API_BASE_URL = 'https://lizza-facility-management.vercel.app';
 const isApp = Capacitor.isNativePlatform();
-
+const BackgroundGeolocation = registerPlugin('BackgroundGeolocation');
 const UserDashboard = () => {
   const navigate = useNavigate(); 
   const { user: contextUser, loading: contextLoading } = useUser();
