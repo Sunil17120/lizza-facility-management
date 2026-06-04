@@ -4,7 +4,7 @@ import { Container, Row, Col, Card, Spinner, Button, Alert, Badge, Modal, Form }
 import { ShieldCheck, MapPin, MapIcon, AlertTriangle, KeyRound, EyeOff, WifiOff } from 'lucide-react';
 
 import { Capacitor } from '@capacitor/core';
-import { BackgroundGeolocation } from '@capgo/capacitor-background-geolocation';
+import { BackgroundGeolocation } from '@capacitor-community/background-geolocation';
 import { useUser } from './UserContext'; 
 
 const API_BASE_URL = 'https://lizza-facility-management.vercel.app';
