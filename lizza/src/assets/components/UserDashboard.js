@@ -3,14 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import { Container, Row, Col, Card, Spinner, Button, Alert, Badge, Modal, Form } from 'react-bootstrap';
 import { ShieldCheck, MapPin, MapIcon, AlertTriangle, KeyRound, EyeOff, WifiOff } from 'lucide-react';
 
-// IMPORT CAPACITOR TO DETECT PLATFORM
-import { Capacitor, registerPlugin } from '@capacitor/core';
+import { Capacitor } from '@capacitor/core';
+import { BackgroundGeolocation } from '@capgo/capacitor-background-geolocation';
 import { useUser } from './UserContext'; 
 
-const BackgroundGeolocation = registerPlugin('BackgroundGeolocation');
 const API_BASE_URL = 'https://lizza-facility-management.vercel.app';
-
-// Detect if running natively on a phone or just in a web browser
 const isApp = Capacitor.isNativePlatform();
 
 const UserDashboard = () => {
@@ -27,13 +24,12 @@ const UserDashboard = () => {
   const [actionLoading, setActionLoading] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   
-  // Offline UI Trackers
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
   
   const userEmail = localStorage.getItem('userEmail');
 
   const updatePendingCount = useCallback(() => {
-    if (!isApp) return; // Website doesn't use queues
+    if (!isApp) return; 
     const pings = JSON.parse(localStorage.getItem('offlineLocations') || '[]');
     const actions = JSON.parse(localStorage.getItem('offlineAttendanceQueue') || '[]');
     setPendingSyncCount(pings.length + actions.length);
@@ -55,11 +51,9 @@ const UserDashboard = () => {
     }
   }, [userEmail, status.code]);
 
-  // --- OFFLINE SYNC PROCESSOR (APP ONLY) ---
   const processOfflineQueues = useCallback(async () => {
-    if (!isOnline || !isApp) return; // Only process on mobile app
+    if (!isOnline || !isApp) return;
 
-    // 1. Sync Background Pings
     const offlineLocations = JSON.parse(localStorage.getItem('offlineLocations') || '[]');
     if (offlineLocations.length > 0) {
       try {
@@ -72,7 +66,6 @@ const UserDashboard = () => {
       } catch (e) { console.error("Failed to sync pings:", e); }
     }
 
-    // 2. Sync Manual Check-Ins / Check-Outs sequentially
     let attendanceQueue = JSON.parse(localStorage.getItem('offlineAttendanceQueue') || '[]');
     let failedActions = [];
 
@@ -95,7 +88,6 @@ const UserDashboard = () => {
     fetchProfileState();
   }, [isOnline, userEmail, fetchProfileState, updatePendingCount]);
 
-  // Track network state globally
   useEffect(() => {
     const handleOnline = () => {
       setIsOnline(true);
@@ -116,7 +108,6 @@ const UserDashboard = () => {
     };
   }, [processOfflineQueues, updatePendingCount]);
 
-
   useEffect(() => {
     if (!contextLoading && contextUser) {
       if (contextUser.user_type === 'field_officer') return navigate('/field-operations', { replace: true });
@@ -133,7 +124,7 @@ const UserDashboard = () => {
 
   const syncLocation = useCallback(async (lat, lon) => {
     if (!navigator.onLine) {
-      if (!isApp) return; // Do nothing if offline on website
+      if (!isApp) return; 
       const locData = { lat, lon, timestamp: new Date().toISOString() };
       const offlineLocations = JSON.parse(localStorage.getItem('offlineLocations') || '[]');
       offlineLocations.push(locData);
@@ -158,11 +149,61 @@ const UserDashboard = () => {
     }
   }, [userEmail, updatePendingCount]);
 
-  // WEB GEOLOCATION TRACKER: ONLY START ON WEBSITE
+  // FREE CAP-GO NATIVE TRACKER
   useEffect(() => {
-    if (!dbUser || isApp || !navigator.geolocation) return; // Website only
+    if (!dbUser || !isApp || !userEmail) return;
+    let watcherId = null;
+
+    const startBackgroundTracking = async () => {
+      try {
+        watcherId = await BackgroundGeolocation.addWatcher(
+          { 
+            backgroundMessage: "Lizza Facility Management is tracking your duty status.", 
+            backgroundTitle: "Lizza Duty Tracker", 
+            requestPermissions: true, 
+            stale: true, // Fixes indoor drifting
+            distanceFilter: 15,
+            stopOnTerminate: false, // Don't kill when swiped away
+            startForeground: true // Pin sticky notification to lock screen
+          },
+          (location, error) => { 
+            if (error) {
+              console.error("Background Location Error:", error);
+              return;
+            }
+            if (location) syncLocation(location.latitude, location.longitude); 
+          }
+        );
+
+        // Tell Cap-go to send the email with the webhook
+        await BackgroundGeolocation.setConfig({
+          headers: { "x-user-email": userEmail }
+        });
+
+        // Register the native webhook to bypass Doze mode
+        await BackgroundGeolocation.setupGeofencing({
+          url: `${API_BASE_URL}/api/user/native-webhook`,
+          backgroundLocation: true,
+        });
+
+      } catch (err) {
+        console.error("Failed to start Background Geolocation:", err);
+      }
+    };
+
+    startBackgroundTracking();
+
+    return () => { 
+      if (watcherId) {
+        BackgroundGeolocation.removeWatcher({ id: watcherId }); 
+      }
+    };
+  }, [dbUser, userEmail, syncLocation]);
+
+  // WEB GEOLOCATION TRACKER (Runs in Chrome/Safari)
+  useEffect(() => {
+    if (!dbUser || isApp || !navigator.geolocation) return; 
     
-    // Get initial location
     navigator.geolocation.getCurrentPosition(
       (pos) => syncLocation(pos.coords.latitude, pos.coords.longitude),
       (err) => {
@@ -172,7 +213,6 @@ const UserDashboard = () => {
       { enableHighAccuracy: true, timeout: 10000 }
     );
 
-    // Watch for continuous location updates
     const watchId = navigator.geolocation.watchPosition(
       (pos) => syncLocation(pos.coords.latitude, pos.coords.longitude),
       (err) => console.error("Web geolocation watch failed:", err),
@@ -186,25 +226,6 @@ const UserDashboard = () => {
     };
   }, [dbUser, syncLocation]);
 
-  // BACKGROUND TRACKER: ONLY START ON MOBILE APP
-  useEffect(() => {
-    if (!dbUser || !isApp) return; // Skip on Website
-    const startBackgroundTracking = async () => {
-      await BackgroundGeolocation.addWatcher(
-        { 
-          backgroundMessage: "Tracking duty status and geofence safety.", 
-          backgroundTitle: "Lizza Duty Tracking Active", 
-          requestPermissions: true, stale: false, interval: 300000, distanceFilter: 20,
-          allowBackgroundLocationUpdates: true, autoSync: true, stopOnTerminate: false, startOnBoot: true       
-        },
-        (location) => { if (location) syncLocation(location.latitude, location.longitude); }
-      );
-    };
-    startBackgroundTracking();
-    return () => { BackgroundGeolocation.removeWatcher(); };
-  }, [dbUser, syncLocation]);
-
-  // --- ACTIONS (SPLIT LOGIC FOR APP vs WEBSITE) ---
   const handleAction = async (actionType) => {
     if (actionLoading || (actionType === 'CHECK_IN' && status.code !== 'inside' && isApp)) return;
     setActionLoading(true);
@@ -227,9 +248,7 @@ const UserDashboard = () => {
       };
 
       if (!isOnline) {
-        // PLATFORM SPLIT
         if (isApp) {
-            // MOBILE APP: Queue Offline Action
             const queue = JSON.parse(localStorage.getItem('offlineAttendanceQueue') || '[]');
             queue.push(payload);
             localStorage.setItem('offlineAttendanceQueue', JSON.stringify(queue));
@@ -238,14 +257,12 @@ const UserDashboard = () => {
             setStatus({ type: 'warning', msg: `Offline ${actionType === 'CHECK_IN' ? 'Check-In' : 'Check-Out'} queued`, code: 'offline' });
             updatePendingCount();
         } else {
-            // WEBSITE: Hard Error
             setStatus({ type: 'danger', msg: "Network error. Please connect to the internet to perform this action.", code: 'error' });
         }
         setActionLoading(false);
         return;
       }
 
-      // Online Execution (Both App and Website)
       try {
           const endpoint = actionType === 'CHECK_IN' ? '/api/user/checkin' : '/api/user/checkout';
           const res = await fetch(`${API_BASE_URL}${endpoint}`, { 
@@ -285,7 +302,6 @@ const UserDashboard = () => {
         <Col md={8} lg={6}>
           <Card className={`border-0 shadow-lg overflow-hidden ${status.code === 'warning' ? 'border-danger border-5' : ''}`}>
             
-            {/* ONLY SHOW OFFLINE BANNER ON MOBILE APP */}
             {!isOnline && isApp && (
                 <div className="bg-warning text-dark text-center py-2 small fw-bold d-flex align-items-center justify-content-center">
                     <WifiOff size={16} className="me-2" /> Offline Mode Active - {pendingSyncCount} pending syncs

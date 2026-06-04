@@ -3,14 +3,12 @@ import { Container, Card, Row, Col, Form, Button, Alert, Spinner, Table } from '
 import { MapPin, Camera, Navigation, CheckCircle, FileText, Map as MapIcon, LogIn, LogOut, WifiOff, RefreshCw } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 
-// IMPORT CAPACITOR TO DETECT PLATFORM
-import { Capacitor, registerPlugin } from '@capacitor/core';
-const BackgroundGeolocation = registerPlugin('BackgroundGeolocation');
+import { Capacitor } from '@capacitor/core';
+import { BackgroundGeolocation } from '@capgo/capacitor-background-geolocation';
 
 const API_BASE_URL = 'https://lizza-facility-management.vercel.app';
 const isApp = Capacitor.isNativePlatform();
 
-// Helper: Convert File to Base64 for Offline Storage
 const fileToBase64 = (file) => new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.readAsDataURL(file);
@@ -18,7 +16,6 @@ const fileToBase64 = (file) => new Promise((resolve, reject) => {
     reader.onerror = error => reject(error);
 });
 
-// Helper: Convert Base64 back to File for Server Upload
 const base64ToFile = (base64String, filename) => {
     const arr = base64String.split(',');
     const mime = arr[0].match(/:(.*?);/)[1];
@@ -74,7 +71,6 @@ const FieldOfficerDashboard = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [alertMsg, setAlertMsg] = useState(null);
   
-  // Offline Sync State
   const [pendingOfflineActions, setPendingOfflineActions] = useState(0);
   const [isSyncing, setIsSyncing] = useState(false);
   const [offlineSyncMsg, setOfflineSyncMsg] = useState(null);
@@ -111,7 +107,6 @@ const FieldOfficerDashboard = () => {
     } catch (error) { console.error("Fetch Data Error:", error); }
   }, [userEmail]);
 
-  // --- OFFLINE DATA PROCESSOR (APP ONLY) ---
   const syncOfflineData = useCallback(async () => {
     if (!navigator.onLine || isSyncing || !isApp) return;
     setIsSyncing(true);
@@ -232,17 +227,55 @@ const FieldOfficerDashboard = () => {
     }
   }, [locations, userEmail, isApp, isSyncing, syncOfflineData]);
 
-  // BACKGROUND TRACKER: APP ONLY
+  // FREE CAP-GO NATIVE TRACKER
   useEffect(() => {
     if (!userEmail || !isApp) return;
+    let watcherId = null;
+
     const startTracking = async () => {
-      await BackgroundGeolocation.addWatcher(
-        { backgroundMessage: "Tracking active", requestPermissions: true, stale: false, distanceFilter: 20, interval: 300000, allowBackgroundLocationUpdates: true, autoSync: true, startOnBoot: true },
-        (location) => { if (location) processNewLocation(location.latitude, location.longitude); }
-      );
+      try {
+        watcherId = await BackgroundGeolocation.addWatcher(
+          { 
+            backgroundMessage: "Lizza tracking is active. Site visits are being recorded.", 
+            backgroundTitle: "Field Officer Tracking Active",
+            requestPermissions: true, 
+            stale: true, // Crucial for reliable tracking inside buildings
+            distanceFilter: 15,
+            stopOnTerminate: false, // Don't kill when swiped away
+            startForeground: true // Pin sticky notification to lock screen
+          },
+          (location, error) => { 
+            if (error) {
+              console.error("Background Location Error:", error);
+              return;
+            }
+            if (location) processNewLocation(location.latitude, location.longitude); 
+          }
+        );
+
+        // Tell Cap-go to send the email with the webhook
+        await BackgroundGeolocation.setConfig({
+          headers: { "x-user-email": userEmail }
+        });
+
+        // Register the native webhook to bypass Doze mode
+        await BackgroundGeolocation.setupGeofencing({
+          url: `${API_BASE_URL}/api/user/native-webhook`,
+          backgroundLocation: true,
+        });
+
+      } catch (err) {
+        console.error("Failed to start Background Geolocation:", err);
+      }
     };
+
     startTracking();
-    return () => { BackgroundGeolocation.removeWatcher(); };
+
+    return () => { 
+      if (watcherId) {
+        BackgroundGeolocation.removeWatcher({ id: watcherId }); 
+      }
+    };
   }, [userEmail, processNewLocation]);
 
   useEffect(() => {
@@ -265,7 +298,6 @@ const FieldOfficerDashboard = () => {
     };
   }, [userEmail, processNewLocation]);
 
-  // --- ACTIONS (SPLIT LOGIC) ---
   const handleAttendance = async (type) => {
     if (type === 'CHECK_IN' && (!activeSite || !myLoc)) {
       return alert("You must be inside the site boundary.");
@@ -376,7 +408,6 @@ const FieldOfficerDashboard = () => {
         <h2 className="fw-bold m-0"><Navigation className="text-primary me-2" />Field Operations</h2>
       </div>
 
-      {/* ONLY SHOW OFFLINE SYNC BANNERS IF IT IS THE MOBILE APP */}
       {(!isOnline || pendingOfflineActions > 0) && isApp && (
         <Alert variant="warning" className="d-flex justify-content-between align-items-center mb-4 py-2">
             <span>
@@ -393,7 +424,6 @@ const FieldOfficerDashboard = () => {
       )}
 
       <Row className="g-4 mb-4">
-        {/* MAP SECTION */}
         <Col lg={8}>
           <Card className="border-0 shadow-sm overflow-hidden" style={{ height: '600px' }}>
             <MapContainer center={[12.9716, 77.5946]} zoom={11} style={{ height: '100%' }}>
@@ -412,7 +442,6 @@ const FieldOfficerDashboard = () => {
           </Card>
         </Col>
 
-        {/* STATUS & ACTIONS SECTION */}
         <Col lg={4}>
           <div className="d-flex flex-column gap-3 h-100">
             <Card className="border-0 shadow-sm">

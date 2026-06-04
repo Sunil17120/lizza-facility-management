@@ -1,7 +1,7 @@
 import hashlib, os, math, smtplib, base64, json, requests, calendar, re
 from email.mime.text import MIMEText
 from typing import Optional, List
-from fastapi import FastAPI, Depends, HTTPException, Query, File, UploadFile, Form
+from fastapi import FastAPI, Depends, HTTPException, Query, File, UploadFile, Form, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import extract, text
 from pydantic import BaseModel
@@ -124,7 +124,6 @@ PEPPER = os.environ.get("SECRET_PEPPER", "change_me_in_vercel_settings")
 # --- HELPER FUNCTIONS ---
 
 def parse_iso_timestamp(ts_str: Optional[str]) -> datetime:
-    """Parses frontend ISO strings to UTC datetimes safely."""
     if not ts_str: return datetime.utcnow()
     try:
         clean_ts = ts_str.replace('Z', '+00:00')
@@ -185,10 +184,6 @@ def upload_to_cloud(upload_file: UploadFile) -> str:
     return None
 
 def send_push_notification(token: str, title: str, body: str, data: dict = None):
-    """Send a push notification. Returns True on success, False otherwise.
-
-    `data` is an optional dict merged into the data payload so clients can handle actions.
-    """
     if not token or not firebase_available:
         return False
     try:
@@ -259,9 +254,9 @@ class FCMTokenUpdate(BaseModel):
     email: str
     fcm_token: str
 
-# Request model for logout notification
 class LogoutNotify(BaseModel):
     email: str
+
 # --- AUTH & PROFILES ---
 
 @app.post("/api/login")
@@ -301,12 +296,15 @@ def get_user_profile(email: str, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == email.lower().strip()).first()
     if not user: raise HTTPException(status_code=404, detail="User not found")
     from .database import Attendance
-    checked_in = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).count() > 0
+    open_att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
+    
     return {
         "id": user.id, "full_name": user.full_name, "email": user.email, "user_type": user.user_type,
         "blockchain_id": user.blockchain_id, "shift_start": user.shift_start, "shift_end": user.shift_end,
         "is_verified": user.is_verified, "location_id": user.location_id, "is_present": user.is_present,
-        "checked_in": checked_in
+        "checked_in": open_att is not None,
+        "checkin_time": open_att.checkin_time.isoformat() + "Z" if open_att else None,
+        "active_location_id": open_att.location_id if open_att else None
     }
 
 @app.post("/api/change-password")
@@ -579,15 +577,41 @@ def delete_attendance(attendance_id: int, db: Session = Depends(get_db)):
 
 # --- OFFLINE/ONLINE GEOFENCING & ATTENDANCE ACTIONS ---
 
+@app.post("/api/user/native-webhook")
+async def handle_native_webhook(request: Request, db: Session = Depends(get_db)):
+    """
+    Catches deep-background location updates directly from the Cap-go Android OS webhook,
+    bypassing the frozen React frontend.
+    """
+    try:
+        data = await request.json()
+        
+        # Cap-go nests the coordinates under a 'location' object
+        loc_data = data.get("location", data)
+        lat = loc_data.get("latitude")
+        lon = loc_data.get("longitude")
+        
+        # Extract the email we injected into the headers
+        email = request.headers.get("x-user-email") or data.get("email")
+        
+        if not email or not lat or not lon:
+            return {"status": "ignored", "reason": "missing critical data"}
+
+        # Route it through your exact same update logic
+        return await update_location(email=email, lat=lat, lon=lon, db=db)
+        
+    except Exception as e:
+        print(f"Native Webhook Failed: {e}")
+        return {"status": "error"}
+
 @app.post("/api/user/sync-offline-locations")
 async def sync_offline_locations(payload: dict, db: Session = Depends(get_db)):
-    """Retroactively parses background location queues to build timeline blocks."""
     email = payload.get("email")
     locations = payload.get("locations", [])
     if not email or not locations: return {"status": "success", "synced": 0}
         
     user = db.query(User).filter(User.email == email.lower().strip()).first()
-    if not user: raise HTTPException(404, "User not found")
+    if not user: return {"status": "error", "message": "User not found"}
     
     locations.sort(key=lambda x: x.get("timestamp", ""))
     from .database import Attendance
@@ -599,9 +623,7 @@ async def sync_offline_locations(payload: dict, db: Session = Depends(get_db)):
         ping_time = parse_iso_timestamp(ts_str)
         current_site = get_site_at_location(lat, lon, db)
         
-        # Write synced location coordinates to Redis
-        if r:
-            r.set(f"loc:{email}", f"{lat},{lon}", ex=86400)
+        if r: r.set(f"loc:{email}", f"{lat},{lon}", ex=86400)
             
         if current_site:
             if r:
@@ -613,36 +635,45 @@ async def sync_offline_locations(payload: dict, db: Session = Depends(get_db)):
                 att = Attendance(user_id=user.id, checkin_time=ping_time, date=ping_time, location_id=current_site.id)
                 user.is_present = True
                 db.add(att)
+                
                 if user.user_type == 'field_officer':
+                    db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).update({"exit_time": ping_time})
                     db.add(SiteStay(officer_id=user.id, location_id=current_site.id, entry_time=ping_time))
                 db.commit()
             else:
                 if not user.is_present:
                     user.is_present = True
-                    db.commit()
+
                 if user.user_type == 'field_officer':
-                    active_stay = db.query(SiteStay).filter(
-                        SiteStay.officer_id == user.id,
-                        SiteStay.location_id == current_site.id,
-                        SiteStay.exit_time == None
-                    ).first()
-                    if not active_stay:
+                    # Close previous site stays for offline queued data
+                    open_stays = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).all()
+                    has_current = False
+                    for stay in open_stays:
+                        if stay.location_id == current_site.id:
+                            has_current = True
+                        else:
+                            stay.exit_time = ping_time
+                            
+                    if not has_current:
                         db.add(SiteStay(officer_id=user.id, location_id=current_site.id, entry_time=ping_time))
-                        db.commit()
+                db.commit()
         else:
             if r: r.set(f"ping_time:{email}", ping_time.isoformat(), ex=86400)
             if user.is_present:
                 last_inside_str = r.get(f"last_inside_time:{email}")
                 last_inside_time = datetime.fromisoformat(last_inside_str) if last_inside_str else ping_time
                 
-                if (ping_time - last_inside_time).total_seconds() / 60.0 >= 1.0:
+                if (ping_time - last_inside_time).total_seconds() / 60.0 >= 15.0:
                     open_att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
                     if open_att:
                         open_att.checkout_time = ping_time
                         open_att.duration_seconds = int((ping_time - open_att.checkin_time).total_seconds())
                     stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
                     if stay: stay.exit_time = ping_time
-                    user.is_present = False
+                    
+                    if user.user_type != 'field_officer':
+                        user.is_present = False
+                        
                     db.commit()
                     if r: r.delete(f"last_inside_time:{email}")
                     
@@ -657,7 +688,6 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
     current_site = get_site_at_location(lat, lon, db)
     from .database import Attendance
 
-    # Write the actual coordinates to Redis so the admin dashboard can read them
     if r:
         r.set(f"loc:{email}", f"{lat},{lon}", ex=86400)
 
@@ -667,60 +697,84 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
             r.set(f"ping_time:{email}", now_utc.isoformat(), ex=86400)
 
         open_attendance = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
+        
         if not open_attendance:
             attendance = Attendance(user_id=user.id, checkin_time=now_utc, date=now_utc, location_id=current_site.id)
             user.is_present = True
             db.add(attendance)
+            
             if user.user_type == 'field_officer':
+                # Sweep and close any lingering bugs
+                db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).update({"exit_time": now_utc})
                 db.add(SiteStay(officer_id=user.id, location_id=current_site.id, entry_time=now_utc))
+                
             db.commit()
             if getattr(user, 'fcm_token', None): send_push_notification(user.fcm_token, "✅ Auto Check-In Done", f"You are inside {current_site.name} and have been checked in.")
         else:
             if not user.is_present:
                 user.is_present = True
-                db.commit()
+
             if user.user_type == 'field_officer':
-                active_stay = db.query(SiteStay).filter(
-                    SiteStay.officer_id == user.id,
-                    SiteStay.location_id == current_site.id,
-                    SiteStay.exit_time == None
-                ).first()
-                if not active_stay:
+                # FIX: Close previous site stays if moving to a new site without manual checkout
+                open_stays = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).all()
+                has_current = False
+                
+                for stay in open_stays:
+                    if stay.location_id == current_site.id:
+                        has_current = True
+                    else:
+                        stay.exit_time = now_utc
+                        
+                if not has_current:
                     db.add(SiteStay(officer_id=user.id, location_id=current_site.id, entry_time=now_utc))
-                    db.commit()
+                    
+            db.commit()
     else:
         if r: r.set(f"ping_time:{email}", now_utc.isoformat(), ex=86400)
 
-        if user.is_present:
+        open_attendance = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
+        
+        if open_attendance or user.is_present:
             last_inside_str = r.get(f"last_inside_time:{email}")
             last_inside_time = datetime.fromisoformat(last_inside_str) if last_inside_str else now_utc
             
-            if (now_utc - last_inside_time).total_seconds() / 60.0 >= 1.0:
-                open_attendance = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
+            if (now_utc - last_inside_time).total_seconds() / 60.0 >= 15.0:
                 if open_attendance:
                     open_attendance.checkout_time = now_utc
                     open_attendance.duration_seconds = int((now_utc - open_attendance.checkin_time).total_seconds())
+                
                 active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
                 if active_stay:
                     active_stay.exit_time = now_utc
-                user.is_present = False
+                
+                if user.user_type != 'field_officer':
+                    user.is_present = False
+                    
                 db.commit()
-                if getattr(user, 'fcm_token', None): send_push_notification(user.fcm_token, "🚪 Auto Check-Out Done", "You left the site boundary and have been automatically checked out.")
+                if getattr(user, 'fcm_token', None) and user.user_type != 'field_officer': 
+                    send_push_notification(user.fcm_token, "🚪 Auto Check-Out", "You left the site boundary.")
                 if r: r.delete(f"last_inside_time:{email}")
 
     return { "is_inside": current_site is not None, "status": "inside" if current_site is not None else "outside", "message": "Inside Geofence" if current_site is not None else "Outside Geofence", "site_name": current_site.name if current_site else None }
+
 @app.post("/api/user/checkin")
 def user_checkin(data: CheckAction, db: Session = Depends(get_db)):
     site = get_site_at_location(data.lat, data.lon, db)
-    if not site: raise HTTPException(400, "You are not inside any valid geofence area.")
+    if not site: return {"status": "error", "message": "You are not inside any valid geofence area."}
     user = db.query(User).filter(User.email == data.email.lower().strip()).first()
-    if not user: raise HTTPException(404, "User not found")
+    if not user: return {"status": "error", "message": "User not found"}
     
     from .database import Attendance
     now_utc = parse_iso_timestamp(data.timestamp)
 
     open_attendance = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
-    if open_attendance: return {"status": "success", "message": "Already checked in.", "checked_in": True}
+    if open_attendance: 
+        return {
+            "status": "success", 
+            "message": "Already checked in.", 
+            "checked_in": True,
+            "checkin_time": open_attendance.checkin_time.isoformat() + "Z"
+        }
 
     attendance = Attendance(user_id=user.id, checkin_time=now_utc, date=now_utc, location_id=site.id)
     user.is_present = True
@@ -731,12 +785,18 @@ def user_checkin(data: CheckAction, db: Session = Depends(get_db)):
     if r:
         r.set(f"ping_time:{user.email}", now_utc.isoformat(), ex=86400)
         r.delete(f"warning_sent:{user.email}")
-    return {"status": "success", "message": f"Checked In at {site.name}", "site_name": site.name}
+        
+    return {
+        "status": "success", 
+        "message": f"Checked In at {site.name}", 
+        "site_name": site.name,
+        "checkin_time": now_utc.isoformat() + "Z"
+    }
 
 @app.post("/api/user/checkout")
 def user_checkout(data: CheckAction, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == data.email.lower().strip()).first()
-    if not user: raise HTTPException(404, "User not found")
+    if not user: return {"status": "error", "message": "User not found"}
         
     from .database import Attendance
     now_utc = parse_iso_timestamp(data.timestamp)
@@ -755,6 +815,9 @@ def user_checkout(data: CheckAction, db: Session = Depends(get_db)):
     if r:
         r.delete(f"ping_time:{user.email}")
         r.delete(f"warning_sent:{user.email}")
+        r.delete(f"loc:{user.email}")
+        r.delete(f"last_inside_time:{user.email}")
+        
     return {"status": "success", "message": "Successfully checked out."}
 
 @app.get("/api/cron/auto-checkout")
@@ -775,35 +838,44 @@ def cron_auto_checkout(db: Session = Depends(get_db)):
         else:
             minutes_since_last_ping = float('inf')
 
-        if minutes_since_last_ping >= 5 and not warning_sent:
+        if minutes_since_last_ping >= 30 and not warning_sent:
             if getattr(user, 'fcm_token', None):
                 send_push_notification(
                     token=user.fcm_token,
-                    title="⚠️ Location Lost",
-                    body="We haven't received your location update for 5 minutes. Please open the app and verify location access."
+                    title="⚠️ Location Paused",
+                    body="We haven't received your location update. Please open the app if you are moving."
                 )
             if r:
                 r.set(warning_key, '1', ex=3600)
 
-        if minutes_since_last_ping >= 60:
-            att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
-            if att:
-                att.checkout_time = now_utc
-                att.duration_seconds = int((att.checkout_time - att.checkin_time).total_seconds())
+        open_att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
+        
+        force_checkout = False
+        
+        if open_att:
+            hours_since_checkin = (now_utc - open_att.checkin_time).total_seconds() / 3600.0
+            if hours_since_checkin >= 14.0:
+                force_checkout = True
+        
+        if force_checkout:
+            if open_att:
+                open_att.checkout_time = now_utc
+                open_att.duration_seconds = int((open_att.checkout_time - open_att.checkin_time).total_seconds())
             active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
             if active_stay: active_stay.exit_time = now_utc
                 
             user.is_present = False
             db.commit()
             if getattr(user, 'fcm_token', None):
-                send_push_notification(token=user.fcm_token, title="⏱️ Hourly Sweep Check-Out", body="You were automatically checked out by the system due to loss of background location data.")
+                send_push_notification(token=user.fcm_token, title="⏱️ End of Day Auto Check-Out", body="Your shift was automatically closed after 14 hours.")
             if r:
                 r.delete(f"ping_time:{user.email}")
                 r.delete(f"last_inside_time:{user.email}")
                 r.delete(warning_key)
+                r.delete(f"loc:{user.email}")
             swept_users.append(user.email)
             
-    return {"status": "success", "message": "Hourly cron sweep complete", "auto_checked_out": swept_users}
+    return {"status": "success", "message": "Cron sweep complete", "auto_checked_out": swept_users}
 
 @app.post("/api/field-officer/log-visit")
 async def log_site_visit(
@@ -820,7 +892,6 @@ async def log_site_visit(
 
     now_utc = parse_iso_timestamp(timestamp)
     
-    # Verify stay at time of offline capture OR current time
     active_stay = db.query(SiteStay).filter(
         SiteStay.officer_id == user.id, 
         SiteStay.location_id == site.id,
