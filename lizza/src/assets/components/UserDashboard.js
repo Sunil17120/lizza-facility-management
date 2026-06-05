@@ -2,14 +2,13 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom'; 
 import { Container, Row, Col, Card, Spinner, Button, Alert, Badge, Modal, Form } from 'react-bootstrap';
 import { ShieldCheck, MapPin, MapIcon, AlertTriangle, KeyRound, EyeOff, WifiOff } from 'lucide-react';
-
-import { Capacitor } from '@capacitor/core';
-import { registerPlugin } from '@capacitor/core';
+import { Capacitor, registerPlugin } from '@capacitor/core';
 import { useUser } from './UserContext'; 
 
 const API_BASE_URL = 'https://lizza-facility-management.vercel.app';
 const isApp = Capacitor.isNativePlatform();
-const BackgroundGeolocation = registerPlugin('BackgroundGeolocation');
+const LizzaTracker = registerPlugin('LizzaTracker');
+
 const UserDashboard = () => {
   const navigate = useNavigate(); 
   const { user: contextUser, loading: contextLoading } = useUser();
@@ -37,17 +36,14 @@ const UserDashboard = () => {
 
   const fetchProfileState = useCallback(async () => {
     if (!userEmail || !navigator.onLine) return;
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/user/profile?email=${userEmail}`);
-      if (res.ok) {
-        const data = await res.json();
-        setCheckedIn(Boolean(data.checked_in));
-        if (!data.checked_in && status.code !== 'warning') {
-            setStatus(prev => ({ ...prev, code: 'off_duty', msg: 'Shift Completed' }));
-        }
+    
+    const res = await fetch(`${API_BASE_URL}/api/user/profile?email=${userEmail}`);
+    if (res.ok) {
+      const data = await res.json();
+      setCheckedIn(Boolean(data.checked_in));
+      if (!data.checked_in && status.code !== 'warning') {
+          setStatus(prev => ({ ...prev, code: 'off_duty', msg: 'Shift Completed' }));
       }
-    } catch (error) {
-      console.error("Failed to sync profile state:", error);
     }
   }, [userEmail, status.code]);
 
@@ -56,31 +52,25 @@ const UserDashboard = () => {
 
     const offlineLocations = JSON.parse(localStorage.getItem('offlineLocations') || '[]');
     if (offlineLocations.length > 0) {
-      try {
-        const res = await fetch(`${API_BASE_URL}/api/user/sync-offline-locations`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: userEmail, locations: offlineLocations })
-        });
-        if (res.ok) localStorage.removeItem('offlineLocations');
-      } catch (e) { console.error("Failed to sync pings:", e); }
+      const res = await fetch(`${API_BASE_URL}/api/user/sync-offline-locations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: userEmail, locations: offlineLocations })
+      });
+      if (res.ok) localStorage.removeItem('offlineLocations');
     }
 
     let attendanceQueue = JSON.parse(localStorage.getItem('offlineAttendanceQueue') || '[]');
     let failedActions = [];
 
     for (let action of attendanceQueue) {
-      try {
-        const endpoint = action.actionType === 'CHECK_IN' ? '/api/user/checkin' : '/api/user/checkout';
-        const res = await fetch(`${API_BASE_URL}${endpoint}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: action.email, lat: action.lat, lon: action.lon, timestamp: action.timestamp })
-        });
-        if (!res.ok) failedActions.push(action);
-      } catch (e) {
-        failedActions.push(action); 
-      }
+      const endpoint = action.actionType === 'CHECK_IN' ? '/api/user/checkin' : '/api/user/checkout';
+      const res = await fetch(`${API_BASE_URL}${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: action.email, lat: action.lat, lon: action.lon, timestamp: action.timestamp })
+      });
+      if (!res.ok) failedActions.push(action);
     }
     
     localStorage.setItem('offlineAttendanceQueue', JSON.stringify(failedActions));
@@ -134,75 +124,39 @@ const UserDashboard = () => {
       return;
     }
 
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/user/update-location?email=${userEmail}&lat=${lat}&lon=${lon}`, { method: 'POST' });
-      const data = await res.json();
-      if (data.is_inside) {
-        setCurrentSite(data.site_name || null);
-        setStatus({ type: 'success', msg: data.message || 'Inside Geofence', code: 'inside' });
-      } else {
-        setCurrentSite(null);
-        setStatus({ type: 'warning', msg: data.message || 'Outside Geofence', code: 'outside' });
-      }
-    } catch (e) {
-      console.error("Location sync failed:", e);
+    const res = await fetch(`${API_BASE_URL}/api/user/update-location?email=${userEmail}&lat=${lat}&lon=${lon}`, { method: 'POST' });
+    const data = await res.json();
+    if (data.is_inside) {
+      setCurrentSite(data.site_name || null);
+      setStatus({ type: 'success', msg: data.message || 'Inside Geofence', code: 'inside' });
+    } else {
+      setCurrentSite(null);
+      setStatus({ type: 'warning', msg: data.message || 'Outside Geofence', code: 'outside' });
     }
   }, [userEmail, updatePendingCount]);
 
-  // FREE CAP-GO NATIVE TRACKER
+  // CUSTOM NATIVE TRACKER BRIDGE
   useEffect(() => {
     if (!dbUser || !isApp || !userEmail) return;
-    let watcherId = null;
 
     const startBackgroundTracking = async () => {
-      try {
-        watcherId = await BackgroundGeolocation.addWatcher(
-          { 
-            backgroundMessage: "Lizza Facility Management is tracking your duty status.", 
-            backgroundTitle: "Lizza Duty Tracker", 
-            requestPermissions: true, 
-            stale: true, // Fixes indoor drifting
-            distanceFilter: 15,
-            stopOnTerminate: false, // Don't kill when swiped away
-            startForeground: true // Pin sticky notification to lock screen
-          },
-          (location, error) => { 
-            if (error) {
-              console.error("Background Location Error:", error);
-              return;
-            }
-            if (location) syncLocation(location.latitude, location.longitude); 
-          }
-        );
-
-        // Tell Cap-go to send the email with the webhook
-        await BackgroundGeolocation.setConfig({
-          headers: { "x-user-email": userEmail }
-        });
-
-        // Register the native webhook to bypass Doze mode
-        await BackgroundGeolocation.setupGeofencing({
-          url: `${API_BASE_URL}/api/user/native-webhook`,
-          backgroundLocation: true,
-        });
-
-      } catch (err) {
-        console.error("Failed to start Background Geolocation:", err);
+      if (Capacitor.isNativePlatform()) {
+        await LizzaTracker.startTracking({ email: userEmail });
       }
     };
 
     startBackgroundTracking();
 
     return () => { 
-      if (watcherId) {
-        BackgroundGeolocation.removeWatcher({ id: watcherId }); 
+      if (Capacitor.isNativePlatform()) {
+        LizzaTracker.stopTracking();
       }
     };
-  }, [dbUser, userEmail, syncLocation]);
+  }, [dbUser, userEmail]);
 
-  // WEB GEOLOCATION TRACKER (Runs in Chrome/Safari)
+  // WEB GEOLOCATION TRACKER (Runs in Chrome/Safari for UI Updates)
   useEffect(() => {
-    if (!dbUser || isApp || !navigator.geolocation) return; 
+    if (!dbUser || !navigator.geolocation) return; 
     
     navigator.geolocation.getCurrentPosition(
       (pos) => syncLocation(pos.coords.latitude, pos.coords.longitude),
@@ -263,28 +217,24 @@ const UserDashboard = () => {
         return;
       }
 
-      try {
-          const endpoint = actionType === 'CHECK_IN' ? '/api/user/checkin' : '/api/user/checkout';
-          const res = await fetch(`${API_BASE_URL}${endpoint}`, { 
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) 
-          });
-          const data = await res.json();
-          
-          if (res.ok) {
-            setCheckedIn(actionType === 'CHECK_IN');
-            if (actionType === 'CHECK_IN') {
-                setCurrentSite(data.site_name || currentSite);
-                setStatus({ type: 'success', msg: `Checked In at ${data.site_name || 'site'}`, code: 'inside' });
-            } else {
-                setCurrentSite(null);
-                setStatus({ type: 'secondary', msg: 'Checked Out', code: 'off_duty' });
-            }
-            if (data.updated_user) setDbUser(data.updated_user);
-          } else {
-            setStatus({ type: 'danger', msg: data.detail || 'Action failed', code: 'error' });
-          }
-      } catch (err) {
-          setStatus({ type: 'danger', msg: "Server communication failed.", code: 'error' });
+      const endpoint = actionType === 'CHECK_IN' ? '/api/user/checkin' : '/api/user/checkout';
+      const res = await fetch(`${API_BASE_URL}${endpoint}`, { 
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) 
+      });
+      const data = await res.json();
+      
+      if (res.ok) {
+        setCheckedIn(actionType === 'CHECK_IN');
+        if (actionType === 'CHECK_IN') {
+            setCurrentSite(data.site_name || currentSite);
+            setStatus({ type: 'success', msg: `Checked In at ${data.site_name || 'site'}`, code: 'inside' });
+        } else {
+            setCurrentSite(null);
+            setStatus({ type: 'secondary', msg: 'Checked Out', code: 'off_duty' });
+        }
+        if (data.updated_user) setDbUser(data.updated_user);
+      } else {
+        setStatus({ type: 'danger', msg: data.detail || 'Action failed', code: 'error' });
       }
     }
     setActionLoading(false);

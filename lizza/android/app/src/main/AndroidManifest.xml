@@ -43,12 +43,10 @@
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />
         </provider>
 
-        <receiver android:name="com.transistorsoft.tslocationmanager.BootReceiver" android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.BOOT_COMPLETED" />
-                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
-            </intent-filter>
-        </receiver>
+        <service 
+            android:name=".LizzaTrackingService" 
+            android:foregroundServiceType="location" 
+            android:exported="false" />
         
     </application>
 </manifest>

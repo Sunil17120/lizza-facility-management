@@ -2,28 +2,27 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Container, Card, Row, Col, Form, Button, Alert, Spinner, Table } from 'react-bootstrap';
 import { MapPin, Camera, Navigation, CheckCircle, FileText, Map as MapIcon, LogIn, LogOut, WifiOff, RefreshCw } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
+import { Capacitor, registerPlugin } from '@capacitor/core';
 
-import { Capacitor } from '@capacitor/core';
-import { registerPlugin } from '@capacitor/core';
-const BackgroundGeolocation = registerPlugin('BackgroundGeolocation');
 const API_BASE_URL = 'https://lizza-facility-management.vercel.app';
 const isApp = Capacitor.isNativePlatform();
+const LizzaTracker = registerPlugin('LizzaTracker');
 
 const fileToBase64 = (file) => new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = error => reject(error);
+  const reader = new FileReader();
+  reader.readAsDataURL(file);
+  reader.onload = () => resolve(reader.result);
+  reader.onerror = error => reject(error);
 });
 
 const base64ToFile = (base64String, filename) => {
-    const arr = base64String.split(',');
-    const mime = arr[0].match(/:(.*?);/)[1];
-    const bstr = atob(arr[1]);
-    let n = bstr.length;
-    const u8arr = new Uint8Array(n);
-    while(n--){ u8arr[n] = bstr.charCodeAt(n); }
-    return new File([u8arr], filename, {type:mime});
+  const arr = base64String.split(',');
+  const mime = arr[0].match(/:(.*?);/)[1];
+  const bstr = atob(arr[1]);
+  let n = bstr.length;
+  const u8arr = new Uint8Array(n);
+  while(n--){ u8arr[n] = bstr.charCodeAt(n); }
+  return new File([u8arr], filename, {type:mime});
 }
 
 const compressImage = async (file, maxWidth = 1000, quality = 0.7) => {
@@ -87,24 +86,23 @@ const FieldOfficerDashboard = () => {
 
   const fetchData = useCallback(async () => {
     if (!navigator.onLine) return;
-    try {
-      const [locRes, histRes, profileRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/api/admin/locations`),
-        fetch(`${API_BASE_URL}/api/field-officer/my-visits?email=${userEmail}`),
-        fetch(`${API_BASE_URL}/api/user/profile?email=${userEmail}`)
-      ]);
-      
-      if (locRes.ok) {
-        const locData = await locRes.json();
-        setLocations(locData);
-        if (isApp) localStorage.setItem('cached_sites', JSON.stringify(locData));
-      }
-      if (histRes.ok) setVisitHistory(await histRes.json());
-      if (profileRes.ok) {
-        const profileData = await profileRes.json();
-        setCheckedIn(Boolean(profileData.checked_in));
-      }
-    } catch (error) { console.error("Fetch Data Error:", error); }
+    
+    const [locRes, histRes, profileRes] = await Promise.all([
+      fetch(`${API_BASE_URL}/api/admin/locations`),
+      fetch(`${API_BASE_URL}/api/field-officer/my-visits?email=${userEmail}`),
+      fetch(`${API_BASE_URL}/api/user/profile?email=${userEmail}`)
+    ]);
+    
+    if (locRes.ok) {
+      const locData = await locRes.json();
+      setLocations(locData);
+      if (isApp) localStorage.setItem('cached_sites', JSON.stringify(locData));
+    }
+    if (histRes.ok) setVisitHistory(await histRes.json());
+    if (profileRes.ok) {
+      const profileData = await profileRes.json();
+      setCheckedIn(Boolean(profileData.checked_in));
+    }
   }, [userEmail]);
 
   const syncOfflineData = useCallback(async () => {
@@ -120,17 +118,17 @@ const FieldOfficerDashboard = () => {
     const attendanceQueue = JSON.parse(localStorage.getItem('offlineAttendanceQueue') || '[]');
     let failedAtt = [];
     let lastSuccessfulAction = null;
+    
     for (let act of attendanceQueue) {
-      try {
-        const ep = act.actionType === 'CHECK_IN' ? '/api/user/checkin' : '/api/user/checkout';
-        const res = await fetch(`${API_BASE_URL}${ep}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: act.email, lat: act.lat, lon: act.lon, timestamp: act.timestamp }) });
-        if (res.ok) {
-          lastSuccessfulAction = act;
-        } else {
-          failedAtt.push(act);
-        }
-      } catch (e) { failedAtt.push(act); }
+      const ep = act.actionType === 'CHECK_IN' ? '/api/user/checkin' : '/api/user/checkout';
+      const res = await fetch(`${API_BASE_URL}${ep}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: act.email, lat: act.lat, lon: act.lon, timestamp: act.timestamp }) });
+      if (res.ok) {
+        lastSuccessfulAction = act;
+      } else {
+        failedAtt.push(act);
+      }
     }
+    
     if (lastSuccessfulAction) {
       setCheckedIn(lastSuccessfulAction.actionType === 'CHECK_IN');
     }
@@ -140,24 +138,20 @@ const FieldOfficerDashboard = () => {
     let failedVisits = [];
 
     for (let visit of visitQueue) {
-        try {
-            const formData = new FormData();
-            formData.append('email', visit.email);
-            formData.append('location_id', visit.location_id);
-            formData.append('purpose', visit.purpose);
-            formData.append('remarks', visit.remarks);
-            formData.append('lat', visit.lat);
-            formData.append('lon', visit.lon);
-            formData.append('timestamp', visit.timestamp);
-            
-            const photoFile = base64ToFile(visit.photoBase64, `offline_capture_${Date.now()}.jpg`);
-            formData.append('photo', photoFile);
+      const formData = new FormData();
+      formData.append('email', visit.email);
+      formData.append('location_id', visit.location_id);
+      formData.append('purpose', visit.purpose);
+      formData.append('remarks', visit.remarks);
+      formData.append('lat', visit.lat);
+      formData.append('lon', visit.lon);
+      formData.append('timestamp', visit.timestamp);
+      
+      const photoFile = base64ToFile(visit.photoBase64, `offline_capture_${Date.now()}.jpg`);
+      formData.append('photo', photoFile);
 
-            const res = await fetch(`${API_BASE_URL}/api/field-officer/log-visit`, { method: 'POST', body: formData });
-            if (!res.ok) failedVisits.push(visit);
-        } catch (e) {
-            failedVisits.push(visit);
-        }
+      const res = await fetch(`${API_BASE_URL}/api/field-officer/log-visit`, { method: 'POST', body: formData });
+      if (!res.ok) failedVisits.push(visit);
     }
     
     localStorage.setItem('offlineVisitQueue', JSON.stringify(failedVisits));
@@ -189,7 +183,6 @@ const FieldOfficerDashboard = () => {
 
     return () => { window.removeEventListener('online', handleOnline); window.removeEventListener('offline', handleOffline); };
   }, [fetchData, syncOfflineData, updateQueueCounts]);
-
 
   const processNewLocation = useCallback((lat, lon) => {
     setMyLoc({ lat, lon });
@@ -227,59 +220,27 @@ const FieldOfficerDashboard = () => {
     }
   }, [locations, userEmail, isApp, isSyncing, syncOfflineData]);
 
-  // FREE CAP-GO NATIVE TRACKER
+  // CUSTOM NATIVE TRACKER BRIDGE
   useEffect(() => {
     if (!userEmail || !isApp) return;
-    let watcherId = null;
 
     const startTracking = async () => {
-      try {
-        watcherId = await BackgroundGeolocation.addWatcher(
-          { 
-            backgroundMessage: "Lizza tracking is active. Site visits are being recorded.", 
-            backgroundTitle: "Field Officer Tracking Active",
-            requestPermissions: true, 
-            stale: true, // Crucial for reliable tracking inside buildings
-            distanceFilter: 15,
-            stopOnTerminate: false, // Don't kill when swiped away
-            startForeground: true // Pin sticky notification to lock screen
-          },
-          (location, error) => { 
-            if (error) {
-              console.error("Background Location Error:", error);
-              return;
-            }
-            if (location) processNewLocation(location.latitude, location.longitude); 
-          }
-        );
-
-        // Tell Cap-go to send the email with the webhook
-        await BackgroundGeolocation.setConfig({
-          headers: { "x-user-email": userEmail }
-        });
-
-        // Register the native webhook to bypass Doze mode
-        await BackgroundGeolocation.setupGeofencing({
-          url: `${API_BASE_URL}/api/user/native-webhook`,
-          backgroundLocation: true,
-        });
-
-      } catch (err) {
-        console.error("Failed to start Background Geolocation:", err);
+      if (Capacitor.isNativePlatform()) {
+        await LizzaTracker.startTracking({ email: userEmail });
       }
     };
 
     startTracking();
 
     return () => { 
-      if (watcherId) {
-        BackgroundGeolocation.removeWatcher({ id: watcherId }); 
+      if (Capacitor.isNativePlatform()) {
+        LizzaTracker.stopTracking();
       }
     };
-  }, [userEmail, processNewLocation]);
+  }, [userEmail]);
 
   useEffect(() => {
-    if (Capacitor.isNativePlatform() || !userEmail || !navigator.geolocation) return;
+    if (!userEmail || !navigator.geolocation) return;
 
     const handlePosition = (position) => {
       processNewLocation(position.coords.latitude, position.coords.longitude);
@@ -331,18 +292,15 @@ const FieldOfficerDashboard = () => {
         setAlertMsg({ type: 'danger', text: 'Network connection lost. Action failed.' });
       }
     } else {
-      try {
-        const ep = type === 'CHECK_IN' ? '/api/user/checkin' : '/api/user/checkout';
-        const res = await fetch(`${API_BASE_URL}${ep}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-        if (res.ok) {
-          setCheckedIn(type === 'CHECK_IN');
-          setAlertMsg({ type: 'success', text: `Successfully ${type === 'CHECK_IN' ? 'Checked In' : 'Checked Out'}` });
-        } else {
-          const errorData = await res.json().catch(() => null);
-          setAlertMsg({ type: 'danger', text: errorData?.detail || 'Action failed.' });
-        }
-      } catch (err) {
-        setAlertMsg({ type: 'danger', text: 'Server communication failed.' });
+      const ep = type === 'CHECK_IN' ? '/api/user/checkin' : '/api/user/checkout';
+      const res = await fetch(`${API_BASE_URL}${ep}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      
+      if (res.ok) {
+        setCheckedIn(type === 'CHECK_IN');
+        setAlertMsg({ type: 'success', text: `Successfully ${type === 'CHECK_IN' ? 'Checked In' : 'Checked Out'}` });
+      } else {
+        const errorData = await res.json().catch(() => null);
+        setAlertMsg({ type: 'danger', text: errorData?.detail || 'Action failed.' });
       }
     }
     setIsSubmitting(false);
@@ -359,44 +317,37 @@ const FieldOfficerDashboard = () => {
 
     if (!isOnline) {
         if (isApp) {
-            try {
-                const base64String = await fileToBase64(compressedPhoto);
-                const offlinePayload = {
-                    email: userEmail, location_id: activeSite.id, purpose, remarks,
-                    lat: myLoc.lat, lon: myLoc.lon, timestamp, photoBase64: base64String
-                };
-                
-                const q = JSON.parse(localStorage.getItem('offlineVisitQueue') || '[]');
-                q.push(offlinePayload);
-                localStorage.setItem('offlineVisitQueue', JSON.stringify(q));
-                
-                setAlertMsg({ type: 'warning', text: 'No internet. Visit report safely queued for upload.' });
-                setPurpose(''); setRemarks(''); setPhoto(null);
-                if(fileInputRef.current) fileInputRef.current.value = "";
-                updateQueueCounts();
-            } catch(err) {
-                alert("Failed to store image offline. Please clear storage space.");
-            }
+            const base64String = await fileToBase64(compressedPhoto);
+            const offlinePayload = {
+                email: userEmail, location_id: activeSite.id, purpose, remarks,
+                lat: myLoc.lat, lon: myLoc.lon, timestamp, photoBase64: base64String
+            };
+            
+            const q = JSON.parse(localStorage.getItem('offlineVisitQueue') || '[]');
+            q.push(offlinePayload);
+            localStorage.setItem('offlineVisitQueue', JSON.stringify(q));
+            
+            setAlertMsg({ type: 'warning', text: 'No internet. Visit report safely queued for upload.' });
+            setPurpose(''); setRemarks(''); setPhoto(null);
+            if(fileInputRef.current) fileInputRef.current.value = "";
+            updateQueueCounts();
         } else {
             setAlertMsg({ type: 'danger', text: 'Network connection required to submit report.' });
         }
     } else {
-        try {
-            const formData = new FormData();
-            formData.append('email', userEmail); formData.append('location_id', activeSite.id);
-            formData.append('purpose', purpose); formData.append('remarks', remarks);
-            formData.append('lat', myLoc.lat); formData.append('lon', myLoc.lon);
-            formData.append('timestamp', timestamp); formData.append('photo', compressedPhoto);
+        const formData = new FormData();
+        formData.append('email', userEmail); formData.append('location_id', activeSite.id);
+        formData.append('purpose', purpose); formData.append('remarks', remarks);
+        formData.append('lat', myLoc.lat); formData.append('lon', myLoc.lon);
+        formData.append('timestamp', timestamp); formData.append('photo', compressedPhoto);
 
-            const res = await fetch(`${API_BASE_URL}/api/field-officer/log-visit`, { method: 'POST', body: formData });
-            if (res.ok) {
-                setAlertMsg({ type: 'success', text: 'Visit logged successfully!' });
-                setPurpose(''); setRemarks(''); setPhoto(null);
-                if(fileInputRef.current) fileInputRef.current.value = "";
-                fetchData();
-            }
-        } catch (err) {
-            setAlertMsg({ type: 'danger', text: 'Network connection failed.' });
+        const res = await fetch(`${API_BASE_URL}/api/field-officer/log-visit`, { method: 'POST', body: formData });
+        
+        if (res.ok) {
+            setAlertMsg({ type: 'success', text: 'Visit logged successfully!' });
+            setPurpose(''); setRemarks(''); setPhoto(null);
+            if(fileInputRef.current) fileInputRef.current.value = "";
+            fetchData();
         }
     }
     setIsSubmitting(false);
