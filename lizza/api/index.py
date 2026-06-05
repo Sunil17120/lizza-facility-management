@@ -631,6 +631,13 @@ async def sync_offline_locations(payload: dict, db: Session = Depends(get_db)):
                 r.set(f"ping_time:{email}", ping_time.isoformat(), ex=86400)
             
             open_att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
+            
+            # FIX: Auto-checkout if offline ping reveals they jumped to a new site
+            if open_att and open_att.location_id != current_site.id:
+                open_att.checkout_time = ping_time
+                open_att.duration_seconds = int((ping_time - open_att.checkin_time).total_seconds())
+                open_att = None
+            
             if not open_att:
                 att = Attendance(user_id=user.id, checkin_time=ping_time, date=ping_time, location_id=current_site.id)
                 user.is_present = True
@@ -645,7 +652,6 @@ async def sync_offline_locations(payload: dict, db: Session = Depends(get_db)):
                     user.is_present = True
 
                 if user.user_type == 'field_officer':
-                    # Close previous site stays for offline queued data
                     open_stays = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).all()
                     has_current = False
                     for stay in open_stays:
@@ -698,13 +704,22 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
 
         open_attendance = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
         
+        # FIX: If they are checked into a DIFFERENT site, auto-checkout from the old site first
+        if open_attendance and open_attendance.location_id != current_site.id:
+            open_attendance.checkout_time = now_utc
+            open_attendance.duration_seconds = int((now_utc - open_attendance.checkin_time).total_seconds())
+            
+            old_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
+            if old_stay: old_stay.exit_time = now_utc
+            
+            open_attendance = None # Reset so the logic below creates a fresh check-in
+        
         if not open_attendance:
             attendance = Attendance(user_id=user.id, checkin_time=now_utc, date=now_utc, location_id=current_site.id)
             user.is_present = True
             db.add(attendance)
             
             if user.user_type == 'field_officer':
-                # Sweep and close any lingering bugs
                 db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).update({"exit_time": now_utc})
                 db.add(SiteStay(officer_id=user.id, location_id=current_site.id, entry_time=now_utc))
                 
@@ -715,7 +730,6 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
                 user.is_present = True
 
             if user.user_type == 'field_officer':
-                # FIX: Close previous site stays if moving to a new site without manual checkout
                 open_stays = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).all()
                 has_current = False
                 
@@ -768,13 +782,24 @@ def user_checkin(data: CheckAction, db: Session = Depends(get_db)):
     now_utc = parse_iso_timestamp(data.timestamp)
 
     open_attendance = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
+    
     if open_attendance: 
-        return {
-            "status": "success", 
-            "message": "Already checked in.", 
-            "checked_in": True,
-            "checkin_time": open_attendance.checkin_time.isoformat() + "Z"
-        }
+        if open_attendance.location_id == site.id:
+            return {
+                "status": "success", 
+                "message": "Already checked in.", 
+                "checked_in": True,
+                "checkin_time": open_attendance.checkin_time.isoformat() + "Z"
+            }
+        else:
+            # FIX: Auto close the previous site if they check in manually at a new one
+            open_attendance.checkout_time = now_utc
+            open_attendance.duration_seconds = int((now_utc - open_attendance.checkin_time).total_seconds())
+            
+            old_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
+            if old_stay: old_stay.exit_time = now_utc
+            
+            # Allow logic to continue and insert the new site checkin
 
     attendance = Attendance(user_id=user.id, checkin_time=now_utc, date=now_utc, location_id=site.id)
     user.is_present = True
@@ -838,6 +863,7 @@ def cron_auto_checkout(db: Session = Depends(get_db)):
         else:
             minutes_since_last_ping = float('inf')
 
+        # 1. Send warning notification if silent for 30 minutes
         if minutes_since_last_ping >= 30 and not warning_sent:
             if getattr(user, 'fcm_token', None):
                 send_push_notification(
@@ -848,31 +874,51 @@ def cron_auto_checkout(db: Session = Depends(get_db)):
             if r:
                 r.set(warning_key, '1', ex=3600)
 
+        # 2. Evaluate if we need to force a checkout
         open_att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
-        
         force_checkout = False
-        
+        checkout_timestamp = now_utc
+
         if open_att:
             hours_since_checkin = (now_utc - open_att.checkin_time).total_seconds() / 3600.0
+            
+            # Condition A: Max shift duration reached (14 hours)
             if hours_since_checkin >= 14.0:
                 force_checkout = True
+                checkout_timestamp = now_utc
+            
+            # Condition B: Idle Timeout (Radio silent / No pings for more than 60 minutes)
+            elif minutes_since_last_ping >= 60.0:
+                force_checkout = True
+                # Set checkout time to their LAST known active ping so hours are calculated accurately
+                checkout_timestamp = last_ping_time if last_ping_str else now_utc
         
+        # 3. Execute the forced checkout
         if force_checkout:
             if open_att:
-                open_att.checkout_time = now_utc
+                open_att.checkout_time = checkout_timestamp
                 open_att.duration_seconds = int((open_att.checkout_time - open_att.checkin_time).total_seconds())
+                
             active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
-            if active_stay: active_stay.exit_time = now_utc
+            if active_stay: 
+                active_stay.exit_time = checkout_timestamp
                 
             user.is_present = False
             db.commit()
+            
             if getattr(user, 'fcm_token', None):
-                send_push_notification(token=user.fcm_token, title="⏱️ End of Day Auto Check-Out", body="Your shift was automatically closed after 14 hours.")
+                send_push_notification(
+                    token=user.fcm_token, 
+                    title="⏱️ Shift Automatically Closed", 
+                    body="Your shift was closed due to inactivity or reaching maximum duty hours."
+                )
+                
             if r:
                 r.delete(f"ping_time:{user.email}")
                 r.delete(f"last_inside_time:{user.email}")
                 r.delete(warning_key)
                 r.delete(f"loc:{user.email}")
+                
             swept_users.append(user.email)
             
     return {"status": "success", "message": "Cron sweep complete", "auto_checked_out": swept_users}
