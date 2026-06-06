@@ -8,6 +8,7 @@
     "@capacitor/app": "^8.1.0",
     "@capacitor/cli": "^8.3.0",
     "@capacitor/core": "^8.3.0",
+    "@capacitor/local-notifications": "^8.2.0",
     "@capacitor/push-notifications": "^8.1.1",
     "@capgo/capacitor-updater": "^8.47.5",
     "@testing-library/dom": "^10.4.1",
