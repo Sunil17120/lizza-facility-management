@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Container, Row, Col, Card, Spinner, Button, Alert, Badge, Modal, Form } from 'react-bootstrap';
 import { ShieldCheck, MapPin, MapIcon, AlertTriangle, KeyRound, EyeOff, WifiOff } from 'lucide-react';
 import { Capacitor, registerPlugin } from '@capacitor/core';
+import { LocalNotifications } from '@capacitor/local-notifications';
 import { useUser } from './UserContext'; 
 
 const API_BASE_URL = 'https://lizza-facility-management.vercel.app';
@@ -27,6 +28,23 @@ const UserDashboard = () => {
   
   const userEmail = localStorage.getItem('userEmail');
 
+  const resetIdleWarningTimer = async () => {
+    if (!isApp) return;
+    await LocalNotifications.requestPermissions();
+    await LocalNotifications.cancel({ notifications: [{ id: 999 }] });
+    await LocalNotifications.schedule({
+      notifications: [
+        {
+          title: "⚠️ Tracking Paused",
+          body: "No location update in 30 minutes. Please open Lizza to keep your shift active.",
+          id: 999,
+          schedule: { at: new Date(Date.now() + 30 * 60 * 1000) }, 
+          smallIcon: "ic_stat_icon_config_sample", 
+        }
+      ]
+    });
+  };
+
   const updatePendingCount = useCallback(() => {
     if (!isApp) return; 
     const pings = JSON.parse(localStorage.getItem('offlineLocations') || '[]');
@@ -41,8 +59,20 @@ const UserDashboard = () => {
     if (res.ok) {
       const data = await res.json();
       setCheckedIn(Boolean(data.checked_in));
-      if (!data.checked_in && status.code !== 'warning') {
+      
+      if (data.checked_in && data.active_location_id) {
+          const locRes = await fetch(`${API_BASE_URL}/api/admin/locations`);
+          if (locRes.ok) {
+              const locations = await locRes.json();
+              const site = locations.find(l => l.id === data.active_location_id);
+              if (site) {
+                  setCurrentSite(site.name);
+                  setStatus({ type: 'success', msg: `Inside Geofence`, code: 'inside' });
+              }
+          }
+      } else if (!data.checked_in && status.code !== 'warning') {
           setStatus(prev => ({ ...prev, code: 'off_duty', msg: 'Shift Completed' }));
+          setCurrentSite(null);
       }
     }
   }, [userEmail, status.code]);
@@ -87,6 +117,9 @@ const UserDashboard = () => {
 
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
+    
+    fetchProfileState(); 
+    
     if (isApp) {
       updatePendingCount();
       if (navigator.onLine) processOfflineQueues();
@@ -96,7 +129,7 @@ const UserDashboard = () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
-  }, [processOfflineQueues, updatePendingCount]);
+  }, [processOfflineQueues, updatePendingCount, fetchProfileState]);
 
   useEffect(() => {
     if (!contextLoading && contextUser) {
@@ -113,6 +146,8 @@ const UserDashboard = () => {
   }, [contextUser, contextLoading, navigate]);
 
   const syncLocation = useCallback(async (lat, lon) => {
+    resetIdleWarningTimer();
+
     if (!navigator.onLine) {
       if (!isApp) return; 
       const locData = { lat, lon, timestamp: new Date().toISOString() };
@@ -146,22 +181,15 @@ const UserDashboard = () => {
     };
 
     startBackgroundTracking();
-
-    return () => { 
-      if (Capacitor.isNativePlatform()) {
-        LizzaTracker.stopTracking();
-      }
-    };
   }, [dbUser, userEmail]);
 
-  // WEB GEOLOCATION TRACKER (Runs in Chrome/Safari for UI Updates)
+  // WEB GEOLOCATION TRACKER
   useEffect(() => {
     if (!dbUser || !navigator.geolocation) return; 
     
     navigator.geolocation.getCurrentPosition(
       (pos) => syncLocation(pos.coords.latitude, pos.coords.longitude),
       (err) => {
-        console.error("Initial web geolocation failed:", err);
         setStatus({ type: 'warning', msg: 'Location permission required. Please enable location access.', code: 'outside' });
       },
       { enableHighAccuracy: true, timeout: 10000 }
@@ -169,7 +197,7 @@ const UserDashboard = () => {
 
     const watchId = navigator.geolocation.watchPosition(
       (pos) => syncLocation(pos.coords.latitude, pos.coords.longitude),
-      (err) => console.error("Web geolocation watch failed:", err),
+      (err) => {},
       { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 }
     );
 
@@ -185,8 +213,8 @@ const UserDashboard = () => {
     setActionLoading(true);
     
     if (!navigator.geolocation) {
-        alert("Location services are required.");
-        return setActionLoading(false);
+        setActionLoading(false);
+        return;
     }
     
     const coords = await new Promise((resolve) => {
@@ -231,6 +259,10 @@ const UserDashboard = () => {
         } else {
             setCurrentSite(null);
             setStatus({ type: 'secondary', msg: 'Checked Out', code: 'off_duty' });
+            if (isApp) {
+                await LocalNotifications.cancel({ notifications: [{ id: 999 }] });
+                await LizzaTracker.stopTracking();
+            }
         }
         if (data.updated_user) setDbUser(data.updated_user);
       } else {
