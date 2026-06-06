@@ -3,6 +3,7 @@ import { Container, Card, Row, Col, Form, Button, Alert, Spinner, Table } from '
 import { MapPin, Camera, Navigation, CheckCircle, FileText, Map as MapIcon, LogIn, LogOut, WifiOff, RefreshCw } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 import { Capacitor, registerPlugin } from '@capacitor/core';
+import { LocalNotifications } from '@capacitor/local-notifications';
 
 const API_BASE_URL = 'https://lizza-facility-management.vercel.app';
 const isApp = Capacitor.isNativePlatform();
@@ -77,6 +78,23 @@ const FieldOfficerDashboard = () => {
   const fileInputRef = useRef(null);
   const userEmail = localStorage.getItem('userEmail');
 
+  const resetIdleWarningTimer = async () => {
+    if (!isApp) return;
+    await LocalNotifications.requestPermissions();
+    await LocalNotifications.cancel({ notifications: [{ id: 999 }] });
+    await LocalNotifications.schedule({
+      notifications: [
+        {
+          title: "⚠️ Tracking Paused",
+          body: "No location update in 30 minutes. Please open Lizza to keep your shift active.",
+          id: 999,
+          schedule: { at: new Date(Date.now() + 30 * 60 * 1000) }, 
+          smallIcon: "ic_stat_icon_config_sample", 
+        }
+      ]
+    });
+  };
+
   const updateQueueCounts = useCallback(() => {
       if (!isApp) return;
       const queuedReports = JSON.parse(localStorage.getItem('offlineVisitQueue') || '[]');
@@ -93,15 +111,26 @@ const FieldOfficerDashboard = () => {
       fetch(`${API_BASE_URL}/api/user/profile?email=${userEmail}`)
     ]);
     
+    let fetchedLocations = [];
     if (locRes.ok) {
-      const locData = await locRes.json();
-      setLocations(locData);
-      if (isApp) localStorage.setItem('cached_sites', JSON.stringify(locData));
+      fetchedLocations = await locRes.json();
+      setLocations(fetchedLocations);
+      if (isApp) localStorage.setItem('cached_sites', JSON.stringify(fetchedLocations));
     }
+    
     if (histRes.ok) setVisitHistory(await histRes.json());
+    
     if (profileRes.ok) {
       const profileData = await profileRes.json();
       setCheckedIn(Boolean(profileData.checked_in));
+      
+      if (profileData.checked_in && profileData.active_location_id) {
+          const site = fetchedLocations.find(l => l.id === profileData.active_location_id);
+          if (site) {
+              setActiveSite(site);
+              setAlertMsg({ type: 'success', text: `Successfully Restored Session` });
+          }
+      }
     }
   }, [userEmail]);
 
@@ -185,6 +214,7 @@ const FieldOfficerDashboard = () => {
   }, [fetchData, syncOfflineData, updateQueueCounts]);
 
   const processNewLocation = useCallback((lat, lon) => {
+    resetIdleWarningTimer();
     setMyLoc({ lat, lon });
     const cachedSitesStr = localStorage.getItem('cached_sites');
     const sitesToEval = (cachedSitesStr && isApp) ? JSON.parse(cachedSitesStr) : locations;
@@ -231,12 +261,6 @@ const FieldOfficerDashboard = () => {
     };
 
     startTracking();
-
-    return () => { 
-      if (Capacitor.isNativePlatform()) {
-        LizzaTracker.stopTracking();
-      }
-    };
   }, [userEmail]);
 
   useEffect(() => {
@@ -245,12 +269,9 @@ const FieldOfficerDashboard = () => {
     const handlePosition = (position) => {
       processNewLocation(position.coords.latitude, position.coords.longitude);
     };
-    const handleError = (error) => {
-      console.error('Browser geolocation failed:', error);
-    };
 
-    navigator.geolocation.getCurrentPosition(handlePosition, handleError, { enableHighAccuracy: true, timeout: 10000 });
-    const id = navigator.geolocation.watchPosition(handlePosition, handleError, { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 });
+    navigator.geolocation.getCurrentPosition(handlePosition, () => {}, { enableHighAccuracy: true, timeout: 10000 });
+    const id = navigator.geolocation.watchPosition(handlePosition, () => {}, { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 });
 
     return () => {
       if (navigator.geolocation && id !== null) {
@@ -298,8 +319,12 @@ const FieldOfficerDashboard = () => {
       if (res.ok) {
         setCheckedIn(type === 'CHECK_IN');
         setAlertMsg({ type: 'success', text: `Successfully ${type === 'CHECK_IN' ? 'Checked In' : 'Checked Out'}` });
+        if (type === 'CHECK_OUT' && isApp) {
+          await LocalNotifications.cancel({ notifications: [{ id: 999 }] });
+          await LizzaTracker.stopTracking();
+        }
       } else {
-        const errorData = await res.json().catch(() => null);
+        const errorData = await res.json();
         setAlertMsg({ type: 'danger', text: errorData?.detail || 'Action failed.' });
       }
     }
