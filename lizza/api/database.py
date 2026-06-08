@@ -165,24 +165,10 @@ class Attendance(Base):
     checkout_time = Column(DateTime, nullable=True)
     duration_seconds = Column(Integer, nullable=True)
     date = Column(DateTime, default=datetime.utcnow)
-class ShiftLog(Base):
-    __tablename__ = "shift_logs"
-
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
-
-    shift_id = Column(String, unique=True, index=True)
-
-    shift_date = Column(DateTime, default=datetime.utcnow)
-
-    login_time = Column(DateTime, default=datetime.utcnow)
-    logout_time = Column(DateTime, nullable=True)
-
-    current_status = Column(String, default="ON_DUTY")
-
+    total_break_minutes = Column(Integer, default=0) # As per your schema
     total_break_seconds = Column(Integer, default=0)
     break_start_time = Column(DateTime, nullable=True)
-    is_on_break = Column(Boolean, default=False)
+    is_on_break = Column(Boolean, default=False) 
 class FieldOfficerRoute(Base):
     __tablename__ = "field_officer_routes"
     id = Column(Integer, primary_key=True, index=True)
