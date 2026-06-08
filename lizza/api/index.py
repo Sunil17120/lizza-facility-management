@@ -19,8 +19,7 @@ from upstash_redis import Redis as UpstashRedis
 import firebase_admin
 from firebase_admin import credentials, messaging
 
-from .database import SessionLocal, User, EmployeeLocation, OfficeLocation, SiteVisit, SiteStay, ShiftLog, FieldOfficerRoute, init_db, cipher
-
+from .database import engine, SessionLocal, User, EmployeeLocation, OfficeLocation, SiteVisit, SiteStay, ShiftLog, FieldOfficerRoute, init_db, cipher
 with engine.connect() as conn:
     conn.execute(text("""
         DO $$ 
