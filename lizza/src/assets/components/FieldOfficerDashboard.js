@@ -4,6 +4,7 @@ import { MapPin, Camera, Navigation, CheckCircle, FileText, Map as MapIcon, LogI
 import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { LocalNotifications } from '@capacitor/local-notifications';
+import { AppLauncher } from '@capacitor/app-launcher';
 
 const API_BASE_URL = 'https://lizza-facility-management.vercel.app';
 const isApp = Capacitor.isNativePlatform();
@@ -56,18 +57,25 @@ const getDistance = (lat1, lon1, lat2, lon2) => {
 };
 
 const FieldOfficerDashboard = () => {
-  const [locations, setLocations] = useState([]);
+  const [locations, setLocations] = useState(() => {
+    const cached = localStorage.getItem('cached_sites');
+    return cached ? JSON.parse(cached) : [];
+  });
+  
   const [myLoc, setMyLoc] = useState(null);
   const [activeSite, setActiveSite] = useState(null);
   const [visitHistory, setVisitHistory] = useState([]);
   const [nearbySites, setNearbySites] = useState([]);
   
   const [isOnline, setIsOnline] = useState(navigator.onLine);
-  const [checkedIn, setCheckedIn] = useState(false);
+  
+  const [checkedIn, setCheckedIn] = useState(() => {
+    return localStorage.getItem('local_checked_in') === 'true';
+  });
   
   const [purpose, setPurpose] = useState('');
   const [remarks, setRemarks] = useState('');
-  const [photo, setPhoto] = useState(null);
+  const [photos, setPhotos] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [alertMsg, setAlertMsg] = useState(null);
   
@@ -78,9 +86,21 @@ const FieldOfficerDashboard = () => {
   const fileInputRef = useRef(null);
   const userEmail = localStorage.getItem('userEmail');
 
+  const openNotificationSettings = async () => {
+    if (isApp) {
+      await AppLauncher.openSettings();
+    }
+  };
+
   const resetIdleWarningTimer = async () => {
     if (!isApp) return;
-    await LocalNotifications.requestPermissions();
+    
+    const permissionStatus = await LocalNotifications.checkPermissions();
+    if (permissionStatus.display !== 'granted') {
+      const perm = await LocalNotifications.requestPermissions();
+      if (perm.display !== 'granted') return;
+    }
+
     await LocalNotifications.cancel({ notifications: [{ id: 999 }] });
     await LocalNotifications.schedule({
       notifications: [
@@ -125,11 +145,14 @@ const FieldOfficerDashboard = () => {
       setCheckedIn(Boolean(profileData.checked_in));
       
       if (profileData.checked_in && profileData.active_location_id) {
+          localStorage.setItem('local_checked_in', 'true');
           const site = fetchedLocations.find(l => l.id === profileData.active_location_id);
           if (site) {
               setActiveSite(site);
               setAlertMsg({ type: 'success', text: `Successfully Restored Session` });
           }
+      } else {
+          localStorage.setItem('local_checked_in', 'false');
       }
     }
   }, [userEmail]);
@@ -160,6 +183,7 @@ const FieldOfficerDashboard = () => {
     
     if (lastSuccessfulAction) {
       setCheckedIn(lastSuccessfulAction.actionType === 'CHECK_IN');
+      localStorage.setItem('local_checked_in', lastSuccessfulAction.actionType === 'CHECK_IN');
     }
     localStorage.setItem('offlineAttendanceQueue', JSON.stringify(failedAtt));
 
@@ -176,8 +200,8 @@ const FieldOfficerDashboard = () => {
       formData.append('lon', visit.lon);
       formData.append('timestamp', visit.timestamp);
       
-      const photoFile = base64ToFile(visit.photoBase64, `offline_capture_${Date.now()}.jpg`);
-      formData.append('photo', photoFile);
+      const photoFiles = visit.photosBase64.map((b64, i) => base64ToFile(b64, `offline_capture_${i}_${Date.now()}.jpg`));
+      photoFiles.forEach(f => formData.append('photos', f));
 
       const res = await fetch(`${API_BASE_URL}/api/field-officer/log-visit`, { method: 'POST', body: formData });
       if (!res.ok) failedVisits.push(visit);
@@ -250,17 +274,21 @@ const FieldOfficerDashboard = () => {
     }
   }, [locations, userEmail, isApp, isSyncing, syncOfflineData]);
 
-  // CUSTOM NATIVE TRACKER BRIDGE
   useEffect(() => {
     if (!userEmail || !isApp) return;
 
     const startTracking = async () => {
       if (Capacitor.isNativePlatform()) {
+        await LocalNotifications.requestPermissions();
         await LizzaTracker.startTracking({ email: userEmail });
       }
     };
 
-    startTracking();
+    const bootTimer = setTimeout(() => {
+        startTracking();
+    }, 1500);
+
+    return () => clearTimeout(bootTimer);
   }, [userEmail]);
 
   useEffect(() => {
@@ -271,12 +299,13 @@ const FieldOfficerDashboard = () => {
     };
 
     navigator.geolocation.getCurrentPosition(handlePosition, () => {}, { enableHighAccuracy: true, timeout: 10000 });
-    const id = navigator.geolocation.watchPosition(handlePosition, () => {}, { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 });
+
+    const intervalId = setInterval(() => {
+      navigator.geolocation.getCurrentPosition(handlePosition, () => {}, { enableHighAccuracy: true, timeout: 10000 });
+    }, 60000); 
 
     return () => {
-      if (navigator.geolocation && id !== null) {
-        navigator.geolocation.clearWatch(id);
-      }
+      clearInterval(intervalId);
     };
   }, [userEmail, processNewLocation]);
 
@@ -306,7 +335,10 @@ const FieldOfficerDashboard = () => {
         const q = JSON.parse(localStorage.getItem('offlineAttendanceQueue') || '[]');
         q.push(payload);
         localStorage.setItem('offlineAttendanceQueue', JSON.stringify(q));
+        
         setCheckedIn(type === 'CHECK_IN');
+        localStorage.setItem('local_checked_in', type === 'CHECK_IN'); 
+        
         setAlertMsg({ type: 'warning', text: `Offline ${type === 'CHECK_IN' ? 'Check-In' : 'Check-Out'} queued.` });
         updateQueueCounts();
       } else {
@@ -318,6 +350,8 @@ const FieldOfficerDashboard = () => {
       
       if (res.ok) {
         setCheckedIn(type === 'CHECK_IN');
+        localStorage.setItem('local_checked_in', type === 'CHECK_IN'); 
+        
         setAlertMsg({ type: 'success', text: `Successfully ${type === 'CHECK_IN' ? 'Checked In' : 'Checked Out'}` });
         if (type === 'CHECK_OUT' && isApp) {
           await LocalNotifications.cancel({ notifications: [{ id: 999 }] });
@@ -333,19 +367,20 @@ const FieldOfficerDashboard = () => {
 
   const handleVisitSubmit = async (e) => {
     e.preventDefault();
-    if (!photo) return alert("Photo required.");
+    if (!photos || photos.length === 0) return alert("At least one photo is required.");
+    if (!remarks.trim()) return alert("Visit remarks/details are mandatory.");
     if (!activeSite || !myLoc) return alert("Geofence error.");
 
     setIsSubmitting(true);
-    const compressedPhoto = await compressImage(photo);
+    const compressedPhotos = await Promise.all(photos.map(p => compressImage(p)));
     const timestamp = new Date().toISOString();
 
     if (!isOnline) {
         if (isApp) {
-            const base64String = await fileToBase64(compressedPhoto);
+            const base64Strings = await Promise.all(compressedPhotos.map(p => fileToBase64(p)));
             const offlinePayload = {
                 email: userEmail, location_id: activeSite.id, purpose, remarks,
-                lat: myLoc.lat, lon: myLoc.lon, timestamp, photoBase64: base64String
+                lat: myLoc.lat, lon: myLoc.lon, timestamp, photosBase64: base64Strings
             };
             
             const q = JSON.parse(localStorage.getItem('offlineVisitQueue') || '[]');
@@ -353,7 +388,7 @@ const FieldOfficerDashboard = () => {
             localStorage.setItem('offlineVisitQueue', JSON.stringify(q));
             
             setAlertMsg({ type: 'warning', text: 'No internet. Visit report safely queued for upload.' });
-            setPurpose(''); setRemarks(''); setPhoto(null);
+            setPurpose(''); setRemarks(''); setPhotos([]);
             if(fileInputRef.current) fileInputRef.current.value = "";
             updateQueueCounts();
         } else {
@@ -364,13 +399,17 @@ const FieldOfficerDashboard = () => {
         formData.append('email', userEmail); formData.append('location_id', activeSite.id);
         formData.append('purpose', purpose); formData.append('remarks', remarks);
         formData.append('lat', myLoc.lat); formData.append('lon', myLoc.lon);
-        formData.append('timestamp', timestamp); formData.append('photo', compressedPhoto);
+        formData.append('timestamp', timestamp); 
+        
+        compressedPhotos.forEach((p) => {
+            formData.append('photos', p);
+        });
 
         const res = await fetch(`${API_BASE_URL}/api/field-officer/log-visit`, { method: 'POST', body: formData });
         
         if (res.ok) {
             setAlertMsg({ type: 'success', text: 'Visit logged successfully!' });
-            setPurpose(''); setRemarks(''); setPhoto(null);
+            setPurpose(''); setRemarks(''); setPhotos([]);
             if(fileInputRef.current) fileInputRef.current.value = "";
             fetchData();
         }
@@ -424,7 +463,17 @@ const FieldOfficerDashboard = () => {
               <Card.Body>
                 <h5 className="fw-bold mb-3 d-flex align-items-center"><MapPin className="me-2 text-danger"/> Current Status</h5>
                 
-                {alertMsg && <Alert variant={alertMsg.type} className="mb-3 small">{alertMsg.text}</Alert>}
+                {alertMsg && (
+                  <Alert variant={alertMsg.type} className="mb-3 small d-flex justify-content-between align-items-center">
+                    <span>{alertMsg.text}</span>
+                    {alertMsg.type === 'danger' && isApp && (
+                      <Button variant="outline-danger" size="sm" onClick={openNotificationSettings}>
+                        Fix Permissions
+                      </Button>
+                    )}
+                  </Alert>
+                )}
+                
                 {offlineSyncMsg && <Alert variant="success" className="mb-3 small">{offlineSyncMsg}</Alert>}
                 
                 {activeSite ? (
@@ -453,10 +502,11 @@ const FieldOfficerDashboard = () => {
                         <option value="Attendance">Attendance</option>
                         <option value="Bill Submission">Bill Submission</option>
                     </Form.Select>
-                    <Form.Control size="sm" as="textarea" rows={2} className="mb-2" placeholder="Remarks..." value={remarks} onChange={e => setRemarks(e.target.value)} />
+                    <Form.Control size="sm" as="textarea" rows={2} className="mb-2" placeholder="Mandatory Visit Details..." value={remarks} onChange={e => setRemarks(e.target.value)} required />
                     <Form.Group className="mb-3">
-                      <Form.Label className="small fw-bold"><Camera size={14} className="me-1"/> Live Photo</Form.Label>
-                      <Form.Control type="file" size="sm" accept="image/*" capture="environment" ref={fileInputRef} onChange={e => setPhoto(e.target.files[0])} required />
+                      <Form.Label className="small fw-bold"><Camera size={14} className="me-1"/> Live Photos (Multiple Allowed)</Form.Label>
+                      <Form.Control type="file" size="sm" accept="image/*" multiple capture="environment" ref={fileInputRef} onChange={e => setPhotos(Array.from(e.target.files))} required />
+                      {photos.length > 0 && <small className="text-success mt-1 d-block">{photos.length} photo(s) selected</small>}
                     </Form.Group>
                     <Button type="submit" variant="primary" className="w-100 fw-bold" disabled={isSubmitting}>
                       {isSubmitting ? <Spinner size="sm" /> : "SUBMIT REPORT"}

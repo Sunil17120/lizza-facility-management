@@ -3,8 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import { Container, Row, Col, Card, Spinner, Button, Alert, Badge, Modal, Form } from 'react-bootstrap';
 import { ShieldCheck, MapPin, MapIcon, AlertTriangle, KeyRound, EyeOff, WifiOff } from 'lucide-react';
 import { Capacitor, registerPlugin } from '@capacitor/core';
-import { LocalNotifications } from '@capacitor/local-notifications';
 import { useUser } from './UserContext'; 
+import { LocalNotifications } from '@capacitor/local-notifications';
+import { AppLauncher } from '@capacitor/app-launcher';
 
 const API_BASE_URL = 'https://lizza-facility-management.vercel.app';
 const isApp = Capacitor.isNativePlatform();
@@ -19,8 +20,13 @@ const UserDashboard = () => {
   const [status, setStatus] = useState({ type: 'info', msg: 'Initializing...', code: 'off_duty' });
   const [showPassModal, setShowPassModal] = useState(false);
   
-  const [checkedIn, setCheckedIn] = useState(false);
-  const [currentSite, setCurrentSite] = useState(null);
+  const [checkedIn, setCheckedIn] = useState(() => {
+    return localStorage.getItem('local_checked_in') === 'true';
+  });
+  const [currentSite, setCurrentSite] = useState(() => {
+    return localStorage.getItem('local_current_site') || null;
+  });
+
   const [actionLoading, setActionLoading] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   
@@ -28,20 +34,29 @@ const UserDashboard = () => {
   
   const userEmail = localStorage.getItem('userEmail');
 
+  const openNotificationSettings = async () => {
+    if (isApp) {
+      await AppLauncher.openSettings();
+    }
+  };
+
   const resetIdleWarningTimer = async () => {
     if (!isApp) return;
-    await LocalNotifications.requestPermissions();
+    
+    const permissionStatus = await LocalNotifications.checkPermissions();
+    if (permissionStatus.display !== 'granted') {
+        await LocalNotifications.requestPermissions();
+    }
+    
     await LocalNotifications.cancel({ notifications: [{ id: 999 }] });
     await LocalNotifications.schedule({
-      notifications: [
-        {
-          title: "⚠️ Tracking Paused",
-          body: "No location update in 30 minutes. Please open Lizza to keep your shift active.",
-          id: 999,
-          schedule: { at: new Date(Date.now() + 30 * 60 * 1000) }, 
-          smallIcon: "ic_stat_icon_config_sample", 
-        }
-      ]
+        notifications: [{
+            title: "⚠️ Tracking Paused",
+            body: "No location update in 30 minutes. Please open Lizza.",
+            id: 999,
+            schedule: { at: new Date(Date.now() + 30 * 60 * 1000) },
+            smallIcon: "ic_stat_icon_config_sample",
+        }]
     });
   };
 
@@ -60,22 +75,38 @@ const UserDashboard = () => {
       const data = await res.json();
       setCheckedIn(Boolean(data.checked_in));
       
-      if (data.checked_in && data.active_location_id) {
-          const locRes = await fetch(`${API_BASE_URL}/api/admin/locations`);
-          if (locRes.ok) {
-              const locations = await locRes.json();
-              const site = locations.find(l => l.id === data.active_location_id);
-              if (site) {
-                  setCurrentSite(site.name);
-                  setStatus({ type: 'success', msg: `Inside Geofence`, code: 'inside' });
+      if (data.checked_in) {
+          localStorage.setItem('local_checked_in', 'true');
+          if (data.active_location_id) {
+              const locRes = await fetch(`${API_BASE_URL}/api/admin/locations`);
+              if (locRes.ok) {
+                  const locations = await locRes.json();
+                  const site = locations.find(l => l.id === data.active_location_id);
+                  if (site) {
+                      setCurrentSite(site.name);
+                      localStorage.setItem('local_current_site', site.name);
+                      setStatus({ type: 'success', msg: `Inside Geofence: ${site.name}`, code: 'inside' });
+                  } else {
+                      setCurrentSite(null);
+                      localStorage.removeItem('local_current_site');
+                      setStatus({ type: 'warning', msg: `Active Shift Restored`, code: 'outside' });
+                  }
+              } else {
+                  setCurrentSite(null);
+                  setStatus({ type: 'warning', msg: `Active Shift Restored`, code: 'outside' });
               }
+          } else {
+              setCurrentSite(null);
+              setStatus({ type: 'warning', msg: `Active Shift Restored`, code: 'outside' });
           }
-      } else if (!data.checked_in && status.code !== 'warning') {
-          setStatus(prev => ({ ...prev, code: 'off_duty', msg: 'Shift Completed' }));
+      } else {
+          localStorage.setItem('local_checked_in', 'false');
+          localStorage.removeItem('local_current_site');
+          setStatus({ type: 'secondary', code: 'off_duty', msg: 'Ready to Check In' });
           setCurrentSite(null);
       }
     }
-  }, [userEmail, status.code]);
+  }, [userEmail]);
 
   const processOfflineQueues = useCallback(async () => {
     if (!isOnline || !isApp) return;
@@ -138,7 +169,12 @@ const UserDashboard = () => {
       if (contextUser.user_type === 'admin') return navigate('/admin', { replace: true });
       
       setDbUser(contextUser); 
-      setCheckedIn(Boolean(contextUser.checked_in));
+      
+      if (contextUser.checked_in !== undefined) {
+          setCheckedIn(Boolean(contextUser.checked_in));
+          localStorage.setItem('local_checked_in', Boolean(contextUser.checked_in));
+      }
+      
       setLoading(false); 
     } else if (!contextLoading && !contextUser) {
       navigate('/auth', { replace: true });
@@ -163,27 +199,36 @@ const UserDashboard = () => {
     const data = await res.json();
     if (data.is_inside) {
       setCurrentSite(data.site_name || null);
+      if (data.site_name) localStorage.setItem('local_current_site', data.site_name);
       setStatus({ type: 'success', msg: data.message || 'Inside Geofence', code: 'inside' });
     } else {
       setCurrentSite(null);
+      localStorage.removeItem('local_current_site');
       setStatus({ type: 'warning', msg: data.message || 'Outside Geofence', code: 'outside' });
     }
   }, [userEmail, updatePendingCount]);
 
-  // CUSTOM NATIVE TRACKER BRIDGE
   useEffect(() => {
     if (!dbUser || !isApp || !userEmail) return;
 
     const startBackgroundTracking = async () => {
-      if (Capacitor.isNativePlatform()) {
-        await LizzaTracker.startTracking({ email: userEmail });
-      }
+        if (Capacitor.isNativePlatform()) {
+            console.log("DASHBOARD: Attempting to trigger Native Java Bridge...");
+            await LocalNotifications.requestPermissions();
+            await LizzaTracker.startTracking({ email: userEmail });
+            console.log("DASHBOARD: Native Bridge Signal Sent Successfully.");
+        } else {
+            console.log("DASHBOARD: Not a native platform, bridge skipped.");
+        }
     };
 
-    startBackgroundTracking();
+    const bootTimer = setTimeout(() => {
+      startBackgroundTracking();
+    }, 1500);
+
+    return () => clearTimeout(bootTimer);
   }, [dbUser, userEmail]);
 
-  // WEB GEOLOCATION TRACKER
   useEffect(() => {
     if (!dbUser || !navigator.geolocation) return; 
     
@@ -195,16 +240,16 @@ const UserDashboard = () => {
       { enableHighAccuracy: true, timeout: 10000 }
     );
 
-    const watchId = navigator.geolocation.watchPosition(
-      (pos) => syncLocation(pos.coords.latitude, pos.coords.longitude),
-      (err) => {},
-      { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 }
-    );
+    const intervalId = setInterval(() => {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => syncLocation(pos.coords.latitude, pos.coords.longitude),
+        (err) => console.warn("Location check failed:", err),
+        { enableHighAccuracy: true, timeout: 10000 }
+      );
+    }, 60000); 
 
     return () => {
-      if (navigator.geolocation && watchId !== null) {
-        navigator.geolocation.clearWatch(watchId);
-      }
+      clearInterval(intervalId);
     };
   }, [dbUser, syncLocation]);
 
@@ -236,6 +281,8 @@ const UserDashboard = () => {
             localStorage.setItem('offlineAttendanceQueue', JSON.stringify(queue));
             
             setCheckedIn(actionType === 'CHECK_IN');
+            localStorage.setItem('local_checked_in', actionType === 'CHECK_IN');
+            
             setStatus({ type: 'warning', msg: `Offline ${actionType === 'CHECK_IN' ? 'Check-In' : 'Check-Out'} queued`, code: 'offline' });
             updatePendingCount();
         } else {
@@ -253,11 +300,15 @@ const UserDashboard = () => {
       
       if (res.ok) {
         setCheckedIn(actionType === 'CHECK_IN');
+        localStorage.setItem('local_checked_in', actionType === 'CHECK_IN');
+
         if (actionType === 'CHECK_IN') {
             setCurrentSite(data.site_name || currentSite);
+            if (data.site_name) localStorage.setItem('local_current_site', data.site_name);
             setStatus({ type: 'success', msg: `Checked In at ${data.site_name || 'site'}`, code: 'inside' });
         } else {
             setCurrentSite(null);
+            localStorage.removeItem('local_current_site');
             setStatus({ type: 'secondary', msg: 'Checked Out', code: 'off_duty' });
             if (isApp) {
                 await LocalNotifications.cancel({ notifications: [{ id: 999 }] });
@@ -272,7 +323,7 @@ const UserDashboard = () => {
     setActionLoading(false);
   };
 
-  const isOnDuty = checkedIn && (status.code === 'inside' || status.code === 'offline');
+  const isOnDuty = checkedIn && (status.code === 'inside' || status.code === 'offline' || status.code === 'outside');
   const dutyLabel = isOnDuty ? 'ON DUTY' : (!checkedIn && status.code === 'inside') ? 'READY TO CHECK IN' : status.code === 'off_duty' ? 'OFF DUTY (Privacy Active)' : status.code === 'error' ? 'ERROR' : 'OFF DUTY / OUTSIDE';
   const dutyDotClass = isOnDuty ? 'bg-success' : 'bg-secondary';
 
@@ -297,11 +348,18 @@ const UserDashboard = () => {
             </div>
             
             <Card.Body className="p-4 text-center">
-              <Alert variant={status.type} className="mb-4 small fw-bold py-3 text-start d-flex align-items-center justify-content-center">
-                {status.code === 'warning' || status.code === 'offline' ? <AlertTriangle size={18} className="me-2" /> : 
-                 status.code === 'off_duty' ? <EyeOff size={18} className="me-2 text-secondary" /> : 
-                 <MapIcon size={18} className="me-2" />} 
-                {status.msg}
+              <Alert variant={status.type} className="mb-4 small fw-bold py-3 text-start d-flex align-items-center justify-content-between flex-wrap">
+                <div className="d-flex align-items-center mb-2 mb-md-0">
+                    {status.code === 'warning' || status.code === 'offline' ? <AlertTriangle size={18} className="me-2" /> : 
+                     status.code === 'off_duty' ? <EyeOff size={18} className="me-2 text-secondary" /> : 
+                     <MapIcon size={18} className="me-2" />} 
+                    {status.msg}
+                </div>
+                {(status.type === 'danger' || status.msg.includes('permission')) && isApp && (
+                    <Button variant="outline-danger" size="sm" onClick={openNotificationSettings} className="ms-auto">
+                        Fix Permissions
+                    </Button>
+                )}
               </Alert>
 
               <div className="p-3 bg-light rounded-3 border mb-4 text-start">

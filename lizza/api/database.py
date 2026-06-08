@@ -165,6 +165,26 @@ class Attendance(Base):
     checkout_time = Column(DateTime, nullable=True)
     duration_seconds = Column(Integer, nullable=True)
     date = Column(DateTime, default=datetime.utcnow)
+class ShiftLog(Base):
+    __tablename__ = "shift_logs"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    shift_id = Column(String, unique=True, index=True) 
+    shift_date = Column(DateTime, default=datetime.utcnow)
+    login_time = Column(DateTime, default=datetime.utcnow)
+    logout_time = Column(DateTime, nullable=True)
+    current_status = Column(String, default="ON_DUTY")
+    total_break_minutes = Column(Integer, default=0)
+
+class FieldOfficerRoute(Base):
+    __tablename__ = "field_officer_routes"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    shift_id = Column(String, index=True) 
+    latitude = Column(Float, nullable=False)
+    longitude = Column(Float, nullable=False)
+    activity_state = Column(String(50), nullable=False) 
+    ping_timestamp = Column(DateTime, default=datetime.utcnow, index=True)
 
 def init_db():
     Base.metadata.create_all(bind=engine)
@@ -192,26 +212,16 @@ def init_db():
         ("fingerprints_left_path", "TEXT"), ("fingerprints_right_path", "TEXT"), 
         ("bank_passbook_path", "TEXT"), ("filled_form_path", "TEXT"),
         ("extra_documents_json", "TEXT"), 
-        ("fcm_token", "VARCHAR") # <--- ADDED MIGRATION RULE FOR FCM TOKEN
+        ("fcm_token", "VARCHAR") 
     ]
     
     with engine.connect() as conn:
-        try:
-            conn.execute(text("UPDATE users SET is_verified = True WHERE email = 'admin@lizza.com'"))
-            conn.commit()
-        except Exception:
-            conn.rollback()
+        conn.execute(text("UPDATE users SET is_verified = True WHERE email = 'admin@lizza.com'"))
+        conn.commit()
             
         for col_name, col_type in columns_to_add:
-            try:
-                conn.execute(text(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}"))
-                conn.commit()
-            except Exception:
-                conn.rollback()
-
-        # Add attendance location tracking if missing
-        try:
-            conn.execute(text("ALTER TABLE attendances ADD COLUMN location_id INTEGER"))
+            conn.execute(text(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}"))
             conn.commit()
-        except Exception:
-            conn.rollback()
+
+        conn.execute(text("ALTER TABLE attendances ADD COLUMN location_id INTEGER"))
+        conn.commit()
