@@ -11,3 +11,4 @@ opencv-python-headless
 numpy
 zxing-cpp
 firebase-admin==6.5.0
+httpx

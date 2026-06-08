@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Table, Form, Container, Card, Spinner, Button, Row, Col, Modal, Badge, Tabs, Tab, Alert } from 'react-bootstrap';
-import { UserCog, Building2, MapPin, Trash2, Users, UserCheck, UserX, Save, Search, Plus, Bell, Edit2, Calendar, Download, Image as ImageIcon, FileText, Briefcase, Filter, Eye, CheckCircle, Phone, Crosshair, ShieldAlert } from 'lucide-react';
+import { UserCog, Building2, MapPin, Trash2, Users, UserCheck, Save, Search, Plus, Bell, Edit2, Calendar, Download, Image as ImageIcon, FileText, Briefcase, Filter, Eye, CheckCircle, Phone, Crosshair, ShieldAlert, Navigation, Map as MapIcon } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from 'react-leaflet';
 import EmployeeOnboardForm from './EmployeeOnboardForm';
+import ShiftRouteMap from './ShiftRouteMap';
 import logoImg from './logo.png';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
@@ -45,7 +46,6 @@ const safeParseJSON = (jsonStr) => {
     return arr.filter(item => item !== null && item !== undefined);
 };
 
-// Helper to parse references data which has format: {"local1": {...}, "local2": {...}, etc}
 const parseReferencesJSON = (jsonStr) => {
     if (!jsonStr || jsonStr === 'null' || jsonStr === 'undefined') return [];
     try {
@@ -53,14 +53,12 @@ const parseReferencesJSON = (jsonStr) => {
         if (Array.isArray(parsed)) {
             return parsed.filter(item => item && item.name && (item.contact || item.phone || item.mobile));
         }
-        // Handle object format with keys like local1, local2, native1, native2
         if (typeof parsed === 'object' && parsed !== null) {
             return Object.values(parsed)
                 .filter(item => item && item.name && (item.contact || item.phone || item.mobile || item.relationship || item.relation));
         }
         return [];
     } catch (e) {
-        console.error('Error parsing references:', e);
         return [];
     }
 };
@@ -106,6 +104,9 @@ const AdminDashboard = () => {
   const [reportsLoading, setReportsLoading] = useState(false);
   const [attendanceLoading, setAttendanceLoading] = useState(false);
   const [photoPreview, setPhotoPreview] = useState(null);
+
+  const [routeViewerUserId, setRouteViewerUserId] = useState(null);
+  const [routeViewerName, setRouteViewerName] = useState("");
   
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
   
@@ -181,7 +182,7 @@ const AdminDashboard = () => {
   const fetchAttendanceData = useCallback(async () => {
     if (mainTab !== 'reports') return;
     setAttendanceLoading(true);
-      let url = `/api/admin/reports/monthly-attendance?month=${reportMonth}&year=${reportYear}`;
+      let url = `${API_BASE_URL}/api/admin/reports/monthly-attendance?month=${reportMonth}&year=${reportYear}`;
       if (reportStartDate) url += `&start_date=${encodeURIComponent(reportStartDate)}`;
       if (reportEndDate) url += `&end_date=${encodeURIComponent(reportEndDate)}`;
       if (reportOfficerSearch && employees.length > 0) {
@@ -338,14 +339,18 @@ const AdminDashboard = () => {
           <tr style="background-color: #f2f2f2; font-weight: bold;">
             <th>Date</th><th>Photo Time</th><th>Employee ID</th><th>Employee Name</th><th>Site Name</th>
             <th>Site Entry</th><th>Site Exit</th><th>Total Duration</th>
-            <th>Purpose</th><th>Remarks</th>${withPhotos ? '<th>Geotagged Photo</th>' : ''}
+            <th>Purpose</th><th>Remarks</th>${withPhotos ? '<th>Geotagged Photo(s)</th>' : ''}
           </tr>
         </thead>
         <tbody>
     `;
 
     fieldReports.forEach(r => {
-      const imgTag = r.photo ? `<img src="${r.photo}" width="120" height="120" style="object-fit: contain;" />` : 'No Photo';
+      let imgTag = 'No Photo';
+      if (withPhotos && r.photo) {
+        const photoUrls = r.photo.split(',');
+        imgTag = photoUrls.map(url => `<img src="${url}" width="120" height="120" style="object-fit: contain; margin: 2px;" />`).join('');
+      }
       tableHtml += `
         <tr>
           <td>${r.date || 'N/A'}</td>
@@ -379,7 +384,7 @@ const AdminDashboard = () => {
   };
 
   const downloadAttendanceExcel = async () => {
-      let url = `/api/admin/reports/monthly-attendance?month=${reportMonth}&year=${reportYear}`;
+      let url = `${API_BASE_URL}/api/admin/reports/monthly-attendance?month=${reportMonth}&year=${reportYear}`;
       
       if (reportOfficerSearch && employees.length > 0) {
         const matchedOfficer = employees.find(o => 
@@ -494,7 +499,6 @@ const AdminDashboard = () => {
           ? `<table><tr><th>Name</th><th>Relationship</th><th>DOB</th></tr>` + famData.map(f => `<tr><td>${f?.name||'-'}</td><td>${f?.relation||'-'}</td><td>${f?.dob||'-'}</td></tr>`).join('') + `</table>`
           : '<p class="text-muted">No family details provided.</p>';
 
-      // NEW: Parse References JSON with proper handling for object format
       const refData = parseReferencesJSON(emp?.references_json);
       let refHtml = refData.length > 0
           ? `<table><tr><th>Name</th><th>Contact Number</th><th>Relation / Context</th></tr>` + refData.map(r => `<tr><td>${r?.name||'-'}</td><td>${r?.contact || r?.phone || r?.mobile || '-'}</td><td>${r?.relation || r?.relationship || '-'}</td></tr>`).join('') + `</table>`
@@ -637,7 +641,6 @@ const AdminDashboard = () => {
       `);
       printWindow.document.close();
     } catch (error) {
-      console.error("Error generating dossier:", error);
       alert("An error occurred while fetching the secure dossier data.");
     }
   };
@@ -732,7 +735,11 @@ const AdminDashboard = () => {
                           <div className="text-center">
                               <strong className="d-block">{loc.name || 'Unknown'}</strong>
                               <small className="text-muted d-block">{loc.user_type?.replace('_', ' ')}</small>
-                              <Badge bg="success" className="mt-1">Active / Checked In</Badge>
+                              <Badge bg="success" className="mt-1 mb-2">Active / Checked In</Badge>
+                              <Button variant="outline-primary" size="sm" className="w-100 mt-2" 
+                                onClick={() => { setRouteViewerUserId(loc.user_id); setRouteViewerName(loc.name); }}>
+                                <MapIcon size={12} className="me-1"/> View Day Path
+                              </Button>
                           </div>
                         </Popup>
                       </Marker>
@@ -797,7 +804,7 @@ const AdminDashboard = () => {
                             const updated = [...employees]; const target = updated.find(u => u.id === emp.id);
                             if (target) { target.user_type = e.target.value; setEmployees(updated); }
                         }}>
-                            <option value="employee">Employee</option>
+                            <option value="employee">Standard Employee</option>
                             <option value="field_officer">Field Officer</option>
                             <option value="manager">Manager</option>
                         </Form.Select>
@@ -1010,9 +1017,17 @@ const AdminDashboard = () => {
                                         <td><Badge bg="dark">{visit.purpose || 'N/A'}</Badge></td>
                                         <td style={{ maxWidth: '200px' }} className="text-truncate" title={visit.remarks}>{visit.remarks || '-'}</td>
                                         <td className="d-flex gap-2">
-                                          <Button variant="outline-secondary" size="sm" onClick={() => setPhotoPreview(visit.photo)} disabled={!visit.photo}>
-                                            <ImageIcon size={14} className="me-1"/> View Photo
-                                          </Button>
+                                          {visit.photo ? (
+                                            <div className="d-flex gap-1 flex-wrap">
+                                              {visit.photo.split(',').map((url, i) => (
+                                                <Button key={i} variant="outline-secondary" size="sm" className="p-1" onClick={() => setPhotoPreview(url)}>
+                                                  <ImageIcon size={14}/> {i + 1}
+                                                </Button>
+                                              ))}
+                                            </div>
+                                          ) : (
+                                            <span className="text-muted small">No Photo</span>
+                                          )}
                                           <Button variant="outline-danger" size="sm" onClick={() => handleDeleteVisit(visit.visit_id)}>
                                             <Trash2 size={14} className="me-1"/> Delete
                                           </Button>
@@ -1390,7 +1405,6 @@ const AdminDashboard = () => {
           </Modal.Body>
       </Modal>
 
-      {/* MASSIVELY UPGRADED EDIT EMPLOYEE MODAL */}
       <Modal show={editEmpModal} onHide={() => setEditEmpModal(false)} size="lg" centered>
         <Modal.Header closeButton className="bg-info text-white">
           <Modal.Title className="h6 fw-bold"><Edit2 className="me-2" size={18}/>Master Employee Editor</Modal.Title>
@@ -1417,7 +1431,6 @@ const AdminDashboard = () => {
                   filteredEmployeesForSearch.map(emp => (
                     <Card key={emp.id} className="mb-2 border cursor-pointer" style={{cursor: 'pointer'}}>
                       <Card.Body className="p-3 d-flex justify-content-between align-items-center" onClick={() => { 
-                          // Initialize safe blank fields for secure edits
                           setEditingEmp({
                               ...emp, 
                               aadhar_raw: '', 
@@ -1450,7 +1463,6 @@ const AdminDashboard = () => {
 
               <Tabs activeKey={editEmpTab} onSelect={(k) => setEditEmpTab(k)} className="mb-4 bg-white shadow-sm rounded">
                 
-                {/* TAB 1: PROFILE & WORK */}
                 <Tab eventKey="profile" title="Profile & Role" className="p-3 bg-white border border-top-0">
                   <Row>
                     <Col md={6}>
@@ -1540,7 +1552,6 @@ const AdminDashboard = () => {
                   </Row>
                 </Tab>
 
-                {/* TAB 2: ADDRESSES */}
                 <Tab eventKey="addresses" title="Addresses & Contact" className="p-3 bg-white border border-top-0">
                   <h6 className="fw-bold mb-3 text-primary border-bottom pb-2">Permanent Address</h6>
                   <Row className="mb-3">
@@ -1599,7 +1610,6 @@ const AdminDashboard = () => {
                   </Row>
                 </Tab>
 
-                {/* TAB 3: BANKING & SECURE KYC */}
                 <Tab eventKey="secure" title={<><ShieldAlert size={14} className="me-1"/> Bank & KYC Updates</>} className="p-3 bg-white border border-top-0">
                   <Alert variant="warning" className="small mb-4">
                     <strong>Security Notice:</strong> The fields below accept plain text, but will be <strong>permanently encrypted</strong> into the database immediately upon saving. To preserve existing data, leave the fields blank.
@@ -1671,6 +1681,18 @@ const AdminDashboard = () => {
         <Modal.Header closeButton className="bg-dark text-white border-0"><Modal.Title className="h6 fw-bold">Geotagged Evidence</Modal.Title></Modal.Header>
         <Modal.Body className="p-0 text-center bg-dark">
             <img src={photoPreview} alt="Geotagged Visit" style={{ width: '100%', maxHeight: '75vh', objectFit: 'contain' }} />
+        </Modal.Body>
+      </Modal>
+
+      {/* NEW ROUTE VIEWER MODAL */}
+      <Modal show={!!routeViewerUserId} onHide={() => setRouteViewerUserId(null)} size="xl" centered>
+        <Modal.Header closeButton className="bg-dark text-white border-0">
+          <Modal.Title className="h6 fw-bold"><Navigation size={18} className="me-2"/> Route Tracking: {routeViewerName}</Modal.Title>
+        </Modal.Header>
+        <Modal.Body className="p-0 bg-light">
+          {routeViewerUserId && (
+             <ShiftRouteMap userId={routeViewerUserId} /> 
+          )}
         </Modal.Body>
       </Modal>
 
