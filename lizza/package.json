@@ -1,6 +1,6 @@
 {
   "name": "lizza",
-  "version": "1.4.3",
+  "version": "1.4.4",
   "private": true,
   "dependencies": {
     "@capacitor-community/background-geolocation": "^1.2.26",
