@@ -794,6 +794,17 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
 
     if r:
         r.set(f"loc:{email}", f"{lat},{lon}", ex=86400)
+    active_shift = db.query(ShiftLog).filter(ShiftLog.user_id == user.id, ShiftLog.logout_time == None).first()
+    if active_shift:
+        new_ping = FieldOfficerRoute(
+            user_id=user.id,
+            shift_id=active_shift.shift_id,
+            latitude=lat,
+            longitude=lon,
+            activity_state="TRAVELING" # or dynamic state
+        )
+        db.add(new_ping)
+        db.commit()
 
     if current_site:
         if r: 
