@@ -61,18 +61,20 @@ const FieldOfficerDashboard = () => {
     return cached ? JSON.parse(cached) : [];
   });
   
+  const [dutyStatus, setDutyStatus] = useState(() => localStorage.getItem('lastStatus') || 'OFF_DUTY');
+  const [shiftData, setShiftData] = useState(() => {
+    const cached = localStorage.getItem('cached_shift');
+    return cached ? JSON.parse(cached) : null;
+  });
+
   const [myLoc, setMyLoc] = useState(null);
   const [activeSite, setActiveSite] = useState(null);
   const [visitHistory, setVisitHistory] = useState([]);
   const [nearbySites, setNearbySites] = useState([]);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   
-  const [dutyStatus, setDutyStatus] = useState('OFF_DUTY'); 
-  const [shiftData, setShiftData] = useState(null);
   const [dutyHours, setDutyHours] = useState(0);
-
   const [checkedIn, setCheckedIn] = useState(false);
-  
   const [purpose, setPurpose] = useState('');
   const [visitEntries, setVisitEntries] = useState([{ photo: null, details: '' }]);
   
@@ -82,10 +84,17 @@ const FieldOfficerDashboard = () => {
   const [isSyncing, setIsSyncing] = useState(false);
 
   const userEmail = localStorage.getItem('userEmail');
+  const isFetchingRef = useRef(false);
 
   const openNotificationSettings = async () => {
     if (isApp) await AppLauncher.openSettings();
   };
+
+  useEffect(() => {
+      localStorage.setItem('lastStatus', dutyStatus);
+      if (shiftData) localStorage.setItem('cached_shift', JSON.stringify(shiftData));
+      else localStorage.removeItem('cached_shift');
+  }, [dutyStatus, shiftData]);
 
   const updateQueueCounts = useCallback(() => {
       if (!isApp) return;
@@ -95,7 +104,8 @@ const FieldOfficerDashboard = () => {
   }, []);
 
   const fetchData = useCallback(async () => {
-    if (!navigator.onLine) return;
+    if (isFetchingRef.current || !navigator.onLine) return;
+    isFetchingRef.current = true;
     
     const [locRes, histRes, profileRes, shiftRes] = await Promise.all([
       fetch(`${API_BASE_URL}/api/admin/locations`),
@@ -107,28 +117,23 @@ const FieldOfficerDashboard = () => {
     if (locRes.ok) {
       const fetchedLocations = await locRes.json();
       setLocations(fetchedLocations);
-      
       if (isApp) localStorage.setItem('cached_sites', JSON.stringify(fetchedLocations));
+      
+      if (profileRes.ok) {
+        const profileData = await profileRes.json();
+        setCheckedIn(Boolean(profileData.checked_in));
+        if (profileData.checked_in && profileData.active_location_id) {
+            const site = fetchedLocations.find(l => l.id === profileData.active_location_id);
+            if(site) setActiveSite(site);
+        } else {
+            setActiveSite(null);
+        }
+      }
     }
     
-    if (histRes.ok) setVisitHistory(await histRes.json());
-    
-    if (profileRes.ok) {
-      const profileData = await profileRes.json();
-      setCheckedIn(Boolean(profileData.checked_in));
-      if (profileData.checked_in && profileData.active_location_id) {
-       const fetchedLocations = await locRes.json();
-
-setLocations(fetchedLocations);
-
-if (profileData.checked_in && profileData.active_location_id) {
-    const site = fetchedLocations.find(
-       l => l.id === profileData.active_location_id
-    );
-
-    if(site) setActiveSite(site);
-}
-      }
+    if (histRes.ok) {
+        const hist = await histRes.json();
+        setVisitHistory(hist);
     }
 
     if (shiftRes.ok) {
@@ -143,21 +148,28 @@ if (profileData.checked_in && profileData.active_location_id) {
           if (isApp) LizzaTracker.stopTracking();
       }
     }
+    isFetchingRef.current = false;
   }, [userEmail]);
 
   useEffect(() => {
-    if (dutyStatus === 'OFF_DUTY' || !shiftData) return;
+    if (dutyStatus === 'OFF_DUTY' || !shiftData || !shiftData.login_time) {
+        setDutyHours(0);
+        return;
+    }
     const interval = setInterval(() => {
         const now = new Date();
         const login = new Date(shiftData.login_time);
-        let elapsedSeconds = (now - login) / 1000;
-        elapsedSeconds -= (shiftData.total_break_seconds || 0);
+        
+        let elapsedMs = now - login;
+        let breakMs = (shiftData.total_break_seconds || 0) * 1000;
         
         if (dutyStatus === 'ON_BREAK' && shiftData.break_start_time) {
             const breakStart = new Date(shiftData.break_start_time);
-            elapsedSeconds -= ((now - breakStart) / 1000);
+            breakMs += (now - breakStart);
         }
-        setDutyHours(elapsedSeconds / 3600);
+        
+        let activeDutyMs = Math.max(0, elapsedMs - breakMs);
+        setDutyHours(activeDutyMs / (1000 * 60 * 60));
     }, 1000);
     return () => clearInterval(interval);
   }, [dutyStatus, shiftData]);
@@ -247,7 +259,7 @@ if (profileData.checked_in && profileData.active_location_id) {
         q.push({ lat, lon, timestamp: new Date().toISOString() });
         localStorage.setItem('offlineLocations', JSON.stringify(q));
       } else if (navigator.onLine) {
-        fetch(`${API_BASE_URL}/api/user/update-location?email=${userEmail}&lat=${lat}&lon=${lon}`, { method: 'POST' });
+        fetch(`${API_BASE_URL}/api/user/update-location?email=${encodeURIComponent(userEmail)}&lat=${lat}&lon=${lon}`, { method: 'POST' }).catch(() => {});
         if (isApp && !isSyncing) {
           const qLoc = JSON.parse(localStorage.getItem('offlineLocations') || '[]');
           if (qLoc.length) syncOfflineData();
@@ -274,21 +286,22 @@ if (profileData.checked_in && profileData.active_location_id) {
         body: JSON.stringify({ email: userEmail, action: action, timestamp: new Date().toISOString() })
     });
     
-    const data = await res.json();
-    if (action === 'START') {
-        setDutyStatus('ON_DUTY');
-        if (isApp) LizzaTracker.startTracking({ email: userEmail });
-    } else if (action === 'BREAK') {
-        setDutyStatus('ON_BREAK');
-        if (isApp) LizzaTracker.stopTracking();
-    } else if (action === 'RESUME') {
-        setDutyStatus('ON_DUTY');
-        if (isApp) LizzaTracker.startTracking({ email: userEmail });
-    } else if (action === 'END') {
-        setDutyStatus('OFF_DUTY');
-        if (isApp) LizzaTracker.stopTracking();
+    if (res.ok) {
+        await fetchData(); 
+        if (action === 'START' || action === 'RESUME') {
+            setDutyStatus('ON_DUTY');
+            if (isApp) LizzaTracker.startTracking({ email: userEmail });
+        } else if (action === 'BREAK') {
+            setDutyStatus('ON_BREAK');
+            if (isApp) LizzaTracker.stopTracking();
+        } else if (action === 'END') {
+            setDutyStatus('OFF_DUTY');
+            if (isApp) LizzaTracker.stopTracking();
+        }
+    } else {
+        const errData = await res.json().catch(() => ({}));
+        alert(errData.detail || "Server failed to update shift");
     }
-    fetchData();
     setIsSubmitting(false);
   };
 
@@ -466,53 +479,63 @@ if (profileData.checked_in && profileData.active_location_id) {
                 
                 {alertMsg && <Alert variant={alertMsg.type} className="mb-3 small">{alertMsg.text}</Alert>}
                 
-                {activeSite ? (
-                  <Alert variant="success" className="d-flex align-items-center fw-bold mb-3"><CheckCircle className="me-2"/> At Site: {activeSite.name}</Alert>
+                {dutyStatus === 'OFF_DUTY' ? (
+                    <Alert variant="warning" className="text-center mb-0">
+                        <Clock size={24} className="mb-2 d-block mx-auto text-muted"/>
+                        <span className="fw-bold">Day Shift Not Started</span>
+                        <p className="small mb-0 mt-1">Please start your Day Check-In to enable site attendance and visit logging.</p>
+                    </Alert>
                 ) : (
-                  <Alert variant="secondary" className="mb-3">Drive to a geofence to check in.</Alert>
-                )}
+                    <>
+                        {activeSite ? (
+                          <Alert variant="success" className="d-flex align-items-center fw-bold mb-3"><CheckCircle className="me-2"/> At Site: {activeSite.name}</Alert>
+                        ) : (
+                          <Alert variant="secondary" className="mb-3">Drive to a geofence to check in.</Alert>
+                        )}
 
-                <div className="d-flex gap-2 mb-3">
-                  {!checkedIn && activeSite && (
-                    <Button variant="success" className="w-100 fw-bold" disabled={isSubmitting || dutyStatus !== 'ON_DUTY'} onClick={() => handleAttendance('CHECK_IN')}><LogIn className="me-2" size={16}/> Site Check In</Button>
-                  )}
-                  {checkedIn && (
-                    <Button variant="danger" className="w-100 fw-bold" disabled={isSubmitting || dutyStatus !== 'ON_DUTY'} onClick={() => handleAttendance('CHECK_OUT')}><LogOut className="me-2" size={16}/> Site Check Out</Button>
-                  )}
-                </div>
+                        <div className="d-flex gap-2 mb-3">
+                          {!checkedIn && activeSite && (
+                            <Button variant="success" className="w-100 fw-bold" disabled={isSubmitting || dutyStatus !== 'ON_DUTY'} onClick={() => handleAttendance('CHECK_IN')}><LogIn className="me-2" size={16}/> Site Check In</Button>
+                          )}
+                          {checkedIn && (
+                            <Button variant="danger" className="w-100 fw-bold" disabled={isSubmitting || dutyStatus !== 'ON_DUTY'} onClick={() => handleAttendance('CHECK_OUT')}><LogOut className="me-2" size={16}/> Site Check Out</Button>
+                          )}
+                        </div>
 
-                {activeSite && checkedIn && dutyStatus === 'ON_DUTY' && (
-                  <Form onSubmit={handleVisitSubmit} className="mt-2 border-top pt-3">
-                    <h6 className="fw-bold mb-3"><FileText className="me-2" size={18}/>Log Visit Report</h6>
-                    <Form.Select size="sm" className="mb-2" value={purpose} onChange={e => setPurpose(e.target.value)} required>
-                        <option value="">Select Purpose...</option>
-                        <option value="Site visit">Site visit</option>
-                        <option value="Training">Training</option>
-                        <option value="Client Meeting">Client Meeting</option>
-                        <option value="Attendance">Attendance</option>
-                        <option value="Bill Submission">Bill Submission</option>
-                    </Form.Select>
+                        {activeSite && checkedIn && dutyStatus === 'ON_DUTY' && (
+                          <Form onSubmit={handleVisitSubmit} className="mt-2 border-top pt-3">
+                            <h6 className="fw-bold mb-3"><FileText className="me-2" size={18}/>Log Visit Report</h6>
+                            <Form.Select size="sm" className="mb-2" value={purpose} onChange={e => setPurpose(e.target.value)} required>
+                                <option value="">Select Purpose...</option>
+                                <option value="Site visit">Site visit</option>
+                                <option value="Training">Training</option>
+                                <option value="Client Meeting">Client Meeting</option>
+                                <option value="Attendance">Attendance</option>
+                                <option value="Bill Submission">Bill Submission</option>
+                            </Form.Select>
 
-                    <div className="bg-light p-2 rounded mb-3" style={{maxHeight: '300px', overflowY: 'auto'}}>
-                        {visitEntries.map((entry, idx) => (
-                            <div key={idx} className="mb-3 p-2 bg-white border rounded shadow-sm">
-                                <div className="d-flex justify-content-between align-items-center mb-2">
-                                    <small className="fw-bold text-primary">Evidence #{idx + 1}</small>
-                                    {visitEntries.length > 1 && (
-                                        <Badge bg="danger" style={{cursor: 'pointer'}} onClick={() => handleRemovePhotoEntry(idx)}>Remove</Badge>
-                                    )}
-                                </div>
-                                <Form.Control type="file" size="sm" accept="image/*" capture="environment" className="mb-2" onChange={(e) => handlePhotoChange(idx, e.target.files[0])} required />
-                                <Form.Control size="sm" as="textarea" rows={2} placeholder="Specific details for this photo..." value={entry.details} onChange={(e) => handleDetailsChange(idx, e.target.value)} required />
+                            <div className="bg-light p-2 rounded mb-3" style={{maxHeight: '300px', overflowY: 'auto'}}>
+                                {visitEntries.map((entry, idx) => (
+                                    <div key={idx} className="mb-3 p-2 bg-white border rounded shadow-sm">
+                                        <div className="d-flex justify-content-between align-items-center mb-2">
+                                            <small className="fw-bold text-primary">Evidence #{idx + 1}</small>
+                                            {visitEntries.length > 1 && (
+                                                <Badge bg="danger" style={{cursor: 'pointer'}} onClick={() => handleRemovePhotoEntry(idx)}>Remove</Badge>
+                                            )}
+                                        </div>
+                                        <Form.Control type="file" size="sm" accept="image/*" capture="environment" className="mb-2" onChange={(e) => handlePhotoChange(idx, e.target.files[0])} required />
+                                        <Form.Control size="sm" as="textarea" rows={2} placeholder="Specific details for this photo..." value={entry.details} onChange={(e) => handleDetailsChange(idx, e.target.value)} required />
+                                    </div>
+                                ))}
+                                <Button variant="outline-primary" size="sm" className="w-100 fw-bold border-dashed" onClick={handleAddPhotoEntry}>+ Add Another Photo & Detail</Button>
                             </div>
-                        ))}
-                        <Button variant="outline-primary" size="sm" className="w-100 fw-bold border-dashed" onClick={handleAddPhotoEntry}>+ Add Another Photo & Detail</Button>
-                    </div>
 
-                    <Button type="submit" variant="primary" className="w-100 fw-bold" disabled={isSubmitting}>
-                      {isSubmitting ? <Spinner size="sm" /> : "SUBMIT FULL REPORT"}
-                    </Button>
-                  </Form>
+                            <Button type="submit" variant="primary" className="w-100 fw-bold" disabled={isSubmitting}>
+                              {isSubmitting ? <Spinner size="sm" /> : "SUBMIT FULL REPORT"}
+                            </Button>
+                          </Form>
+                        )}
+                    </>
                 )}
               </Card.Body>
             </Card>
@@ -537,6 +560,48 @@ if (profileData.checked_in && profileData.active_location_id) {
           </div>
         </Col>
       </Row>
+
+      <Row className="g-4 mb-4">
+        <Col xs={12}>
+          <Card className="border-0 shadow-sm">
+            <Card.Header className="bg-white py-3 border-bottom-0 d-flex justify-content-between align-items-center">
+              <h6 className="fw-bold m-0"><FileText className="me-2 text-primary" size={18} /> My Recent Site Visits</h6>
+              <Button variant="outline-primary" size="sm" onClick={() => fetchData()}>Refresh Logs</Button>
+            </Card.Header>
+            <Card.Body className="p-0 overflow-auto" style={{ maxHeight: '400px' }}>
+               <Table hover responsive className="mb-0 align-middle small">
+                   <thead className="table-light">
+                       <tr>
+                           <th className="ps-4">Date & Time</th>
+                           <th>Site Name</th>
+                           <th>Purpose</th>
+                           <th>Duration</th>
+                           <th>Status</th>
+                       </tr>
+                   </thead>
+                   <tbody>
+                       {visitHistory.length === 0 ? (
+                           <tr>
+                               <td colSpan="5" className="text-center text-muted py-4">No recent site visits recorded.</td>
+                           </tr>
+                       ) : (
+                           visitHistory.map(v => (
+                               <tr key={v.visit_id}>
+                                   <td className="ps-4 fw-bold">{v.date} <span className="text-muted d-block" style={{fontSize: '0.75rem'}}>{v.time}</span></td>
+                                   <td><MapPin size={12} className="text-danger me-1"/> {v.site_name}</td>
+                                   <td><Badge bg="dark">{v.purpose}</Badge></td>
+                                   <td><Badge bg={v.duration === 'In Progress' ? 'primary' : 'secondary'}>{v.duration}</Badge></td>
+                                   <td>{v.exit_time === 'Active' ? <Badge bg="warning" className="text-dark">In Progress</Badge> : <Badge bg="success">Completed</Badge>}</td>
+                               </tr>
+                           ))
+                       )}
+                   </tbody>
+               </Table>
+            </Card.Body>
+          </Card>
+        </Col>
+      </Row>
+
     </Container>
   );
 };
