@@ -38,22 +38,18 @@ firebase_available = False
 cred = None
 
 def _parse_firebase_credentials(raw_value: str):
-    if not raw_value: return None
-    return json.loads(raw_value)
-
-if firebase_env:
-    cred_dict = _parse_firebase_credentials(firebase_env)
-    cred = credentials.Certificate(cred_dict)
-    firebase_available = True
-else:
-    local_cred_path = os.path.join(os.path.dirname(__file__), "firebase-adminsdk.json")
-    if os.path.exists(local_cred_path):
-        cred = credentials.Certificate(local_cred_path)
-        firebase_available = True
-
-if firebase_available and not firebase_admin._apps:
-    firebase_admin.initialize_app(cred)
-
+    if not raw_value:
+        return None
+    try:
+        # Attempt direct JSON load
+        return json.loads(raw_value)
+    except json.JSONDecodeError:
+        try:
+            # Attempt base64 decoding if it's encoded
+            decoded = base64.b64decode(raw_value).decode("utf-8")
+            return json.loads(decoded)
+        except Exception:
+            return None
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
