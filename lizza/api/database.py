@@ -214,14 +214,39 @@ def init_db():
         ("extra_documents_json", "TEXT"), 
         ("fcm_token", "VARCHAR") 
     ]
-    
     with engine.connect() as conn:
-        conn.execute(text("UPDATE users SET is_verified = True WHERE email = 'admin@lizza.com'"))
-        conn.commit()
-            
-        for col_name, col_type in columns_to_add:
-            conn.execute(text(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}"))
+        # 1. Handle Admin setup
+        try:
+            conn.execute(text("UPDATE users SET is_verified = True WHERE email = 'admin@lizza.com'"))
             conn.commit()
+        except:
+            conn.rollback()
+            
+        # 2. Use a "DO" block to add columns only if they do not exist (PostgreSQL specific)
+        for col_name, col_type in columns_to_add:
+            try:
+                conn.execute(text(f"""
+                    DO $$ 
+                    BEGIN 
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='{col_name}') THEN 
+                            ALTER TABLE users ADD COLUMN {col_name} {col_type}; 
+                        END IF; 
+                    END $$;
+                """))
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
 
-        conn.execute(text("ALTER TABLE attendances ADD COLUMN location_id INTEGER"))
-        conn.commit()
+        # 3. Handle Attendance location_id
+        try:
+            conn.execute(text("""
+                DO $$ 
+                BEGIN 
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='attendances' AND column_name='location_id') THEN 
+                        ALTER TABLE attendances ADD COLUMN location_id INTEGER; 
+                    END IF; 
+                END $$;
+            """))
+            conn.commit()
+        except:
+            conn.rollback()
