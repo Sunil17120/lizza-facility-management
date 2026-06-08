@@ -107,6 +107,7 @@ const FieldOfficerDashboard = () => {
     if (locRes.ok) {
       const fetchedLocations = await locRes.json();
       setLocations(fetchedLocations);
+      
       if (isApp) localStorage.setItem('cached_sites', JSON.stringify(fetchedLocations));
     }
     
@@ -116,8 +117,17 @@ const FieldOfficerDashboard = () => {
       const profileData = await profileRes.json();
       setCheckedIn(Boolean(profileData.checked_in));
       if (profileData.checked_in && profileData.active_location_id) {
-          const site = locations.find(l => l.id === profileData.active_location_id);
-          if (site) setActiveSite(site);
+       const fetchedLocations = await locRes.json();
+
+setLocations(fetchedLocations);
+
+if (profileData.checked_in && profileData.active_location_id) {
+    const site = fetchedLocations.find(
+       l => l.id === profileData.active_location_id
+    );
+
+    if(site) setActiveSite(site);
+}
       }
     }
 
@@ -133,7 +143,7 @@ const FieldOfficerDashboard = () => {
           if (isApp) LizzaTracker.stopTracking();
       }
     }
-  }, [userEmail, locations]);
+  }, [userEmail]);
 
   useEffect(() => {
     if (dutyStatus === 'OFF_DUTY' || !shiftData) return;
