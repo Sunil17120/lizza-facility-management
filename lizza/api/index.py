@@ -15,27 +15,32 @@ import numpy as np
 import zlib
 import zxingcpp
 from fastapi.middleware.cors import CORSMiddleware
-
-# Upstash Serverless Redis SDK
 from upstash_redis import Redis as UpstashRedis
-
-# Firebase Admin SDK
 import firebase_admin
 from firebase_admin import credentials, messaging
 
-# Explicit Relative Import for Vercel Bundling
 from .database import SessionLocal, User, EmployeeLocation, OfficeLocation, SiteVisit, SiteStay, ShiftLog, FieldOfficerRoute, init_db, cipher
 
-# Firebase Initialization from Vercel Environment Variables
+with engine.connect() as conn:
+    conn.execute(text("""
+        DO $$ 
+        BEGIN 
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='shift_logs' AND column_name='total_break_seconds') THEN 
+                ALTER TABLE shift_logs ADD COLUMN total_break_seconds INTEGER DEFAULT 0; 
+                ALTER TABLE shift_logs ADD COLUMN break_start_time TIMESTAMP;
+                ALTER TABLE shift_logs ADD COLUMN is_on_break BOOLEAN DEFAULT FALSE;
+            END IF; 
+        END $$;
+    """))
+    conn.commit()
+
 firebase_env = os.environ.get("FIREBASE_CREDENTIALS")
 firebase_available = False
 cred = None
 
 def _parse_firebase_credentials(raw_value: str):
-    if not raw_value:
-        return None
-    decoded = base64.b64decode(raw_value).decode("utf-8")
-    return json.loads(decoded)
+    if not raw_value: return None
+    return json.loads(raw_value)
 
 if firebase_env:
     cred_dict = _parse_firebase_credentials(firebase_env)
@@ -219,12 +224,22 @@ class CheckAction(BaseModel):
     timestamp: Optional[str] = None
     actionType: Optional[str] = None
 
+class DayShiftAction(BaseModel):
+    email: str
+    action: str
+    timestamp: str
+
 class FCMTokenUpdate(BaseModel):
     email: str
     fcm_token: str
 
 class LogoutNotify(BaseModel):
     email: str
+
+class PingPayload(BaseModel):
+    user_id: int
+    lat: float
+    lng: float
 
 @app.post("/api/login")
 def login(data: AuthRequest, db: Session = Depends(get_db)):
@@ -283,6 +298,182 @@ def change_password(data: PasswordChange, db: Session = Depends(get_db)):
     user.is_password_changed = True
     db.commit()
     return {"status": "success"}
+
+@app.get("/api/shift/current")
+def get_current_shift(email: str, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == email.lower().strip()).first()
+    if not user: raise HTTPException(status_code=404, detail="User not found")
+    
+    active_shift = db.query(ShiftLog).filter(ShiftLog.user_id == user.id, ShiftLog.logout_time == None).first()
+    if not active_shift:
+        return {"is_active": False}
+        
+    return {
+        "is_active": True,
+        "shift_id": active_shift.shift_id,
+        "login_time": active_shift.login_time.isoformat() + "Z",
+        "is_on_break": active_shift.is_on_break,
+        "break_start_time": active_shift.break_start_time.isoformat() + "Z" if active_shift.break_start_time else None,
+        "total_break_seconds": active_shift.total_break_seconds
+    }
+
+@app.post("/api/shift/day-action")
+def perform_day_action(data: DayShiftAction, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == data.email.lower().strip()).first()
+    now_utc = parse_iso_timestamp(data.timestamp)
+    
+    active_shift = db.query(ShiftLog).filter(ShiftLog.user_id == user.id, ShiftLog.logout_time == None).first()
+
+    if data.action == "START":
+        if not active_shift:
+            new_shift = ShiftLog(
+                user_id=user.id, 
+                shift_id=f"SFT_{user.id}_{now_utc.strftime('%Y%m%d%H%M')}",
+                login_time=now_utc,
+                total_break_seconds=0,
+                is_on_break=False
+            )
+            db.add(new_shift)
+            r.set(f"officer_state:{user.id}", "TRAVELING")
+    
+    elif data.action == "BREAK":
+        if active_shift and not active_shift.is_on_break:
+            active_shift.is_on_break = True
+            active_shift.break_start_time = now_utc
+            r.set(f"officer_state:{user.id}", "ON_BREAK")
+            
+    elif data.action == "RESUME":
+        if active_shift and active_shift.is_on_break:
+            break_duration = (now_utc - active_shift.break_start_time).total_seconds()
+            active_shift.total_break_seconds += int(break_duration)
+            active_shift.is_on_break = False
+            active_shift.break_start_time = None
+            r.set(f"officer_state:{user.id}", "TRAVELING")
+
+    elif data.action == "END":
+        if active_shift:
+            if active_shift.is_on_break:
+                break_duration = (now_utc - active_shift.break_start_time).total_seconds()
+                active_shift.total_break_seconds += int(break_duration)
+            active_shift.logout_time = now_utc
+            active_shift.is_on_break = False
+            active_shift.break_start_time = None
+            r.set(f"officer_state:{user.id}", "LOGGED_OUT")
+
+    db.commit()
+    return {"status": "success"}
+
+@app.post("/api/location/ping")
+async def record_location_ping(payload: PingPayload, db: Session = Depends(get_db)):
+    active_shift = db.query(ShiftLog).filter(ShiftLog.user_id == payload.user_id, ShiftLog.logout_time == None).first()
+    if not active_shift or active_shift.is_on_break:
+        return {"status": "ignored", "reason": "Officer is off duty or on break"}
+
+    last_ping = db.query(FieldOfficerRoute).filter(
+        FieldOfficerRoute.user_id == payload.user_id, 
+        FieldOfficerRoute.shift_id == active_shift.shift_id
+    ).order_by(desc(FieldOfficerRoute.ping_timestamp)).first()
+    
+    activity_status = "TRAVELING"
+    
+    if last_ping:
+        distance = get_distance(last_ping.latitude, last_ping.longitude, payload.lat, payload.lng)
+        if distance < 50:
+            activity_status = "AT_SITE"
+            
+    new_ping = FieldOfficerRoute(
+        user_id=payload.user_id,
+        shift_id=active_shift.shift_id,
+        latitude=payload.lat,
+        longitude=payload.lng,
+        activity_state=activity_status,
+        ping_timestamp=datetime.utcnow()
+    )
+    
+    db.add(new_ping)
+    db.commit()
+    
+    user = db.query(User).filter(User.id == payload.user_id).first()
+    if user and r:
+        r.set(f"loc:{user.email}", f"{payload.lat},{payload.lng}", ex=86400)
+        
+    return {"status": "success", "activity_recorded": activity_status}
+
+@app.get("/api/routes/summary/{shift_id}")
+async def get_shift_route_summary(shift_id: str, db: Session = Depends(get_db)):
+    points = db.query(FieldOfficerRoute).filter(FieldOfficerRoute.shift_id == shift_id).order_by(FieldOfficerRoute.ping_timestamp.asc()).all()
+    
+    raw_coordinates = []
+    formatted_coordinates = []
+    site_stays = []
+    
+    current_stay = None
+    total_travel_seconds = 0
+    total_stay_seconds = 0
+    
+    for i in range(len(points)):
+        pt = points[i]
+        raw_coordinates.append((float(pt.latitude), float(pt.longitude)))
+        formatted_coordinates.append({
+            "lat": float(pt.latitude),
+            "lng": float(pt.longitude),
+            "time": pt.ping_timestamp.isoformat(),
+            "state": pt.activity_state
+        })
+        
+        if i > 0:
+            time_delta = (pt.ping_timestamp - points[i-1].ping_timestamp).total_seconds()
+            if pt.activity_state == "TRAVELING":
+                total_travel_seconds += time_delta
+            else:
+                total_stay_seconds += time_delta
+
+        if pt.activity_state == "AT_SITE":
+            if current_stay is None:
+                current_stay = { "latitude": float(pt.latitude), "longitude": float(pt.longitude), "arrival": pt.ping_timestamp, "departure": pt.ping_timestamp }
+            else:
+                current_stay["departure"] = pt.ping_timestamp
+        else:
+            if current_stay is not None:
+                stay_duration_minutes = int((current_stay["departure"] - current_stay["arrival"]).total_seconds() / 60)
+                address = await get_address_from_coords(current_stay["latitude"], current_stay["longitude"])
+                site_stays.append({
+                    "lat": current_stay["latitude"], "lng": current_stay["longitude"], "address": address,
+                    "arrival": current_stay["arrival"].strftime("%I:%M %p"), "departure": current_stay["departure"].strftime("%I:%M %p"),
+                    "duration_mins": stay_duration_minutes if stay_duration_minutes > 0 else 5
+                })
+                current_stay = None
+
+    if current_stay is not None:
+        stay_duration_minutes = int((current_stay["departure"] - current_stay["arrival"]).total_seconds() / 60)
+        address = await get_address_from_coords(current_stay["latitude"], current_stay["longitude"])
+        site_stays.append({
+            "lat": current_stay["latitude"], "lng": current_stay["longitude"], "address": address,
+            "arrival": current_stay["arrival"].strftime("%I:%M %p"), "departure": current_stay["departure"].strftime("%I:%M %p"),
+            "duration_mins": stay_duration_minutes if stay_duration_minutes > 0 else 5
+        })
+
+    snapped_path = await get_snapped_route(raw_coordinates) if len(raw_coordinates) >= 2 else formatted_coordinates
+
+    return {
+        "shift_id": shift_id,
+        "original_pings": formatted_coordinates,
+        "snapped_route_path": snapped_path,
+        "site_stays": site_stays,
+        "metrics": {
+            "total_travel_hours": round(total_travel_seconds / 3600, 2),
+            "total_stay_hours": round(total_stay_seconds / 3600, 2)
+        }
+    }
+
+@app.get("/api/admin/employee-route/{user_id}")
+async def get_employee_today_route(user_id: int, db: Session = Depends(get_db)):
+    active_shift = db.query(ShiftLog).filter(ShiftLog.user_id == user_id, ShiftLog.logout_time == None).order_by(desc(ShiftLog.login_time)).first()
+    if not active_shift:
+        active_shift = db.query(ShiftLog).filter(ShiftLog.user_id == user_id).order_by(desc(ShiftLog.login_time)).first()
+    if not active_shift:
+        raise HTTPException(404, "No route tracking data found for this user today.")
+    return await get_shift_route_summary(active_shift.shift_id, db)
 
 @app.post("/api/manager/add-employee")
 async def add_employee(
@@ -377,131 +568,6 @@ async def add_employee(
     db.add(new_user)
     db.commit()
     return {"status": "success", "official_email": base_email, "message": "Employee registered successfully."}
-
-@app.post("/api/shift/status")
-async def change_officer_status(user_id: int, new_status: str, db: Session = Depends(get_db)):
-    r.set(f"officer_state:{user_id}", new_status)
-    db_shift = db.query(ShiftLog).filter(ShiftLog.user_id == user_id, ShiftLog.logout_time == None).first()
-    if db_shift:
-        db_shift.current_status = new_status
-        db.commit()
-    return {"message": "Status updated successfully", "current_status": new_status}
-
-@app.post("/api/location/ping")
-async def record_location_ping(user_id: int, lat: float, lng: float, shift_id: str, db: Session = Depends(get_db)):
-    current_state = r.get(f"officer_state:{user_id}")
-    
-    if current_state in [b"ON_BREAK", b"LOGGED_OUT", "ON_BREAK", "LOGGED_OUT"]:
-        return {"status": "ignored", "reason": "Officer is not on duty"}
-
-    last_ping = db.query(FieldOfficerRoute).filter(
-        FieldOfficerRoute.user_id == user_id, 
-        FieldOfficerRoute.shift_id == shift_id
-    ).order_by(desc(FieldOfficerRoute.ping_timestamp)).first()
-    
-    activity_status = "TRAVELING"
-    
-    if last_ping:
-        distance = get_distance(last_ping.latitude, last_ping.longitude, lat, lng)
-        if distance < 50:
-            activity_status = "AT_SITE"
-            
-    new_ping = FieldOfficerRoute(
-        user_id=user_id,
-        shift_id=shift_id,
-        latitude=lat,
-        longitude=lng,
-        activity_state=activity_status
-    )
-    
-    db.add(new_ping)
-    db.commit()
-    return {"status": "success", "activity_recorded": activity_status}
-
-@app.get("/api/routes/summary/{shift_id}")
-async def get_shift_route_summary(shift_id: str, db: Session = Depends(get_db)):
-    points = db.query(FieldOfficerRoute).filter(FieldOfficerRoute.shift_id == shift_id).order_by(FieldOfficerRoute.ping_timestamp.asc()).all()
-    
-    raw_coordinates = []
-    formatted_coordinates = []
-    site_stays = []
-    
-    current_stay = None
-    total_travel_seconds = 0
-    total_stay_seconds = 0
-    
-    for i in range(len(points)):
-        pt = points[i]
-        raw_coordinates.append((float(pt.latitude), float(pt.longitude)))
-        formatted_coordinates.append({
-            "lat": float(pt.latitude),
-            "lng": float(pt.longitude),
-            "time": pt.ping_timestamp.isoformat(),
-            "state": pt.activity_state
-        })
-        
-        if i > 0:
-            time_delta = (pt.ping_timestamp - points[i-1].ping_timestamp).total_seconds()
-            if pt.activity_state == "TRAVELING":
-                total_travel_seconds += time_delta
-            else:
-                total_stay_seconds += time_delta
-
-        if pt.activity_state == "AT_SITE":
-            if current_stay is None:
-                current_stay = {
-                    "latitude": float(pt.latitude),
-                    "longitude": float(pt.longitude),
-                    "arrival": pt.ping_timestamp,
-                    "departure": pt.ping_timestamp
-                }
-            else:
-                current_stay["departure"] = pt.ping_timestamp
-        else:
-            if current_stay is not None:
-                stay_duration_minutes = int((current_stay["departure"] - current_stay["arrival"]).total_seconds() / 60)
-                address = await get_address_from_coords(current_stay["latitude"], current_stay["longitude"])
-                site_stays.append({
-                    "lat": current_stay["latitude"],
-                    "lng": current_stay["longitude"],
-                    "address": address,
-                    "arrival": current_stay["arrival"].strftime("%I:%M %p"),
-                    "departure": current_stay["departure"].strftime("%I:%M %p"),
-                    "duration_mins": stay_duration_minutes if stay_duration_minutes > 0 else 5
-                })
-                current_stay = None
-
-    if current_stay is not None:
-        stay_duration_minutes = int((current_stay["departure"] - current_stay["arrival"]).total_seconds() / 60)
-        address = await get_address_from_coords(current_stay["latitude"], current_stay["longitude"])
-        site_stays.append({
-            "lat": current_stay["latitude"],
-            "lng": current_stay["longitude"],
-            "address": address,
-            "arrival": current_stay["arrival"].strftime("%I:%M %p"),
-            "departure": current_stay["departure"].strftime("%I:%M %p"),
-            "duration_mins": stay_duration_minutes if stay_duration_minutes > 0 else 5
-        })
-
-    snapped_path = await get_snapped_route(raw_coordinates) if len(raw_coordinates) >= 2 else formatted_coordinates
-
-    return {
-        "shift_id": shift_id,
-        "original_pings": formatted_coordinates,
-        "snapped_route_path": snapped_path,
-        "site_stays": site_stays,
-        "metrics": {
-            "total_travel_hours": round(total_travel_seconds / 3600, 2),
-            "total_stay_hours": round(total_stay_seconds / 3600, 2)
-        }
-    }
-
-@app.get("/api/admin/employee-route/{user_id}")
-async def get_employee_today_route(user_id: int, db: Session = Depends(get_db)):
-    active_shift = db.query(ShiftLog).filter(ShiftLog.user_id == user_id).order_by(desc(ShiftLog.login_time)).first()
-    if not active_shift:
-        raise HTTPException(404, "No route tracking data found for this user today.")
-    return await get_shift_route_summary(active_shift.shift_id, db)
 
 @app.get("/api/manager/my-employees")
 def get_my_employees(manager_id: int, db: Session = Depends(get_db)):
@@ -794,17 +860,6 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
 
     if r:
         r.set(f"loc:{email}", f"{lat},{lon}", ex=86400)
-    active_shift = db.query(ShiftLog).filter(ShiftLog.user_id == user.id, ShiftLog.logout_time == None).first()
-    if active_shift:
-        new_ping = FieldOfficerRoute(
-            user_id=user.id,
-            shift_id=active_shift.shift_id,
-            latitude=lat,
-            longitude=lon,
-            activity_state="TRAVELING" # or dynamic state
-        )
-        db.add(new_ping)
-        db.commit()
 
     if current_site:
         if r: 
@@ -1026,7 +1081,7 @@ def cron_auto_checkout(db: Session = Depends(get_db)):
 @app.post("/api/field-officer/log-visit")
 async def log_site_visit(
     email: str = Form(...), location_id: int = Form(...), purpose: str = Form(...), 
-    remarks: str = Form(...), 
+    photo_details: str = Form(...), 
     lat: float = Form(...), lon: float = Form(...), timestamp: str = Form(None), 
     photos: List[UploadFile] = File(...), 
     db: Session = Depends(get_db)
@@ -1057,9 +1112,17 @@ async def log_site_visit(
         if url:
             photo_urls.append(url)
 
+    details_list = json.loads(photo_details)
+    combined_evidence = []
+    
+    for i in range(len(photo_urls)):
+        detail = details_list[i] if i < len(details_list) else ""
+        combined_evidence.append({"url": photo_urls[i], "details": detail})
+
+    final_remarks = json.dumps(combined_evidence)
     final_photo_path = ",".join(photo_urls)
 
-    visit = SiteVisit(officer_id=user.id, location_id=site.id, purpose=purpose, remarks=remarks, photo_path=final_photo_path, visit_time=now_utc)
+    visit = SiteVisit(officer_id=user.id, location_id=site.id, purpose=purpose, remarks=final_remarks, photo_path=final_photo_path, visit_time=now_utc)
     db.add(visit)
     db.commit()
     
@@ -1070,11 +1133,20 @@ def get_my_visits(email: str, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == email.lower().strip()).first()
     if not user: raise HTTPException(404, "User not found")
     visits = db.query(SiteVisit, OfficeLocation).join(OfficeLocation).filter(SiteVisit.officer_id == user.id).order_by(SiteVisit.visit_time.desc()).all()
-    return [{
-        "site_name": loc.name, "purpose": v.purpose, "remarks": v.remarks, 
-        "visit_time": convert_utc_to_ist(v.visit_time).strftime("%d-%b-%Y %I:%M %p") if v.visit_time else "N/A", 
-        "photo_url": v.photo_path
-    } for v, loc in visits]
+    
+    result = []
+    for v, loc in visits:
+        display_remarks = v.remarks
+        if v.remarks.startswith('['):
+            parsed_remarks = json.loads(v.remarks)
+            display_remarks = " | ".join([item.get('details', '') for item in parsed_remarks])
+
+        result.append({
+            "site_name": loc.name, "purpose": v.purpose, "remarks": display_remarks, 
+            "visit_time": convert_utc_to_ist(v.visit_time).strftime("%d-%b-%Y %I:%M %p") if v.visit_time else "N/A", 
+            "photo_url": v.photo_path
+        })
+    return result
 
 @app.get("/api/admin/reports/monthly-field-visits")
 def get_monthly_field_visits(month: int, year: int, officer_id: Optional[int] = None, location_id: Optional[int] = None, user_type: Optional[str] = None, db: Session = Depends(get_db)):
