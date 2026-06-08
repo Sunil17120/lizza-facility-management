@@ -182,7 +182,7 @@ class ShiftLog(Base):
 
     total_break_seconds = Column(Integer, default=0)
     break_start_time = Column(DateTime, nullable=True)
-
+    is_on_break = Column(Boolean, default=False)
 class FieldOfficerRoute(Base):
     __tablename__ = "field_officer_routes"
     id = Column(Integer, primary_key=True, index=True)
