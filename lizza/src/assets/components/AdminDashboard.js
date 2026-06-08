@@ -141,7 +141,7 @@ const AdminDashboard = () => {
       setLoading(false);
   }, [adminEmail]);
 
-  useEffect(() => { fetchBaseData(); }, [fetchBaseData]);
+  useEffect(() => { fetchBaseData(); }, [adminEmail]);
 
   useEffect(() => {
     if (mainTab !== 'overview' || !autoRefreshEnabled) return;
@@ -1025,7 +1025,34 @@ const AdminDashboard = () => {
                                           <Badge bg={visit.duration === 'In Progress' ? 'primary' : 'secondary'} className="text-nowrap">{visit.duration || 'N/A'}</Badge>
                                         </td>
                                         <td><Badge bg="dark">{visit.purpose || 'N/A'}</Badge></td>
-                                        <td style={{ maxWidth: '200px' }} className="text-truncate" title={visit.remarks}>{visit.remarks || '-'}</td>
+                                       <td style={{ minWidth: '300px' }}>
+    {visit.remarks && visit.remarks.startsWith('[') ? (
+        <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', padding: '5px 0' }}>
+            {JSON.parse(visit.remarks).map((item, idx) => (
+                <div key={idx} style={{ flexShrink: 0 }}>
+                    <a href={item.url} target="_blank" rel="noopener noreferrer">
+                        <img 
+                            src={item.url} 
+                            alt="evidence" 
+                            style={{ 
+                                width: '50px', 
+                                height: '50px', 
+                                borderRadius: '4px', 
+                                objectFit: 'cover',
+                                border: '1px solid #ddd' 
+                            }} 
+                        />
+                    </a>
+                    <div style={{ fontSize: '9px', textAlign: 'center', marginTop: '2px' }}>
+                        {item.details || 'View'}
+                    </div>
+                </div>
+            ))}
+        </div>
+    ) : (
+        <span className="text-truncate d-block" style={{ maxWidth: '200px' }}>{visit.remarks || '-'}</span>
+    )}
+</td>
                                         <td className="d-flex gap-2">
                                           {visit.photo ? (
                                             <div className="d-flex gap-1 flex-wrap">
