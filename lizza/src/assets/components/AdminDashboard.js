@@ -725,26 +725,36 @@ const AdminDashboard = () => {
                     <MapUpdater center={mapCenter} zoom={mapZoom} />
                     <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
                     
-                    {liveLocations.filter(loc => loc.lat && loc.lon && loc.present === true).map(loc => (
-                      <Marker 
-                          key={loc.email} 
-                          position={[loc.lat, loc.lon]}
-                          icon={getStatusIcon(loc.present)}
-                      >
-                        <Popup>
-                          <div className="text-center">
-                              <strong className="d-block">{loc.name || 'Unknown'}</strong>
-                              <small className="text-muted d-block">{loc.user_type?.replace('_', ' ')}</small>
-                              <Badge bg="success" className="mt-1 mb-2">Active / Checked In</Badge>
-                              <Button variant="outline-primary" size="sm" className="w-100 mt-2" 
-                                onClick={() => { setRouteViewerUserId(loc.user_id); setRouteViewerName(loc.name); }}>
-                                <MapIcon size={12} className="me-1"/> View Day Path
-                              </Button>
-                          </div>
-                        </Popup>
-                      </Marker>
-                    ))}
-                    
+                   {liveLocations.filter(loc => loc.lat && loc.lon && loc.present === true).map(loc => (
+  <Marker 
+      key={loc.email} 
+      position={[loc.lat, loc.lon]}
+      icon={getStatusIcon(loc.present)}
+  >
+    <Popup>
+      <div className="text-center">
+          <strong className="d-block">{loc.name || 'Unknown'}</strong>
+          <small className="text-muted d-block">{loc.user_type?.replace('_', ' ')}</small>
+          <Badge bg="success" className="mt-1 mb-2">Active / Checked In</Badge>
+          
+          {/* CRITICAL: Role-based check for the View Path button */}
+          {loc.user_type === 'field_officer' && (
+            <Button 
+              variant="outline-primary" 
+              size="sm" 
+              className="w-100 mt-2" 
+              onClick={() => {
+                setRouteViewerUserId(loc.user_id);
+                setRouteViewerName(loc.name);
+              }}
+            >
+              <MapIcon size={12} className="me-1"/> View Day Path
+            </Button>
+          )}
+      </div>
+    </Popup>
+  </Marker>
+))}
                     {locations.map(office => (
                       <Circle key={office.id} center={[office.lat, office.lon]} radius={office.radius || 200} pathOptions={{ color: 'red', fillColor: 'red', fillOpacity: 0.1 }}>
                         <Popup>{office.name} Geofence ({office.radius || 200}m)</Popup>
