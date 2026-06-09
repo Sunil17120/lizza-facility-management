@@ -306,84 +306,68 @@ const FieldOfficerDashboard = () => {
         }
     }
   };
-
- const processNewLocation = useCallback(async (lat, lon, accuracy, timestamp) => {
-    // 1. HARD GUARD: If attendance is processing, do not run anything else.
-    if (isProcessingRef.current) return;
-
-    // 2. RATE LIMITER: Only ping the server every 30 seconds.
-    // This stops the flooding you saw in your logs (pinging twice per second).
+const processNewLocation = useCallback(async (lat, lon, accuracy, timestamp) => {
+    // 0. RATE LIMITER (Check first to avoid unnecessary work)
     const lastPing = localStorage.getItem('last_ping_time');
     if (lastPing && (Date.now() - parseInt(lastPing)) < 30000) {
-        // Still update local state for the map, but skip the network fetch
         setMyLoc({ lat, lon });
     } else {
         setMyLoc({ lat, lon });
         localStorage.setItem('last_ping_time', Date.now().toString());
-        // ... (rest of your logic below)
     }
 
-    if (accuracy > 100) return;
+    if (isProcessingRef.current || accuracy > 100) return;
 
-    const sitesToEval = locations;
-    let insideSite = null;
-    
-    const sitesWithDistance = sitesToEval.map(site => {
-        const dist = getDistance(lat, lon, site.lat, site.lon);
-        if (dist <= (site.radius || 200)) insideSite = site;
-        return { ...site, distance: dist };
-    });
-
+    // 1. Calculate Geofence
+    const sitesWithDistance = locations.map(site => ({
+        ...site,
+        distance: getDistance(lat, lon, site.lat, site.lon)
+    }));
     sitesWithDistance.sort((a, b) => a.distance - b.distance);
     setNearbySites(sitesWithDistance);
-    
+
+    const insideSite = sitesWithDistance[0] && sitesWithDistance[0].distance <= (sitesWithDistance[0].radius || 200) 
+        ? sitesWithDistance[0] 
+        : null;
+
+    // 2. State references
     const currentActiveSite = activeSiteRef.current;
     const isCheckedIn = checkedInRef.current;
     const currentDuty = dutyStatusRef.current;
 
-    // 3. IMPROVED CHECK-IN LOGIC
-    if (insideSite && !currentActiveSite && currentDuty === 'ON_DUTY' && !isCheckedIn) {
-        // Double-check the lock before triggering attendance
-        if (!isProcessingRef.current) {
+    // 3. OPTIMIZED CHECK-IN/OUT LOGIC
+    let nextSite = currentActiveSite; 
+
+    if (currentDuty === 'ON_DUTY') {
+        if (insideSite && !isCheckedIn) {
             handleAttendance('CHECK_IN', insideSite, { lat, lon });
-            setActiveSite(insideSite);
-        }
-    } else if (currentActiveSite && isCheckedIn) {
-        const distToActive = getDistance(lat, lon, currentActiveSite.lat, currentActiveSite.lon);
-        // Only trigger check-out if they genuinely left the site (500m buffer)
-        if (distToActive > 500) {
-            if (!isProcessingRef.current) {
+            nextSite = insideSite;
+        } else if (isCheckedIn && currentActiveSite) {
+            const distToActive = getDistance(lat, lon, currentActiveSite.lat, currentActiveSite.lon);
+            if (distToActive > 500) {
                 handleAttendance('CHECK_OUT', currentActiveSite, { lat, lon });
-                setActiveSite(null);
+                nextSite = null;
             }
-        } else {
-            setActiveSite(currentActiveSite); 
         }
-    } else if (!isCheckedIn) {
-        setActiveSite(insideSite);
+    } else {
+        nextSite = insideSite;
     }
 
-    // 4. DATABASE PING (Only runs if not rate-limited by step 2)
+    // 4. SINGLE STATE UPDATE (Prevents Flicker)
+    if (nextSite !== currentActiveSite) {
+        setActiveSite(nextSite);
+        activeSiteRef.current = nextSite;
+    }
+
+    // 5. DATABASE PING
     if (userEmail && currentDuty === 'ON_DUTY' && navigator.onLine) {
-        try {
-            await fetch(`${API_BASE_URL}/api/location/ping`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    email: userEmail,
-                    lat: lat,
-                    lon: lon,
-                    accuracy: accuracy,
-                    timestamp: timestamp,
-                    activity_state: 'TRAVELING'
-                }),
-            });
-        } catch (err) {
-            console.error("Failed to send location ping:", err);
-        }
+        await fetch(`${API_BASE_URL}/api/location/ping`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: userEmail, lat, lon, accuracy, timestamp, activity_state: 'TRAVELING' }),
+        }).catch(console.error);
     }
-  }, [locations, userEmail, isApp]);
-
+  }, [locations, userEmail]);
 useEffect(() => {
     if (!userEmail || !navigator.geolocation) return;
     
