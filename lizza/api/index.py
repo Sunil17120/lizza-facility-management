@@ -1046,6 +1046,34 @@ async def log_site_visit(
     ))
     db.commit()
     return {"status": "success", "message": "Visit logged and geofence verified."}
+@app.get("/api/field-officer/my-visits")
+def get_my_visits(email: str, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == email.lower().strip()).first()
+    if not user: 
+        return [] # Return empty list gracefully instead of throwing an error
+        
+    visits = db.query(SiteVisit, OfficeLocation).join(OfficeLocation).filter(SiteVisit.officer_id == user.id).order_by(SiteVisit.visit_time.desc()).all()
+    
+    result = []
+    for v, loc in visits:
+        display_remarks = v.remarks
+        
+        # Safely parse the JSON remarks if they exist
+        if v.remarks and v.remarks.startswith('['):
+            try:
+                parsed_remarks = json.loads(v.remarks)
+                display_remarks = " | ".join([item.get('details', '') for item in parsed_remarks])
+            except Exception:
+                pass # Fallback to raw text if parsing fails
+
+        result.append({
+            "site_name": loc.name, 
+            "purpose": v.purpose, 
+            "remarks": display_remarks, 
+            "visit_time": convert_utc_to_ist(v.visit_time).strftime("%d-%b-%Y %I:%M %p") if v.visit_time else "N/A", 
+            "photo_url": v.photo_path
+        })
+    return result
 @app.get("/api/admin/reports/monthly-field-visits")
 def get_monthly_field_visits(month: int, year: int, officer_id: Optional[int] = None, location_id: Optional[int] = None, user_type: Optional[str] = None, db: Session = Depends(get_db)):
     _, last_day = calendar.monthrange(year, month)
