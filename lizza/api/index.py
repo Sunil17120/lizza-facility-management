@@ -319,7 +319,12 @@ def day_shift_action(payload: dict, db: Session = Depends(get_db)):
     
     # Parse the exact time from the device to prevent timing drift
     action_time_str = payload.get("timestamp")
-    action_time = datetime.fromisoformat(action_time_str.replace("Z", "+00:00"))[:19] if action_time_str else datetime.utcnow()
+    # Use this safer version
+    if action_time_str:
+    # Parse the string and ensure it's a naive datetime object
+        action_time = datetime.fromisoformat(action_time_str.replace("Z", "+00:00")).replace(tzinfo=None)
+    else:
+        action_time = datetime.utcnow()
     
     user = db.query(User).filter(User.email == email.lower().strip()).first()
     if not user: return {"status": "error"}
