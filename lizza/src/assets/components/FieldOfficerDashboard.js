@@ -1,9 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Container, Card, Row, Col, Form, Button, Alert, Spinner, Table, Badge } from 'react-bootstrap';
-import { MapPin, Navigation, CheckCircle, FileText, Map as MapIcon, LogIn, LogOut, WifiOff, RefreshCw, Clock, Coffee } from 'lucide-react';
+import { MapPin, Navigation, CheckCircle, FileText, Map as MapIcon, LogIn, LogOut, WifiOff, RefreshCw, Clock, Coffee, Activity } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 import { Capacitor, registerPlugin } from '@capacitor/core';
-import { AppLauncher } from '@capacitor/app-launcher';
 
 const API_BASE_URL = 'https://lizza-facility-management.vercel.app';
 const isApp = Capacitor.isNativePlatform();
@@ -77,6 +76,7 @@ const FieldOfficerDashboard = () => {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   
   const [dutyHours, setDutyHours] = useState(0);
+  const [travelHours, setTravelHours] = useState(0); // Added for UI
   const [checkedIn, setCheckedIn] = useState(false);
   const [purpose, setPurpose] = useState('');
   const [visitEntries, setVisitEntries] = useState([{ photo: null, details: '' }]);
@@ -87,10 +87,10 @@ const FieldOfficerDashboard = () => {
   const [isSyncing, setIsSyncing] = useState(false);
 
   const isFetchingRef = useRef(false);
-  
   const activeSiteRef = useRef(null);
   const checkedInRef = useRef(false);
   const dutyStatusRef = useRef('OFF_DUTY');
+  const isProcessingRef = useRef(false);
 
   useEffect(() => { activeSiteRef.current = activeSite; }, [activeSite]);
   useEffect(() => { checkedInRef.current = checkedIn; }, [checkedIn]);
@@ -150,10 +150,12 @@ const FieldOfficerDashboard = () => {
         if (shift.is_active) {
             setDutyStatus(shift.is_on_break ? 'ON_BREAK' : 'ON_DUTY');
             setShiftData(shift);
+            setTravelHours(shift.travel_hours || 0); // Display calculated travel hours from backend
             if (!shift.is_on_break && isApp) LizzaTracker.startTracking({ email: userEmail });
         } else {
             setDutyStatus('OFF_DUTY');
             setShiftData(null);
+            setTravelHours(0);
             if (isApp) LizzaTracker.stopTracking();
         }
     }
@@ -251,11 +253,18 @@ const FieldOfficerDashboard = () => {
   }, [fetchData, syncOfflineData, updateQueueCounts]);
 
   const handleAttendance = async (type, overrideSite = activeSiteRef.current, overrideLoc = myLoc) => {
+    if (isProcessingRef.current) return;
+    
     if (type === 'CHECK_IN' && (!overrideSite || !overrideLoc)) return alert("You must be inside the site boundary.");
     if (!overrideLoc) return alert("Current location unavailable.");
     if (dutyStatusRef.current !== 'ON_DUTY') return alert("You must Start Day Duty first and not be on a break.");
     
+    isProcessingRef.current = true;
     setIsSubmitting(true);
+
+    checkedInRef.current = (type === 'CHECK_IN');
+    activeSiteRef.current = (type === 'CHECK_IN' ? overrideSite : null);
+
     const payload = { email: userEmail, lat: overrideLoc.lat, lon: overrideLoc.lon, timestamp: new Date().toISOString(), actionType: type };
 
     if (!isOnline && isApp) {
@@ -271,10 +280,14 @@ const FieldOfficerDashboard = () => {
         if (res.ok) {
             setCheckedIn(type === 'CHECK_IN');
             setAlertMsg({ type: 'success', text: `Successfully ${type === 'CHECK_IN' ? 'Checked In' : 'Checked Out'}` });
-            fetchData(true);
+            await fetchData(true);
+        } else {
+            checkedInRef.current = !checkedInRef.current;
         }
     }
+    
     setIsSubmitting(false);
+    isProcessingRef.current = false;
   };
 
   const processNewLocation = useCallback(async (lat, lon, accuracy, timestamp) => {
@@ -298,13 +311,17 @@ const FieldOfficerDashboard = () => {
     const currentDuty = dutyStatusRef.current;
 
     if (insideSite && !currentActiveSite && currentDuty === 'ON_DUTY' && !isCheckedIn) {
-        handleAttendance('CHECK_IN', insideSite, { lat, lon });
-        setActiveSite(insideSite);
+        if (!isProcessingRef.current) {
+            handleAttendance('CHECK_IN', insideSite, { lat, lon });
+            setActiveSite(insideSite);
+        }
     } else if (currentActiveSite && isCheckedIn) {
         const distToActive = getDistance(lat, lon, currentActiveSite.lat, currentActiveSite.lon);
         if (distToActive > 500) {
-            handleAttendance('CHECK_OUT', currentActiveSite, { lat, lon });
-            setActiveSite(null);
+            if (!isProcessingRef.current) {
+                handleAttendance('CHECK_OUT', currentActiveSite, { lat, lon });
+                setActiveSite(null);
+            }
         } else {
             setActiveSite(currentActiveSite); 
         }
@@ -501,7 +518,7 @@ const FieldOfficerDashboard = () => {
                   <div className="text-muted small">
                       {dutyStatus === 'OFF_DUTY' ? "Start your day shift to enable location tracking and site check-ins." : 
                        dutyStatus === 'ON_BREAK' ? "Shift paused. Location tracking is currently disabled." : 
-                       `Duty Hours: ${Math.floor(dutyHours)}h ${Math.floor((dutyHours % 1) * 60)}m (Breaks explicitly excluded)`}
+                       <>Duty Hours: {Math.floor(dutyHours)}h {Math.floor((dutyHours % 1) * 60)}m &nbsp;|&nbsp; <Activity size={14} className="text-success ms-1 me-1"/> Travel Time: {Math.floor(travelHours)}h {Math.floor((travelHours % 1) * 60)}m</>}
                   </div>
               </div>
               <div className="d-flex gap-2 flex-wrap">
