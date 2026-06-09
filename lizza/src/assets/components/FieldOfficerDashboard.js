@@ -26,7 +26,7 @@ const FieldOfficerDashboard = () => {
   const [nearbySites, setNearbySites] = useState([]);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   
-  // Separation of Truth (Fixes Flickering)
+  // Separation of Truth (Fixes UI Traps & Flickering)
   const [proximateSite, setProximateSite] = useState(null); // Physical GPS proximity
   const [checkedInSite, setCheckedInSite] = useState(null); // Logical DB status
   const [checkedIn, setCheckedIn] = useState(false);
@@ -63,7 +63,7 @@ const FieldOfficerDashboard = () => {
       setPendingOfflineActions(v + a + s);
   }, []);
 
-  const fetchData = useCallback(async (isSilent = false) => {
+  const fetchData = useCallback(async () => {
     if (isFetchingRef.current || !navigator.onLine) return;
     isFetchingRef.current = true;
     const t = Date.now();
@@ -164,7 +164,6 @@ const FieldOfficerDashboard = () => {
 
     await syncQueue('offlineShiftQueue', '/api/shift/day-action');
     
-    // Sync Attendance
     let attQ = JSON.parse(localStorage.getItem('offlineAttendanceQueue') || '[]');
     let fAtt = [];
     for (let act of attQ) {
@@ -176,7 +175,6 @@ const FieldOfficerDashboard = () => {
     }
     localStorage.setItem('offlineAttendanceQueue', JSON.stringify(fAtt));
 
-    // Sync Visits
     await syncQueue('offlineVisitQueue', '/api/field-officer/log-visit', (visit) => {
         const formData = new FormData();
         formData.append('email', visit.email); formData.append('location_id', visit.location_id); formData.append('purpose', visit.purpose);
@@ -323,7 +321,11 @@ const FieldOfficerDashboard = () => {
 
   const handleVisitSubmit = async (e) => {
     e.preventDefault();
-    if (!checkedInSite || !myLoc) return alert("You must be officially checked into a site to log a visit.");
+    
+    // SAFEGUARD: Allow submission if they are checked in, even if checkedInSite is currently missing
+    const targetSiteForVisit = checkedInSite || proximateSite || (nearbySites.length > 0 ? nearbySites[0] : null);
+    
+    if (!targetSiteForVisit || !myLoc) return alert("You must be officially checked into a site to log a visit.");
     
     const validEntries = visitEntries.filter(entry => entry.photo !== null);
     if (validEntries.length === 0) return alert("At least one photo with details is required.");
@@ -342,14 +344,14 @@ const FieldOfficerDashboard = () => {
     if (!isOnline && isApp) {
         const base64Strings = await Promise.all(compressedPhotos.map(p => fileToBase64(p)));
         const q = JSON.parse(localStorage.getItem('offlineVisitQueue') || '[]');
-        q.push({ email: userEmail, location_id: checkedInSite.id, purpose, photo_details: JSON.stringify(detailsArray), lat: myLoc.lat, lon: myLoc.lon, timestamp, photosBase64: base64Strings });
+        q.push({ email: userEmail, location_id: targetSiteForVisit.id, purpose, photo_details: JSON.stringify(detailsArray), lat: myLoc.lat, lon: myLoc.lon, timestamp, photosBase64: base64Strings });
         localStorage.setItem('offlineVisitQueue', JSON.stringify(q));
         setAlertMsg({ type: 'warning', text: 'No internet. Visit report safely queued.' });
         setPurpose(''); setVisitEntries([{ photo: null, details: '' }]);
         updateQueueCounts();
     } else {
         const formData = new FormData();
-        formData.append('email', userEmail); formData.append('location_id', checkedInSite.id);
+        formData.append('email', userEmail); formData.append('location_id', targetSiteForVisit.id);
         formData.append('purpose', purpose); formData.append('photo_details', JSON.stringify(detailsArray));
         formData.append('lat', myLoc.lat); formData.append('lon', myLoc.lon); formData.append('timestamp', timestamp); 
         compressedPhotos.forEach((p) => { formData.append('photos', p); });
@@ -394,7 +396,7 @@ const FieldOfficerDashboard = () => {
                   {dutyStatus === 'OFF_DUTY' && <Button variant="primary" className="fw-bold px-4" onClick={() => handleDayShiftAction('START')} disabled={isSubmitting}>Start Day Shift</Button>}
                   {dutyStatus === 'ON_DUTY' && <Button variant="warning" className="fw-bold text-dark" onClick={() => handleDayShiftAction('BREAK')} disabled={isSubmitting}><Coffee size={16} className="me-1"/> Take Break</Button>}
                   {dutyStatus === 'ON_BREAK' && <Button variant="success" className="fw-bold px-4" onClick={() => handleDayShiftAction('RESUME')} disabled={isSubmitting}>Resume Duty</Button>}
-                  {dutyStatus !== 'OFF_DUTY' && <Button variant="danger" className="fw-bold" onClick={() => handleDayShiftAction('END')} disabled={isSubmitting}>End Day Shift</Button>}
+                  {dutyStatus !== 'OFF_DUTY' && <Button variant="danger" className="fw-bold" onClick={() => handleDayShiftAction('END')} disabled={isSubmitting || dutyHours < 8}>End Day Shift</Button>}
               </div>
           </Card.Body>
       </Card>
@@ -446,8 +448,10 @@ const FieldOfficerDashboard = () => {
                     </Alert>
                 ) : (
                     <>
-                        {checkedInSite ? (
-                          <Alert variant="success" className="d-flex align-items-center fw-bold mb-3"><CheckCircle className="me-2"/> At Site: {checkedInSite.name}</Alert>
+                        {checkedIn ? (
+                          <Alert variant="success" className="d-flex align-items-center fw-bold mb-3">
+                              <CheckCircle className="me-2"/> Checked In {checkedInSite ? `at ${checkedInSite.name}` : ''}
+                          </Alert>
                         ) : proximateSite ? (
                           <Alert variant="info" className="mb-3">You are near <b>{proximateSite.name}</b></Alert>
                         ) : (
@@ -455,15 +459,22 @@ const FieldOfficerDashboard = () => {
                         )}
 
                         <div className="d-flex gap-2 mb-3">
+                          {/* Only show Manual Check In if NOT checked in and physically near a site */}
                           {!checkedIn && proximateSite && (
-                            <Button variant="success" className="w-100 fw-bold" disabled={isSubmitting} onClick={() => handleAttendance('CHECK_IN', proximateSite, myLoc)}><LogIn className="me-2" size={16}/> Manual Check In</Button>
+                            <Button variant="success" className="w-100 fw-bold" disabled={isSubmitting} onClick={() => handleAttendance('CHECK_IN', proximateSite, myLoc)}>
+                                <LogIn className="me-2" size={16}/> Manual Check In
+                            </Button>
                           )}
-                          {checkedIn && checkedInSite && (
-                            <Button variant="danger" className="w-100 fw-bold" disabled={isSubmitting} onClick={() => handleAttendance('CHECK_OUT', checkedInSite, myLoc)}><LogOut className="me-2" size={16}/> Manual Check Out</Button>
+                          {/* ALWAYS show Manual Check Out if checked in, regardless of proximity */}
+                          {checkedIn && (
+                            <Button variant="danger" className="w-100 fw-bold" disabled={isSubmitting} onClick={() => handleAttendance('CHECK_OUT', checkedInSite || proximateSite, myLoc)}>
+                                <LogOut className="me-2" size={16}/> Manual Check Out
+                            </Button>
                           )}
                         </div>
 
-                        {checkedInSite && checkedIn && (
+                        {/* ALWAYS show Visit form if checked in, preventing the ghost-trap bug */}
+                        {checkedIn && (
                           <Form onSubmit={handleVisitSubmit} className="mt-2 border-top pt-3">
                             <h6 className="fw-bold mb-3"><FileText className="me-2" size={18}/>Log Visit Report</h6>
                             <Form.Select size="sm" className="mb-2" value={purpose} onChange={e => setPurpose(e.target.value)} required>
