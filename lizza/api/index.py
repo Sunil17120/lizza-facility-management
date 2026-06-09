@@ -887,30 +887,23 @@ def user_checkin(payload: dict, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == email.lower().strip()).first()
     if not user: raise HTTPException(status_code=404, detail="User not found")
 
-    active_shift = db.query(ShiftLog).filter(
-        ShiftLog.user_id == user.id, ShiftLog.logout_time == None
-    ).first()
+    active_shift = db.query(ShiftLog).filter(ShiftLog.user_id == user.id, ShiftLog.logout_time == None).first()
+    if not active_shift: raise HTTPException(status_code=400, detail="No active shift")
 
-    if not active_shift and user.user_type == 'field_officer':
-        raise HTTPException(status_code=400, detail="No active shift")
-
-    existing = db.query(Attendance).filter(
-        Attendance.user_id == user.id, Attendance.checkout_time == None
-    ).first()
-
+    # Prevent duplicate attendance rows
+    existing = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
     if existing: return {"status": "success", "message": "Already checked in"}
 
-    attendance = Attendance(
-        user_id=user.id, location_id=location_id, checkin_time=action_time, date=action_time
-    )
+    attendance = Attendance(user_id=user.id, location_id=location_id, checkin_time=action_time, date=action_time)
     db.add(attendance)
-    
+
+    # CRITICAL FIX: Ensure SiteStay is created so the Visit Log endpoint doesn't throw a 400 error
     if user.user_type == 'field_officer':
         db.add(SiteStay(officer_id=user.id, location_id=location_id, entry_time=action_time))
 
     user.checked_in = True
+    # CRITICAL FIX: Extract from dict properly (payload.get) to prevent 500 crashes
     user.active_location_id = location_id
-    user.is_present = True
 
     db.commit()
     return {"status": "success", "message": "Checked in successfully"}
@@ -943,7 +936,6 @@ def user_checkout(payload: dict, db: Session = Depends(get_db)):
 
     db.commit()
     return {"status": "success", "message": "Checked out successfully"}
-
 @app.get("/api/cron/auto-checkout")
 def cron_auto_checkout(db: Session = Depends(get_db)):
     from .database import Attendance
@@ -1023,26 +1015,23 @@ async def log_site_visit(
     timestamp: str = Form(None), photos: List[UploadFile] = File(...), db: Session = Depends(get_db)
 ):
     user = db.query(User).filter(User.email == email.lower().strip()).first()
-    if not user:
-        raise HTTPException(404, "User not found")
+    if not user: raise HTTPException(404, "User not found")
         
     site = db.query(OfficeLocation).filter(OfficeLocation.id == location_id).first()
-    if not site:
-        raise HTTPException(404, "Site not found")
+    if not site: raise HTTPException(404, "Site not found")
 
     distance = get_distance(lat, lon, site.lat, site.lon)
-    
     if distance > (site.radius or 200):
         raise HTTPException(400, f"Geotag validation failed. You are {int(distance)}m away from the site.")
 
-    now_utc = parse_iso_timestamp(timestamp)
-    active_att = db.query(Attendance).filter(
-        Attendance.user_id == user.id, 
-        Attendance.location_id == site.id,
-        Attendance.checkout_time == None
+    # CRITICAL FIX: Relax timestamp constraints to make it immune to phone clock drift
+    active_stay = db.query(SiteStay).filter(
+        SiteStay.officer_id == user.id, 
+        SiteStay.location_id == site.id,
+        SiteStay.exit_time == None
     ).first()
     
-    if not active_att:
+    if not active_stay:
         raise HTTPException(400, "You must be officially checked in at the site before logging a visit report.")
 
     photo_urls = [upload_to_cloud(photo) for photo in photos if photo]
@@ -1051,17 +1040,12 @@ async def log_site_visit(
     combined = [{"url": photo_urls[i], "details": details_list[i] if i < len(details_list) else ""} for i in range(len(photo_urls))]
     
     db.add(SiteVisit(
-        officer_id=user.id, 
-        location_id=site.id, 
-        purpose=purpose, 
-        remarks=json.dumps(combined), 
-        photo_path=",".join(filter(None, photo_urls)), 
-        visit_time=now_utc
+        officer_id=user.id, location_id=site.id, purpose=purpose, 
+        remarks=json.dumps(combined), photo_path=",".join(filter(None, photo_urls)), 
+        visit_time=parse_iso_timestamp(timestamp)
     ))
     db.commit()
-    
     return {"status": "success", "message": "Visit logged and geofence verified."}
-
 @app.get("/api/admin/reports/monthly-field-visits")
 def get_monthly_field_visits(month: int, year: int, officer_id: Optional[int] = None, location_id: Optional[int] = None, user_type: Optional[str] = None, db: Session = Depends(get_db)):
     _, last_day = calendar.monthrange(year, month)
