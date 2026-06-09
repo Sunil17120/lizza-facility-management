@@ -875,54 +875,75 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
     return { "is_inside": current_site is not None, "status": "inside" if current_site is not None else "outside", "message": "Inside Geofence" if current_site is not None else "Outside Geofence", "site_name": current_site.name if current_site else None }
 
 @app.post("/api/user/checkin")
-def user_checkin(data: dict, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == data.get("email").lower().strip()).first()
-    if not user: return {"status": "error"}
+def user_checkin(payload: dict, db: Session = Depends(get_db)):
+    email = payload.get("email")
+    location_id = payload.get("location_id")
+    lat = payload.get("lat")
+    lon = payload.get("lon")
     
-    action_time_str = data.get("timestamp")
-    action_time = (
-    datetime.fromisoformat(
-        action_time_str.replace("Z", "+00:00")
-    )
-    if action_time_str
-    else datetime.utcnow()
-)
-    site = get_site_at_location(data.get("lat"), data.get("lon"), db)
-    if not site: return {"status": "error", "message": "Not within geofence"}
-
-    user.is_present = True
-    user.location_id = site.id
-    
-    if user.user_type == 'field_officer':
-        db.add(SiteStay(officer_id=user.id, location_id=site.id, entry_time=action_time))
-    else:
-        db.add(Attendance(user_id=user.id, checkin_time=action_time, date=action_time, location_id=site.id))
+    # 1. Find the user
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        return {"status": "error", "message": "User not found"}
         
+    # 2. Find the active shift
+    active_shift = db.query(ShiftLog).filter(
+        ShiftLog.user_id == user.id, 
+        ShiftLog.logout_time == None
+    ).first()
+    
+    if not active_shift:
+        return {"status": "error", "message": "No active shift"}
+
+    # 3. Save the attendance record to history
+    new_attendance = AttendanceRecord(
+        user_id=user.id,
+        shift_id=active_shift.shift_id,
+        location_id=location_id,
+        checkin_time=datetime.utcnow(),
+        checkin_lat=lat,
+        checkin_lon=lon
+    )
+    db.add(new_attendance)
+
+    # 4. CRITICAL FIX: Update the User's live profile status!
+    user.checked_in = True
+    user.active_location_id = location_id
+
     db.commit()
-    return {"status": "success"}
+    return {"status": "success", "message": "Checked in successfully"}
+
 
 @app.post("/api/user/checkout")
-def user_checkout(data: dict, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == data.get("email").lower().strip()).first()
-    if not user: return {"status": "error"}
+def user_checkout(payload: dict, db: Session = Depends(get_db)):
+    email = payload.get("email")
     
-    action_time_str = data.get("timestamp")
-    action_time = datetime.fromisoformat(action_time_str.replace("Z", "+00:00"))[:19] if action_time_str else datetime.utcnow()
-    
-    user.is_present = False
-    
-    if user.user_type == 'field_officer':
-        active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
-        if active_stay:
-            active_stay.exit_time = action_time
-    else:
-        open_att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
-        if open_att:
-            open_att.checkout_time = action_time
-            open_att.duration_seconds = int((action_time - open_att.checkin_time).total_seconds())
-            
+    # 1. Find the user
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        return {"status": "error", "message": "User not found"}
+
+    # 2. Find their active attendance record that hasn't been checked out of yet
+    active_attendance = db.query(AttendanceRecord).filter(
+        AttendanceRecord.user_id == user.id,
+        AttendanceRecord.checkout_time == None
+    ).order_by(desc(AttendanceRecord.checkin_time)).first()
+
+    if active_attendance:
+        active_attendance.checkout_time = datetime.utcnow()
+        active_attendance.checkout_lat = payload.get("lat")
+        active_attendance.checkout_lon = payload.get("lon")
+        
+        # Calculate duration
+        duration = active_attendance.checkout_time - active_attendance.checkin_time
+        active_attendance.duration_seconds = duration.total_seconds()
+
+    # 3. CRITICAL FIX: Wipe the User's live profile status!
+    user.checked_in = False
+    user.active_location_id = None
+
     db.commit()
-    return {"status": "success"}
+    return {"status": "success", "message": "Checked out successfully"}
 
 @app.get("/api/cron/auto-checkout")
 def cron_auto_checkout(db: Session = Depends(get_db)):
