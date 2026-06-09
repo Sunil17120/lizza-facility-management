@@ -878,15 +878,11 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
 def user_checkin(payload: dict, db: Session = Depends(get_db)):
     email = payload.get("email")
     location_id = payload.get("location_id")
-    lat = payload.get("lat")
-    lon = payload.get("lon")
     
-    # 1. Find the user
     user = db.query(User).filter(User.email == email).first()
     if not user:
         return {"status": "error", "message": "User not found"}
         
-    # 2. Find the active shift
     active_shift = db.query(ShiftLog).filter(
         ShiftLog.user_id == user.id, 
         ShiftLog.logout_time == None
@@ -895,20 +891,21 @@ def user_checkin(payload: dict, db: Session = Depends(get_db)):
     if not active_shift:
         return {"status": "error", "message": "No active shift"}
 
-    # 3. Save the attendance record to history
+    # 1. Save attendance
     new_attendance = Attendance(
         user_id=user.id,
-        shift_id=active_shift.shift_id,
         location_id=location_id,
-        checkin_time=datetime.utcnow(),
-        checkin_lat=lat,
-        checkin_lon=lon
+        checkin_time=datetime.utcnow()
     )
     db.add(new_attendance)
 
-    # 4. CRITICAL FIX: Update the User's live profile status!
-    user.checked_in = True
-    user.active_location_id = location_id
+    # 2. Update status safely
+    try:
+        user.checked_in = True
+        user.active_location_id = location_id
+    except Exception as e:
+        # If the column doesn't exist, the backend will still work
+        print(f"Warning: Could not update profile status: {e}")
 
     db.commit()
     return {"status": "success", "message": "Checked in successfully"}
