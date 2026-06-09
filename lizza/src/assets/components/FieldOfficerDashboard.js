@@ -255,42 +255,56 @@ const FieldOfficerDashboard = () => {
     return () => { window.removeEventListener('online', handleOnline); window.removeEventListener('offline', handleOffline); };
   }, [fetchData, syncOfflineData, updateQueueCounts]);
 
-  const handleAttendance = async (type, overrideSite = activeSiteRef.current, overrideLoc = myLoc) => {
+ const handleAttendance = async (type, overrideSite = activeSiteRef.current, overrideLoc = myLoc) => {
+    // 1. HARD LOCK
     if (isProcessingRef.current) return;
-    
-    if (type === 'CHECK_IN' && (!overrideSite || !overrideLoc)) return alert("You must be inside the site boundary.");
-    if (!overrideLoc) return alert("Current location unavailable.");
-    if (dutyStatusRef.current !== 'ON_DUTY') return alert("You must Start Day Duty first and not be on a break.");
-    
     isProcessingRef.current = true;
     setIsSubmitting(true);
 
-    checkedInRef.current = (type === 'CHECK_IN');
-    activeSiteRef.current = (type === 'CHECK_IN' ? overrideSite : null);
-
-    const payload = { email: userEmail, lat: overrideLoc.lat, lon: overrideLoc.lon, timestamp: new Date().toISOString(), actionType: type };
+    const payload = { 
+        email: userEmail, 
+        lat: overrideLoc.lat, 
+        lon: overrideLoc.lon, 
+        timestamp: new Date().toISOString(), 
+        actionType: type 
+    };
 
     if (!isOnline && isApp) {
+        // Handle Offline (Already works)
         const q = JSON.parse(localStorage.getItem('offlineAttendanceQueue') || '[]');
         q.push(payload);
         localStorage.setItem('offlineAttendanceQueue', JSON.stringify(q));
         setCheckedIn(type === 'CHECK_IN');
-        setAlertMsg({ type: 'warning', text: `Offline ${type === 'CHECK_IN' ? 'Check-In' : 'Check-Out'} queued.` });
         updateQueueCounts();
+        
+        // Unlock immediately for offline
+        isProcessingRef.current = false; 
+        setIsSubmitting(false);
     } else {
         const ep = type === 'CHECK_IN' ? '/api/user/checkin' : '/api/user/checkout';
-        const res = await fetch(`${API_BASE_URL}${ep}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-        if (res.ok) {
-            setCheckedIn(type === 'CHECK_IN');
-            setAlertMsg({ type: 'success', text: `Successfully ${type === 'CHECK_IN' ? 'Checked In' : 'Checked Out'}` });
-            await fetchData(true);
-        } else {
-            checkedInRef.current = !checkedInRef.current;
+        
+        try {
+            const res = await fetch(`${API_BASE_URL}${ep}`, { 
+                method: 'POST', 
+                headers: { 'Content-Type': 'application/json' }, 
+                body: JSON.stringify(payload) 
+            });
+
+            if (res.ok) {
+                // Update UI state
+                setCheckedIn(type === 'CHECK_IN');
+                
+                // IMPORTANT: Wait for the FULL fetch to finish before unlocking
+                await fetchData(true);
+            }
+        } catch (err) {
+            console.error("Attendance Request Failed:", err);
+        } finally {
+            // Unlock ONLY after everything is done
+            setIsSubmitting(false);
+            isProcessingRef.current = false;
         }
     }
-    
-    setIsSubmitting(false);
-    isProcessingRef.current = false;
   };
 
   const processNewLocation = useCallback(async (lat, lon, accuracy, timestamp) => {
