@@ -19,7 +19,8 @@ from upstash_redis import Redis as UpstashRedis
 import firebase_admin
 from firebase_admin import credentials, messaging
 
-from .database import engine, SessionLocal, User, EmployeeLocation, OfficeLocation, SiteVisit, SiteStay, ShiftLog, FieldOfficerRoute,Attendance, init_db, cipher
+from .database import engine, SessionLocal, User, EmployeeLocation, OfficeLocation, SiteVisit, SiteStay, ShiftLog, FieldOfficerRoute, Attendance, init_db, cipher
+
 with engine.connect() as conn:
     conn.execute(text("""
         DO $$ 
@@ -41,21 +42,20 @@ def _parse_firebase_credentials(raw_value: str):
     if not raw_value:
         return None
     try:
-        # Attempt direct JSON load
         return json.loads(raw_value)
     except json.JSONDecodeError:
         try:
-            # Attempt base64 decoding if it's encoded
             decoded = base64.b64decode(raw_value).decode("utf-8")
             return json.loads(decoded)
         except Exception:
             return None
+
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], 
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"], # Include OPTIONS here
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"], 
     allow_headers=["*"],
 )
 
@@ -119,7 +119,6 @@ def get_site_at_location(lat, lon, db):
 def safe_decrypt(encrypted_data: str) -> str:
     if not encrypted_data or str(encrypted_data).strip() == "" or encrypted_data in ["null", "undefined"]:
         return "N/A"
-    from .database import cipher
     return cipher.decrypt(str(encrypted_data).encode()).decode()
 
 def safe_encrypt(data: str) -> str:
@@ -183,10 +182,7 @@ async def get_address_from_coords(lat: float, lng: float) -> str:
         data = response.json()
         return data.get("display_name", "Address not found")
 
-
 async def get_snapped_route(coordinates_list: list) -> list:
-    # 1. Thinning: Limit the number of coordinates sent (OSRM limit)
-    # If the list is too long, take a representative subset
     max_coords = 50
     if len(coordinates_list) > max_coords:
         step = len(coordinates_list) // max_coords
@@ -198,27 +194,16 @@ async def get_snapped_route(coordinates_list: list) -> list:
     url = f"https://router.project-osrm.org/route/v1/driving/{coords_string}?overview=full&geometries=geojson"
     
     async with httpx.AsyncClient() as client:
-        try:
-            response = await client.get(url)
-            
-            # 2. Defensive check: Ensure successful response
-            if response.status_code != 200:
-                print(f"OSRM API Error: {response.status_code} - {response.text}")
-                return [] # Return empty if routing fails
-                
-            data = response.json()
-            
-            # 3. Guard against empty routes
-            if not data.get("routes"):
-                return []
-                
-            snapped_coords = data["routes"][0]["geometry"]["coordinates"]
-            return [{"lat": coord[1], "lng": coord[0]} for coord in snapped_coords]
-            
-        except Exception as e:
-            # Catch JSONDecodeError or network issues
-            print(f"Routing service error: {e}")
+        response = await client.get(url)
+        if response.status_code != 200:
             return []
+            
+        data = response.json()
+        if not data.get("routes"):
+            return []
+            
+        snapped_coords = data["routes"][0]["geometry"]["coordinates"]
+        return [{"lat": coord[1], "lng": coord[0]} for coord in snapped_coords]
 
 def get_db():
     db = SessionLocal()
@@ -240,29 +225,12 @@ class LocationCreate(BaseModel):
     lon: float
     radius: int
 
-class CheckAction(BaseModel):
-    email: str
-    lat: Optional[float] = None
-    lon: Optional[float] = None
-    timestamp: Optional[str] = None
-    actionType: Optional[str] = None
-
-class DayShiftAction(BaseModel):
-    email: str
-    action: str
-    timestamp: str
-
 class FCMTokenUpdate(BaseModel):
     email: str
     fcm_token: str
 
 class LogoutNotify(BaseModel):
     email: str
-
-class PingPayload(BaseModel):
-    user_id: int
-    lat: float
-    lng: float
 
 @app.post("/api/login")
 def login(data: AuthRequest, db: Session = Depends(get_db)):
@@ -299,7 +267,7 @@ def send_logout_notification(data: LogoutNotify, db: Session = Depends(get_db)):
 def get_user_profile(email: str, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == email.lower().strip()).first()
     if not user: raise HTTPException(status_code=404, detail="User not found")
-    from .database import Attendance
+    
     open_att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
     
     return {
@@ -331,25 +299,43 @@ def get_current_shift(email: str, db: Session = Depends(get_db)):
     if not active_shift:
         return {"is_active": False}
         
+    now_utc = datetime.utcnow()
+    
+    attendances = db.query(Attendance).filter(
+        Attendance.user_id == user.id, 
+        Attendance.checkin_time >= active_shift.login_time
+    ).all()
+    
+    stay_seconds = 0
+    for att in attendances:
+        if att.checkout_time: 
+            stay_seconds += (att.checkout_time - att.checkin_time).total_seconds()
+        else: 
+            stay_seconds += (now_utc - att.checkin_time).total_seconds()
+            
+    elapsed_duty = (now_utc - active_shift.login_time).total_seconds() - active_shift.total_break_seconds
+    if active_shift.is_on_break and active_shift.break_start_time:
+        elapsed_duty -= (now_utc - active_shift.break_start_time).total_seconds()
+        
+    travel_seconds = max(0, elapsed_duty - stay_seconds)
+
     return {
         "is_active": True,
         "shift_id": active_shift.shift_id,
         "login_time": active_shift.login_time.isoformat() + "Z",
         "is_on_break": active_shift.is_on_break,
         "break_start_time": active_shift.break_start_time.isoformat() + "Z" if active_shift.break_start_time else None,
-        "total_break_seconds": active_shift.total_break_seconds
+        "total_break_seconds": active_shift.total_break_seconds,
+        "travel_seconds": int(travel_seconds) 
     }
 
 @app.post("/api/shift/day-action")
 def day_shift_action(payload: dict, db: Session = Depends(get_db)):
     email = payload.get("email")
     action = payload.get("action")
-    
-    # Parse the exact time from the device to prevent timing drift
     action_time_str = payload.get("timestamp")
-    # Use this safer version
+    
     if action_time_str:
-    # Parse the string and ensure it's a naive datetime object
         action_time = datetime.fromisoformat(action_time_str.replace("Z", "+00:00")).replace(tzinfo=None)
     else:
         action_time = datetime.utcnow()
@@ -387,34 +373,32 @@ def day_shift_action(payload: dict, db: Session = Depends(get_db)):
 
 @app.post("/api/location/ping")
 async def record_location_ping(payload: dict, db: Session = Depends(get_db)):
-    # 1. Get the user from the email provided in the payload
     email = payload.get("email")
     user = db.query(User).filter(User.email == email).first()
-    
-    if not user:
-        return {"status": "error", "message": "User not found"}
+    if not user: return {"status": "error", "message": "User not found"}
 
-    # 2. Find the active shift for THIS specific user
     active_shift = db.query(ShiftLog).filter(
         ShiftLog.user_id == user.id, 
         ShiftLog.logout_time == None
     ).order_by(desc(ShiftLog.login_time)).first()
     
-    if not active_shift:
-        return {"status": "ignored", "reason": "No active shift"}
+    if not active_shift: return {"status": "ignored", "reason": "No active shift"}
 
-    # 3. Save the ping
+    ts_str = payload.get("timestamp")
+    ping_time = parse_iso_timestamp(ts_str) if ts_str else datetime.utcnow()
+
     new_route = FieldOfficerRoute(
         user_id=user.id,
         shift_id=active_shift.shift_id,
         latitude=payload.get("lat"),
         longitude=payload.get("lon"),
         activity_state=payload.get("activity_state", "TRAVELING"),
-        ping_timestamp=datetime.utcnow()
+        ping_timestamp=ping_time
     )
     db.add(new_route)
     db.commit()
     return {"status": "success"}
+
 @app.get("/api/routes/summary/{shift_id}")
 async def get_shift_route_summary(shift_id: str, db: Session = Depends(get_db)):
     points = db.query(FieldOfficerRoute).filter(FieldOfficerRoute.shift_id == shift_id).order_by(FieldOfficerRoute.ping_timestamp.asc()).all()
@@ -636,20 +620,17 @@ def update_location_endpoint(loc_id: int, data: LocationCreate, db: Session = De
 
 @app.get("/api/admin/live-tracking")
 async def get_live_tracking(admin_email: str = None, db: Session = Depends(get_db)):
-    # 1. Get all employees
     employees = db.query(User).filter(User.user_type.in_(['field_officer', 'employee'])).all()
-    
     live_data = []
+    
     for emp in employees:
-        # 2. Check if they have an active shift right now
         active_shift = db.query(ShiftLog).filter(
             ShiftLog.user_id == emp.id,
             ShiftLog.logout_time == None
         ).first()
 
-        # Default state
         emp_data = {
-            "user_id": emp.id,  # CRITICAL: This is needed for the "View Day Path" button
+            "user_id": emp.id,
             "email": emp.email,
             "name": emp.full_name,
             "user_type": emp.user_type,
@@ -660,7 +641,6 @@ async def get_live_tracking(admin_email: str = None, db: Session = Depends(get_d
 
         if active_shift:
             emp_data["present"] = True
-            # 3. Get their MOST RECENT ping from the routes table
             latest_ping = db.query(FieldOfficerRoute).filter(
                 FieldOfficerRoute.shift_id == active_shift.shift_id
             ).order_by(desc(FieldOfficerRoute.ping_timestamp)).first()
@@ -672,6 +652,7 @@ async def get_live_tracking(admin_email: str = None, db: Session = Depends(get_d
         live_data.append(emp_data)
         
     return live_data
+
 @app.post("/api/admin/update-employee-inline")
 def update_employee_inline(data: dict, db: Session = Depends(get_db)):
     user_id = data.get("id")
@@ -761,21 +742,17 @@ def delete_attendance(attendance_id: int, db: Session = Depends(get_db)):
 
 @app.post("/api/user/native-webhook")
 async def handle_native_webhook(request: Request, db: Session = Depends(get_db)):
-    # 1. Parse the incoming JSON
     data = await request.json()
-    
-    # 2. Normalize the payload to match what record_location_ping expects
-    # Your webhook might be sending 'location' nested object, so handle both cases
     loc_data = data.get("location", data)
     
     payload = {
         "email": request.headers.get("x-user-email") or data.get("email"),
         "lat": loc_data.get("latitude") or loc_data.get("lat"),
         "lon": loc_data.get("longitude") or loc_data.get("lon"),
+        "timestamp": loc_data.get("timestamp"),
         "activity_state": "TRAVELING"
     }
     
-    # 3. Pass it to the function we just unified
     return await record_location_ping(payload, db)
 
 @app.post("/api/user/sync-offline-locations")
@@ -790,9 +767,7 @@ async def sync_offline_locations(payload: dict, db: Session = Depends(get_db)):
         lat = float(loc.get("lat"))
         lon = float(loc.get("lon"))
         timestamp_str = loc.get("timestamp")
-        
-        # Crucial: Must extract exact moment the phone recorded the GPS ping
-        ping_time = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))[:19]
+        ping_time = parse_iso_timestamp(timestamp_str)
         
         db.add(FieldOfficerRoute(
             user_id=user.id,
@@ -901,106 +876,73 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
                 if r: r.delete(f"last_inside_time:{email}")
 
     return { "is_inside": current_site is not None, "status": "inside" if current_site is not None else "outside", "message": "Inside Geofence" if current_site is not None else "Outside Geofence", "site_name": current_site.name if current_site else None }
+
 @app.post("/api/user/checkin")
 def user_checkin(payload: dict, db: Session = Depends(get_db)):
     email = payload.get("email")
     location_id = payload.get("location_id")
+    action_time_str = payload.get("timestamp")
+    action_time = parse_iso_timestamp(action_time_str) if action_time_str else datetime.utcnow()
 
-    user = db.query(User).filter(
-        User.email == email.lower().strip()
-    ).first()
-
-    if not user:
-        raise HTTPException(
-            status_code=404,
-            detail="User not found"
-        )
+    user = db.query(User).filter(User.email == email.lower().strip()).first()
+    if not user: raise HTTPException(status_code=404, detail="User not found")
 
     active_shift = db.query(ShiftLog).filter(
-        ShiftLog.user_id == user.id,
-        ShiftLog.logout_time == None
+        ShiftLog.user_id == user.id, ShiftLog.logout_time == None
     ).first()
 
-    if not active_shift:
-        raise HTTPException(
-            status_code=400,
-            detail="No active shift"
-        )
+    if not active_shift and user.user_type == 'field_officer':
+        raise HTTPException(status_code=400, detail="No active shift")
 
-    # prevent duplicate attendance rows
     existing = db.query(Attendance).filter(
-        Attendance.user_id == user.id,
-        Attendance.checkout_time == None
+        Attendance.user_id == user.id, Attendance.checkout_time == None
     ).first()
 
-    if existing:
-        return {
-            "status": "success",
-            "message": "Already checked in"
-        }
+    if existing: return {"status": "success", "message": "Already checked in"}
 
     attendance = Attendance(
-        user_id=user.id,
-        location_id=location_id,
-        checkin_time=datetime.utcnow(),
-        date=datetime.utcnow()
+        user_id=user.id, location_id=location_id, checkin_time=action_time, date=action_time
     )
-
     db.add(attendance)
+    
+    if user.user_type == 'field_officer':
+        db.add(SiteStay(officer_id=user.id, location_id=location_id, entry_time=action_time))
 
     user.checked_in = True
-    user.active_location_id = payload.location_id
+    user.active_location_id = location_id
+    user.is_present = True
 
     db.commit()
-
-    return {
-        "status": "success",
-        "message": "Checked in successfully"
-    }
-
+    return {"status": "success", "message": "Checked in successfully"}
 
 @app.post("/api/user/checkout")
 def user_checkout(payload: dict, db: Session = Depends(get_db)):
     email = payload.get("email")
+    action_time_str = payload.get("timestamp")
+    action_time = parse_iso_timestamp(action_time_str) if action_time_str else datetime.utcnow()
 
-    user = db.query(User).filter(
-        User.email == email.lower().strip()
-    ).first()
-
-    if not user:
-        raise HTTPException(
-            status_code=404,
-            detail="User not found"
-        )
+    user = db.query(User).filter(User.email == email.lower().strip()).first()
+    if not user: raise HTTPException(status_code=404, detail="User not found")
 
     active_attendance = db.query(Attendance).filter(
-        Attendance.user_id == user.id,
-        Attendance.checkout_time == None
-    ).order_by(
-        Attendance.checkin_time.desc()
-    ).first()
+        Attendance.user_id == user.id, Attendance.checkout_time == None
+    ).order_by(Attendance.checkin_time.desc()).first()
 
     if active_attendance:
-        active_attendance.checkout_time = datetime.utcnow()
+        active_attendance.checkout_time = action_time
+        duration = action_time - active_attendance.checkin_time
+        active_attendance.duration_seconds = int(duration.total_seconds())
 
-        duration = (
-            active_attendance.checkout_time
-            - active_attendance.checkin_time
-        )
-
-        active_attendance.duration_seconds = int(
-            duration.total_seconds()
-        )
+    if user.user_type == 'field_officer':
+        active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
+        if active_stay:
+            active_stay.exit_time = action_time
 
     user.checked_in = False
     user.active_location_id = None
 
     db.commit()
-
-    return {
-        "status": "success",
-        "message": "Checked out successfully"
-    }
+    return {"status": "success", "message": "Checked out successfully"}
 
 @app.get("/api/cron/auto-checkout")
 def cron_auto_checkout(db: Session = Depends(get_db)):
@@ -1077,72 +1019,48 @@ def cron_auto_checkout(db: Session = Depends(get_db)):
 @app.post("/api/field-officer/log-visit")
 async def log_site_visit(
     email: str = Form(...), location_id: int = Form(...), purpose: str = Form(...), 
-    photo_details: str = Form(...), 
-    lat: float = Form(...), lon: float = Form(...), timestamp: str = Form(None), 
-    photos: List[UploadFile] = File(...), 
-    db: Session = Depends(get_db)
+    photo_details: str = Form(...), lat: float = Form(...), lon: float = Form(...), 
+    timestamp: str = Form(None), photos: List[UploadFile] = File(...), db: Session = Depends(get_db)
 ):
     user = db.query(User).filter(User.email == email.lower().strip()).first()
-    if not user or user.user_type != 'field_officer': raise HTTPException(403, "Unauthorized")
+    if not user:
+        raise HTTPException(404, "User not found")
+        
     site = db.query(OfficeLocation).filter(OfficeLocation.id == location_id).first()
-    if not site: raise HTTPException(404, "Site not found")
+    if not site:
+        raise HTTPException(404, "Site not found")
 
     distance = get_distance(lat, lon, site.lat, site.lon)
-    if distance > site.radius: raise HTTPException(400, f"Geotag validation failed. You are {int(distance)}m away from the site.")
+    
+    if distance > (site.radius or 200):
+        raise HTTPException(400, f"Geotag validation failed. You are {int(distance)}m away from the site.")
 
     now_utc = parse_iso_timestamp(timestamp)
-    
-    active_stay = db.query(SiteStay).filter(
-        SiteStay.officer_id == user.id, 
-        SiteStay.location_id == site.id,
-        SiteStay.entry_time <= now_utc,
-        (SiteStay.exit_time == None) | (SiteStay.exit_time >= now_utc)
+    active_att = db.query(Attendance).filter(
+        Attendance.user_id == user.id, 
+        Attendance.location_id == site.id,
+        Attendance.checkout_time == None
     ).first()
     
-    if not active_stay:
-        raise HTTPException(400, "You must Check-In at the site before uploading a visit photo.")
+    if not active_att:
+        raise HTTPException(400, "You must be officially checked in at the site before logging a visit report.")
 
-    photo_urls = []
-    for photo in photos:
-        url = upload_to_cloud(photo)
-        if url:
-            photo_urls.append(url)
-
+    photo_urls = [upload_to_cloud(photo) for photo in photos if photo]
     details_list = json.loads(photo_details)
-    combined_evidence = []
     
-    for i in range(len(photo_urls)):
-        detail = details_list[i] if i < len(details_list) else ""
-        combined_evidence.append({"url": photo_urls[i], "details": detail})
-
-    final_remarks = json.dumps(combined_evidence)
-    final_photo_path = ",".join(photo_urls)
-
-    visit = SiteVisit(officer_id=user.id, location_id=site.id, purpose=purpose, remarks=final_remarks, photo_path=final_photo_path, visit_time=now_utc)
-    db.add(visit)
+    combined = [{"url": photo_urls[i], "details": details_list[i] if i < len(details_list) else ""} for i in range(len(photo_urls))]
+    
+    db.add(SiteVisit(
+        officer_id=user.id, 
+        location_id=site.id, 
+        purpose=purpose, 
+        remarks=json.dumps(combined), 
+        photo_path=",".join(filter(None, photo_urls)), 
+        visit_time=now_utc
+    ))
     db.commit()
     
-    return {"status": "success", "message": f"{len(photo_urls)} Visit photos logged and geotag verified."}
-
-@app.get("/api/field-officer/my-visits")
-def get_my_visits(email: str, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == email.lower().strip()).first()
-    if not user: raise HTTPException(404, "User not found")
-    visits = db.query(SiteVisit, OfficeLocation).join(OfficeLocation).filter(SiteVisit.officer_id == user.id).order_by(SiteVisit.visit_time.desc()).all()
-    
-    result = []
-    for v, loc in visits:
-        display_remarks = v.remarks
-        if v.remarks.startswith('['):
-            parsed_remarks = json.loads(v.remarks)
-            display_remarks = " | ".join([item.get('details', '') for item in parsed_remarks])
-
-        result.append({
-            "site_name": loc.name, "purpose": v.purpose, "remarks": display_remarks, 
-            "visit_time": convert_utc_to_ist(v.visit_time).strftime("%d-%b-%Y %I:%M %p") if v.visit_time else "N/A", 
-            "photo_url": v.photo_path
-        })
-    return result
+    return {"status": "success", "message": "Visit logged and geofence verified."}
 
 @app.get("/api/admin/reports/monthly-field-visits")
 def get_monthly_field_visits(month: int, year: int, officer_id: Optional[int] = None, location_id: Optional[int] = None, user_type: Optional[str] = None, db: Session = Depends(get_db)):
