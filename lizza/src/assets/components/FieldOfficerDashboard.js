@@ -290,15 +290,28 @@ const FieldOfficerDashboard = () => {
     }
 }, [locations, userEmail, isApp, dutyStatus, activeSite, checkedIn]);
 
-  useEffect(() => {
-    if (!userEmail || !navigator.geolocation) return;
-    const handlePosition = (position) => { processNewLocation(position.coords.latitude, position.coords.longitude); };
-    navigator.geolocation.getCurrentPosition(handlePosition, () => {}, { enableHighAccuracy: true, timeout: 10000 });
-    const intervalId = setInterval(() => {
-      navigator.geolocation.getCurrentPosition(handlePosition, () => {}, { enableHighAccuracy: true, timeout: 60000 });
-    }, 60000); 
-    return () => clearInterval(intervalId);
-  }, [userEmail, processNewLocation]);
+useEffect(() => {
+  if (!userEmail || !navigator.geolocation) return;
+  
+  const handlePosition = (position) => { 
+      processNewLocation(position.coords.latitude, position.coords.longitude); 
+  };
+  
+  // Force the device to skip the cache and use the actual GPS hardware
+  const geoOptions = { 
+      enableHighAccuracy: true, 
+      timeout: 10000, 
+      maximumAge: 0 
+  };
+
+  navigator.geolocation.getCurrentPosition(handlePosition, (err) => console.error("GPS Error:", err), geoOptions);
+  
+  const intervalId = setInterval(() => {
+    navigator.geolocation.getCurrentPosition(handlePosition, (err) => console.error("GPS Error:", err), geoOptions);
+  }, 60000); 
+  
+  return () => clearInterval(intervalId);
+}, [userEmail, processNewLocation]);
 
   const handleDayShiftAction = async (action) => {
     setIsSubmitting(true);

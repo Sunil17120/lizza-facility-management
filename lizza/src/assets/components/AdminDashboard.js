@@ -727,7 +727,7 @@ const AdminDashboard = () => {
                     
                    {liveLocations.filter(loc => loc.lat && loc.lon && loc.present === true).map(loc => (
   <Marker 
-      key={loc.email} 
+      key={`${loc.email}-${loc.lat}-${loc.lon}`} 
       position={[loc.lat, loc.lon]}
       icon={getStatusIcon(loc.present)}
   >
