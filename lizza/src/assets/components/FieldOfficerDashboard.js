@@ -114,11 +114,14 @@ const FieldOfficerDashboard = () => {
     if (isFetchingRef.current || !navigator.onLine) return;
     isFetchingRef.current = true;
     
+    // CACHE BUSTER: Forces Vercel to bypass edge caching and fetch fresh DB data
+    const t = Date.now();
+    
     const [locRes, histRes, profileRes, shiftRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/api/admin/locations`),
-        fetch(`${API_BASE_URL}/api/field-officer/my-visits?email=${userEmail}`),
-        fetch(`${API_BASE_URL}/api/user/profile?email=${userEmail}`),
-        fetch(`${API_BASE_URL}/api/shift/current?email=${userEmail}`)
+        fetch(`${API_BASE_URL}/api/admin/locations?_t=${t}`),
+        fetch(`${API_BASE_URL}/api/field-officer/my-visits?email=${userEmail}&_t=${t}`),
+        fetch(`${API_BASE_URL}/api/user/profile?email=${userEmail}&_t=${t}`),
+        fetch(`${API_BASE_URL}/api/shift/current?email=${userEmail}&_t=${t}`)
     ]);
     
     const locs = locRes.ok ? await locRes.json() : [];
@@ -150,7 +153,7 @@ const FieldOfficerDashboard = () => {
         if (shift.is_active) {
             setDutyStatus(shift.is_on_break ? 'ON_BREAK' : 'ON_DUTY');
             setShiftData(shift);
-            setTravelHours(shift.travel_hours || 0); // Display calculated travel hours from backend
+            setTravelHours(shift.travel_hours || 0); 
             if (!shift.is_on_break && isApp) LizzaTracker.startTracking({ email: userEmail });
         } else {
             setDutyStatus('OFF_DUTY');
