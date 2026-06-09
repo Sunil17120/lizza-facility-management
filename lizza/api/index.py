@@ -860,8 +860,13 @@ def user_checkin(data: dict, db: Session = Depends(get_db)):
     if not user: return {"status": "error"}
     
     action_time_str = data.get("timestamp")
-    action_time = datetime.fromisoformat(action_time_str.replace("Z", "+00:00"))[:19] if action_time_str else datetime.utcnow()
-    
+    action_time = (
+    datetime.fromisoformat(
+        action_time_str.replace("Z", "+00:00")
+    )
+    if action_time_str
+    else datetime.utcnow()
+)
     site = get_site_at_location(data.get("lat"), data.get("lon"), db)
     if not site: return {"status": "error", "message": "Not within geofence"}
 
