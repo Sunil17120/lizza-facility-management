@@ -359,40 +359,27 @@ def day_shift_action(payload: dict, db: Session = Depends(get_db)):
 
 @app.post("/api/location/ping")
 async def record_location_ping(payload: PingPayload, db: Session = Depends(get_db)):
-    active_shift = db.query(ShiftLog).filter(ShiftLog.user_id == payload.user_id, ShiftLog.logout_time == None).first()
-    if not active_shift or active_shift.is_on_break:
-        return {"status": "ignored", "reason": "Officer is off duty or on break"}
+    # 1. Fetch the CORRECT active shift for this user
+    active_shift = db.query(ShiftLog).filter(
+        ShiftLog.user_id == payload.user_id, 
+        ShiftLog.logout_time == None
+    ).order_by(desc(ShiftLog.login_time)).first()
+    
+    if not active_shift:
+        return {"status": "error", "message": "No active shift found"}
 
-    last_ping = db.query(FieldOfficerRoute).filter(
-        FieldOfficerRoute.user_id == payload.user_id, 
-        FieldOfficerRoute.shift_id == active_shift.shift_id
-    ).order_by(desc(FieldOfficerRoute.ping_timestamp)).first()
-    
-    activity_status = "TRAVELING"
-    
-    if last_ping:
-        distance = get_distance(last_ping.latitude, last_ping.longitude, payload.lat, payload.lng)
-        if distance < 50:
-            activity_status = "AT_SITE"
-            
+    # 2. Save using the active_shift.shift_id
     new_ping = FieldOfficerRoute(
         user_id=payload.user_id,
-        shift_id=active_shift.shift_id,
+        shift_id=active_shift.shift_id, # Ensure this matches
         latitude=payload.lat,
         longitude=payload.lng,
-        activity_state=activity_status,
+        activity_state="TRAVELING",
         ping_timestamp=datetime.utcnow()
     )
-    
     db.add(new_ping)
     db.commit()
-    
-    user = db.query(User).filter(User.id == payload.user_id).first()
-    if user and r:
-        r.set(f"loc:{user.email}", f"{payload.lat},{payload.lng}", ex=86400)
-        
-    return {"status": "success", "activity_recorded": activity_status}
-
+    return {"status": "success"}
 @app.get("/api/routes/summary/{shift_id}")
 async def get_shift_route_summary(shift_id: str, db: Session = Depends(get_db)):
     points = db.query(FieldOfficerRoute).filter(FieldOfficerRoute.shift_id == shift_id).order_by(FieldOfficerRoute.ping_timestamp.asc()).all()
