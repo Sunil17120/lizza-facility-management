@@ -358,26 +358,33 @@ def day_shift_action(payload: dict, db: Session = Depends(get_db)):
     return {"status": "success"}
 
 @app.post("/api/location/ping")
-async def record_location_ping(payload: PingPayload, db: Session = Depends(get_db)):
-    # 1. Fetch the CORRECT active shift for this user
+async def record_location_ping(payload: dict, db: Session = Depends(get_db)):
+    # 1. Get the user from the email provided in the payload
+    email = payload.get("email")
+    user = db.query(User).filter(User.email == email).first()
+    
+    if not user:
+        return {"status": "error", "message": "User not found"}
+
+    # 2. Find the active shift for THIS specific user
     active_shift = db.query(ShiftLog).filter(
-        ShiftLog.user_id == payload.user_id, 
+        ShiftLog.user_id == user.id, 
         ShiftLog.logout_time == None
     ).order_by(desc(ShiftLog.login_time)).first()
     
     if not active_shift:
-        return {"status": "error", "message": "No active shift found"}
+        return {"status": "ignored", "reason": "No active shift"}
 
-    # 2. Save using the active_shift.shift_id
-    new_ping = FieldOfficerRoute(
-        user_id=payload.user_id,
-        shift_id=active_shift.shift_id, # Ensure this matches
-        latitude=payload.lat,
-        longitude=payload.lng,
-        activity_state="TRAVELING",
+    # 3. Save the ping
+    new_route = FieldOfficerRoute(
+        user_id=user.id,
+        shift_id=active_shift.shift_id,
+        latitude=payload.get("lat"),
+        longitude=payload.get("lon"),
+        activity_state=payload.get("activity_state", "TRAVELING"),
         ping_timestamp=datetime.utcnow()
     )
-    db.add(new_ping)
+    db.add(new_route)
     db.commit()
     return {"status": "success"}
 @app.get("/api/routes/summary/{shift_id}")
@@ -711,16 +718,22 @@ def delete_attendance(attendance_id: int, db: Session = Depends(get_db)):
 
 @app.post("/api/user/native-webhook")
 async def handle_native_webhook(request: Request, db: Session = Depends(get_db)):
+    # 1. Parse the incoming JSON
     data = await request.json()
-    loc_data = data.get("location", data)
-    lat = loc_data.get("latitude")
-    lon = loc_data.get("longitude")
-    email = request.headers.get("x-user-email") or data.get("email")
     
-    if not email or not lat or not lon:
-        return {"status": "ignored", "reason": "missing critical data"}
-
-    return await update_location(email=email, lat=lat, lon=lon, db=db)
+    # 2. Normalize the payload to match what record_location_ping expects
+    # Your webhook might be sending 'location' nested object, so handle both cases
+    loc_data = data.get("location", data)
+    
+    payload = {
+        "email": request.headers.get("x-user-email") or data.get("email"),
+        "lat": loc_data.get("latitude") or loc_data.get("lat"),
+        "lon": loc_data.get("longitude") or loc_data.get("lon"),
+        "activity_state": "TRAVELING"
+    }
+    
+    # 3. Pass it to the function we just unified
+    return await record_location_ping(payload, db)
 
 @app.post("/api/user/sync-offline-locations")
 async def sync_offline_locations(payload: dict, db: Session = Depends(get_db)):
