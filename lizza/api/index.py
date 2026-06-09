@@ -901,74 +901,106 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
                 if r: r.delete(f"last_inside_time:{email}")
 
     return { "is_inside": current_site is not None, "status": "inside" if current_site is not None else "outside", "message": "Inside Geofence" if current_site is not None else "Outside Geofence", "site_name": current_site.name if current_site else None }
-
 @app.post("/api/user/checkin")
 def user_checkin(payload: dict, db: Session = Depends(get_db)):
     email = payload.get("email")
     location_id = payload.get("location_id")
-    
-    user = db.query(User).filter(User.email == email).first()
+
+    user = db.query(User).filter(
+        User.email == email.lower().strip()
+    ).first()
+
     if not user:
-        return {"status": "error", "message": "User not found"}
-        
+        raise HTTPException(
+            status_code=404,
+            detail="User not found"
+        )
+
     active_shift = db.query(ShiftLog).filter(
-        ShiftLog.user_id == user.id, 
+        ShiftLog.user_id == user.id,
         ShiftLog.logout_time == None
     ).first()
-    
-    if not active_shift:
-        return {"status": "error", "message": "No active shift"}
 
-    # 1. Save attendance
-    new_attendance = Attendance(
+    if not active_shift:
+        raise HTTPException(
+            status_code=400,
+            detail="No active shift"
+        )
+
+    # prevent duplicate attendance rows
+    existing = db.query(Attendance).filter(
+        Attendance.user_id == user.id,
+        Attendance.checkout_time == None
+    ).first()
+
+    if existing:
+        return {
+            "status": "success",
+            "message": "Already checked in"
+        }
+
+    attendance = Attendance(
         user_id=user.id,
         location_id=location_id,
-        checkin_time=datetime.utcnow()
+        checkin_time=datetime.utcnow(),
+        date=datetime.utcnow()
     )
-    db.add(new_attendance)
 
-    # 2. Update status safely
-    try:
-        user.checked_in = True
-        user.active_location_id = location_id
-    except Exception as e:
-        # If the column doesn't exist, the backend will still work
-        print(f"Warning: Could not update profile status: {e}")
+    db.add(attendance)
+
+    user.checked_in = True
+    user.active_location_id = location_id
 
     db.commit()
-    return {"status": "success", "message": "Checked in successfully"}
+
+    return {
+        "status": "success",
+        "message": "Checked in successfully"
+    }
 
 
 @app.post("/api/user/checkout")
 def user_checkout(payload: dict, db: Session = Depends(get_db)):
     email = payload.get("email")
-    
-    # 1. Find the user
-    user = db.query(User).filter(User.email == email).first()
-    if not user:
-        return {"status": "error", "message": "User not found"}
 
-    # 2. Find their active attendance record that hasn't been checked out of yet
+    user = db.query(User).filter(
+        User.email == email.lower().strip()
+    ).first()
+
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found"
+        )
+
     active_attendance = db.query(Attendance).filter(
         Attendance.user_id == user.id,
         Attendance.checkout_time == None
-    ).order_by(desc(Attendance.checkin_time)).first()
+    ).order_by(
+        Attendance.checkin_time.desc()
+    ).first()
 
     if active_attendance:
         active_attendance.checkout_time = datetime.utcnow()
-        active_attendance.checkout_lat = payload.get("lat")
-        active_attendance.checkout_lon = payload.get("lon")
-        
-        # Calculate duration
-        duration = active_attendance.checkout_time - active_attendance.checkin_time
-        active_attendance.duration_seconds = duration.total_seconds()
 
-    # 3. CRITICAL FIX: Wipe the User's live profile status!
+        duration = (
+            active_attendance.checkout_time
+            - active_attendance.checkin_time
+        )
+
+        active_attendance.duration_seconds = int(
+            duration.total_seconds()
+        )
+
     user.checked_in = False
     user.active_location_id = None
 
     db.commit()
-    return {"status": "success", "message": "Checked out successfully"}
+
+    return {
+        "status": "success",
+        "message": "Checked out successfully"
+    }
 
 @app.get("/api/cron/auto-checkout")
 def cron_auto_checkout(db: Session = Depends(get_db)):

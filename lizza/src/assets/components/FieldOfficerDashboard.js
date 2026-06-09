@@ -147,14 +147,24 @@ const lastSentPositionRef = useRef(null);
     }
     
     if (profileRes.ok && prof) {
-        setCheckedIn(Boolean(prof.checked_in));
-        if (prof.checked_in && prof.active_location_id) {
-            const site = locs.find(l => l.id === prof.active_location_id);
-            setActiveSite(site || null);
-        } else {
-            setActiveSite(null);
-        }
+
+    if (prof.checked_in && prof.active_location_id) {
+
+        setCheckedIn(true);
+
+        const site = locs.find(
+            l => Number(l.id) === Number(prof.active_location_id)
+        );
+
+        setActiveSite(site || null);
+
+    } else {
+
+        setCheckedIn(false);
+        setActiveSite(null);
+
     }
+}
     
     if (histRes.ok) {
         setVisitHistory(hist);
@@ -273,13 +283,14 @@ const lastSentPositionRef = useRef(null);
     isProcessingRef.current = true;
     setIsSubmitting(true);
 
-    const payload = { 
-        email: userEmail, 
-        lat: overrideLoc.lat, 
-        lon: overrideLoc.lon, 
-        timestamp: new Date().toISOString(), 
-        actionType: type 
-    };
+   const payload = {
+  email: userEmail,
+  location_id: overrideSite?.id || null,
+  lat: overrideLoc?.lat,
+  lon: overrideLoc?.lon,
+  timestamp: new Date().toISOString(),
+  actionType: type
+};
 
     if (!isOnline && isApp) {
         // Handle Offline (Already works)
