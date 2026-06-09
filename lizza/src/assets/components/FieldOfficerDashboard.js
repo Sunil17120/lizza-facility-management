@@ -63,7 +63,7 @@ const FieldOfficerDashboard = () => {
       setPendingOfflineActions(v + a + s);
   }, []);
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (isSilent = false) => {
     if (isFetchingRef.current || !navigator.onLine) return;
     isFetchingRef.current = true;
     const t = Date.now();
@@ -164,6 +164,7 @@ const FieldOfficerDashboard = () => {
 
     await syncQueue('offlineShiftQueue', '/api/shift/day-action');
     
+    // Sync Attendance
     let attQ = JSON.parse(localStorage.getItem('offlineAttendanceQueue') || '[]');
     let fAtt = [];
     for (let act of attQ) {
@@ -175,6 +176,7 @@ const FieldOfficerDashboard = () => {
     }
     localStorage.setItem('offlineAttendanceQueue', JSON.stringify(fAtt));
 
+    // Sync Visits
     await syncQueue('offlineVisitQueue', '/api/field-officer/log-visit', (visit) => {
         const formData = new FormData();
         formData.append('email', visit.email); formData.append('location_id', visit.location_id); formData.append('purpose', visit.purpose);
@@ -322,7 +324,7 @@ const FieldOfficerDashboard = () => {
   const handleVisitSubmit = async (e) => {
     e.preventDefault();
     
-    // SAFEGUARD: Allow submission if they are checked in, even if checkedInSite is currently missing
+    // SAFEGUARD: Use checkedInSite first, fallback to proximateSite if GPS drifts
     const targetSiteForVisit = checkedInSite || proximateSite || (nearbySites.length > 0 ? nearbySites[0] : null);
     
     if (!targetSiteForVisit || !myLoc) return alert("You must be officially checked into a site to log a visit.");
@@ -361,6 +363,9 @@ const FieldOfficerDashboard = () => {
             setAlertMsg({ type: 'success', text: 'Visit logged successfully!' });
             setPurpose(''); setVisitEntries([{ photo: null, details: '' }]);
             fetchData(); 
+        } else {
+            const errData = await res.json();
+            alert(errData.detail || "Failed to log visit. Make sure you are inside the site geofence.");
         }
     }
     setIsSubmitting(false);
