@@ -278,7 +278,7 @@ const handleLocationUpdate = async () => {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      email,
+      email: userEmail,
       lat,
       lon,
     }),
