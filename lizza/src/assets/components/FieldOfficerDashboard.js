@@ -62,12 +62,7 @@ const compressImage = async (file, maxWidth = 1000, quality = 0.7) => {
   });
 };
 
-const getDistance = (lat1, lon1, lat2, lon2) => {
-  const R = 6371e3; const φ1 = lat1 * Math.PI/180; const φ2 = lat2 * Math.PI/180;
-  const Δφ = (lat2-lat1) * Math.PI/180; const Δλ = (lon2-lon1) * Math.PI/180;
-  const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ/2) * Math.sin(Δλ/2);
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-};
+
 
 const FieldOfficerDashboard = () => {
   const userEmail = localStorage.getItem('userEmail');
@@ -103,10 +98,11 @@ const FieldOfficerDashboard = () => {
   const [isSyncing, setIsSyncing] = useState(false);
 
   const isFetchingRef = useRef(false);
-  const activeSiteRef = useRef(null);
-  const checkedInRef = useRef(false);
-  const dutyStatusRef = useRef('OFF_DUTY');
-  const isProcessingRef = useRef(false);
+const activeSiteRef = useRef(null);
+const checkedInRef = useRef(false);
+const dutyStatusRef = useRef('OFF_DUTY');
+const isProcessingRef = useRef(false);
+const lastSentPositionRef = useRef(null);
 
   useEffect(() => { activeSiteRef.current = activeSite; }, [activeSite]);
   useEffect(() => { checkedInRef.current = checkedIn; }, [checkedIn]);
@@ -337,7 +333,7 @@ const processNewLocation = useCallback(async (lat, lon, accuracy, timestamp) => 
     // 1. Calculate Geofence
     const sitesWithDistance = locations.map(site => ({
         ...site,
-        distance: getDistance(lat, lon, site.lat, site.lon)
+        distance: calculateDistance(lat, lon, site.lat, site.lon)
     }));
     sitesWithDistance.sort((a, b) => a.distance - b.distance);
     setNearbySites(sitesWithDistance);
@@ -359,7 +355,7 @@ const processNewLocation = useCallback(async (lat, lon, accuracy, timestamp) => 
             handleAttendance('CHECK_IN', insideSite, { lat, lon });
             nextSite = insideSite;
         } else if (isCheckedIn && currentActiveSite) {
-            const distToActive = getDistance(lat, lon, currentActiveSite.lat, currentActiveSite.lon);
+            const distToActive = calculateDistance(lat, lon, currentActiveSite.lat, currentActiveSite.lon);
             if (distToActive > 500) {
                 handleAttendance('CHECK_OUT', currentActiveSite, { lat, lon });
                 nextSite = null;
@@ -394,7 +390,6 @@ useEffect(() => {
     };
 
    // Add this at the top of your component
-const lastSentPositionRef = useRef(null);
 
 const handlePosition = (position) => {
     if (isProcessingRef.current) return;
