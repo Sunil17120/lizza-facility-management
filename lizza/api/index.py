@@ -949,7 +949,7 @@ def user_checkin(payload: dict, db: Session = Depends(get_db)):
     db.add(attendance)
 
     user.checked_in = True
-    user.active_location_id = location_id
+    user.active_location_id = payload.location_id
 
     db.commit()
 
