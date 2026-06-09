@@ -242,7 +242,7 @@ const FieldOfficerDashboard = () => {
     return () => { window.removeEventListener('online', handleOnline); window.removeEventListener('offline', handleOffline); };
   }, [fetchData, syncOfflineData, updateQueueCounts]);
 
-  const processNewLocation = useCallback((lat, lon) => {
+  const processNewLocation = useCallback(async (lat, lon) => { // 1. Make this async
     setMyLoc({ lat, lon });
     const sitesToEval = locations;
     let insideSite = null;
@@ -264,29 +264,31 @@ const FieldOfficerDashboard = () => {
     }
     setActiveSite(insideSite);
     
+    // 2. SEND TO DATABASE HERE
     if (userEmail && dutyStatus === 'ON_DUTY') {
-      if (!navigator.onLine && isApp) {
-        const q = JSON.parse(localStorage.getItem('offlineLocations') || '[]');
-        q.push({ lat, lon, timestamp: new Date().toISOString() });
-        localStorage.setItem('offlineLocations', JSON.stringify(q));
-      } else if (navigator.onLine) {
-        // Add 'async' before the function parameters
-const handleLocationUpdate = async () => {
-  await fetch(`${API_BASE_URL}/api/user/update-location`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      email: userEmail,
-      lat,
-      lon,
-    }),
-  });
-};
-      }
+        if (!navigator.onLine && isApp) {
+            const q = JSON.parse(localStorage.getItem('offlineLocations') || '[]');
+            q.push({ lat, lon, timestamp: new Date().toISOString() });
+            localStorage.setItem('offlineLocations', JSON.stringify(q));
+        } else if (navigator.onLine) {
+            try {
+                // Use fetch directly or call your async function
+                await fetch(`${API_BASE_URL}/api/location/ping`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        email: userEmail, // Update this to dynamic ID once profile is fetched
+                        lat: lat,
+                        lon: lon,
+                        activity_state: 'TRAVELING'
+                    }),
+                });
+            } catch (err) {
+                console.error("Failed to send location ping:", err);
+            }
+        }
     }
-  }, [locations, userEmail, isApp, dutyStatus, activeSite, checkedIn]);
+}, [locations, userEmail, isApp, dutyStatus, activeSite, checkedIn]);
 
   useEffect(() => {
     if (!userEmail || !navigator.geolocation) return;
