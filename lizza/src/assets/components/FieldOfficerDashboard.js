@@ -282,16 +282,18 @@ const lastSentPositionRef = useRef(null);
     if (isProcessingRef.current) return;
     isProcessingRef.current = true;
     setIsSubmitting(true);
+const payload = {
+    email: userEmail,
+    lat: overrideLoc.lat,
+    lon: overrideLoc.lon,
+    timestamp: new Date().toISOString(),
+    actionType: type,
 
-   const payload = {
-  email: userEmail,
-  location_id: overrideSite?.id || null,
-  lat: overrideLoc?.lat,
-  lon: overrideLoc?.lon,
-  timestamp: new Date().toISOString(),
-  actionType: type
+    location_id:
+        overrideSite?.id ||
+        activeSiteRef.current?.id ||
+        null
 };
-
     if (!isOnline && isApp) {
         // Handle Offline (Already works)
         const q = JSON.parse(localStorage.getItem('offlineAttendanceQueue') || '[]');
