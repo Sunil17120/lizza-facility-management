@@ -19,7 +19,7 @@ from upstash_redis import Redis as UpstashRedis
 import firebase_admin
 from firebase_admin import credentials, messaging
 
-from .database import engine, SessionLocal, User, EmployeeLocation, OfficeLocation, SiteVisit, SiteStay, ShiftLog, FieldOfficerRoute, init_db, cipher
+from .database import engine, SessionLocal, User, EmployeeLocation, OfficeLocation, SiteVisit, SiteStay, ShiftLog, FieldOfficerRoute,Attendance, init_db, cipher
 with engine.connect() as conn:
     conn.execute(text("""
         DO $$ 
@@ -896,7 +896,7 @@ def user_checkin(payload: dict, db: Session = Depends(get_db)):
         return {"status": "error", "message": "No active shift"}
 
     # 3. Save the attendance record to history
-    new_attendance = AttendanceRecord(
+    new_attendance = Attendance(
         user_id=user.id,
         shift_id=active_shift.shift_id,
         location_id=location_id,
@@ -924,10 +924,10 @@ def user_checkout(payload: dict, db: Session = Depends(get_db)):
         return {"status": "error", "message": "User not found"}
 
     # 2. Find their active attendance record that hasn't been checked out of yet
-    active_attendance = db.query(AttendanceRecord).filter(
-        AttendanceRecord.user_id == user.id,
-        AttendanceRecord.checkout_time == None
-    ).order_by(desc(AttendanceRecord.checkin_time)).first()
+    active_attendance = db.query(Attendance).filter(
+        Attendance.user_id == user.id,
+        Attendance.checkout_time == None
+    ).order_by(desc(Attendance.checkin_time)).first()
 
     if active_attendance:
         active_attendance.checkout_time = datetime.utcnow()
