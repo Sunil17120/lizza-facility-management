@@ -270,17 +270,20 @@ const FieldOfficerDashboard = () => {
         q.push({ lat, lon, timestamp: new Date().toISOString() });
         localStorage.setItem('offlineLocations', JSON.stringify(q));
       } else if (navigator.onLine) {
-        await fetch(`${API_URL}/api/user/update-location`, {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-  },
-  body: JSON.stringify({
-    email,
-    lat,
-    lon,
-  }),
-});
+        // Add 'async' before the function parameters
+const handleLocationUpdate = async () => {
+  await fetch(`${API_BASE_URL}/api/user/update-location`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      email,
+      lat,
+      lon,
+    }),
+  });
+};
       }
     }
   }, [locations, userEmail, isApp, dutyStatus, activeSite, checkedIn]);
