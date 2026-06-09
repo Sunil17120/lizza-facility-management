@@ -183,14 +183,42 @@ async def get_address_from_coords(lat: float, lng: float) -> str:
         data = response.json()
         return data.get("display_name", "Address not found")
 
+
 async def get_snapped_route(coordinates_list: list) -> list:
-    coords_string = ";".join([f"{lng},{lat}" for lat, lng in coordinates_list])
+    # 1. Thinning: Limit the number of coordinates sent (OSRM limit)
+    # If the list is too long, take a representative subset
+    max_coords = 50
+    if len(coordinates_list) > max_coords:
+        step = len(coordinates_list) // max_coords
+        sampled_coords = coordinates_list[::step]
+    else:
+        sampled_coords = coordinates_list
+        
+    coords_string = ";".join([f"{lng},{lat}" for lat, lng in sampled_coords])
     url = f"https://router.project-osrm.org/route/v1/driving/{coords_string}?overview=full&geometries=geojson"
+    
     async with httpx.AsyncClient() as client:
-        response = await client.get(url)
-        data = response.json()
-        snapped_coords = data["routes"][0]["geometry"]["coordinates"]
-        return [{"lat": coord[1], "lng": coord[0]} for coord in snapped_coords]
+        try:
+            response = await client.get(url)
+            
+            # 2. Defensive check: Ensure successful response
+            if response.status_code != 200:
+                print(f"OSRM API Error: {response.status_code} - {response.text}")
+                return [] # Return empty if routing fails
+                
+            data = response.json()
+            
+            # 3. Guard against empty routes
+            if not data.get("routes"):
+                return []
+                
+            snapped_coords = data["routes"][0]["geometry"]["coordinates"]
+            return [{"lat": coord[1], "lng": coord[0]} for coord in snapped_coords]
+            
+        except Exception as e:
+            # Catch JSONDecodeError or network issues
+            print(f"Routing service error: {e}")
+            return []
 
 def get_db():
     db = SessionLocal()

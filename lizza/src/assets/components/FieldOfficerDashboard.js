@@ -377,18 +377,36 @@ useEffect(() => {
         maximumAge: 0 
     };
 
-    const handlePosition = (position) => {
-        // Only allow processing if we are NOT currently locked by an attendance update
-        if (isProcessingRef.current) return;
+   // Add this at the top of your component
+const lastSentPositionRef = useRef(null);
 
-        const lat = position.coords.latitude;
-        const lon = position.coords.longitude;
-        const accuracy = position.coords.accuracy;
-        const timestamp = new Date(position.timestamp).toISOString();
-        
-        processNewLocation(lat, lon, accuracy, timestamp); 
-    };
+const handlePosition = (position) => {
+    if (isProcessingRef.current) return;
 
+    const lat = position.coords.latitude;
+    const lon = position.coords.longitude;
+    const accuracy = position.coords.accuracy;
+    const timestamp = new Date(position.timestamp).toISOString();
+
+    // 1. Distance check
+    if (lastSentPositionRef.current) {
+        const distance = calculateDistance(
+            lastSentPositionRef.current.lat, 
+            lastSentPositionRef.current.lon, 
+            lat, 
+            lon
+        );
+        // If movement is less than 5 meters, ignore this ping
+        if (distance < 5) return; 
+    }
+
+    // 2. Update the reference BEFORE processing 
+    // to prevent duplicate triggers while the API call is in flight
+    lastSentPositionRef.current = { lat, lon };
+
+    // 3. Process
+    processNewLocation(lat, lon, accuracy, timestamp); 
+};
     // watchPosition is the only trigger needed. It fires automatically 
     // when the device hardware detects a movement or location update.
     const watchId = navigator.geolocation.watchPosition(
