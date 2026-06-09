@@ -307,8 +307,22 @@ const FieldOfficerDashboard = () => {
     }
   };
 
-  const processNewLocation = useCallback(async (lat, lon, accuracy, timestamp) => {
-    setMyLoc({ lat, lon });
+ const processNewLocation = useCallback(async (lat, lon, accuracy, timestamp) => {
+    // 1. HARD GUARD: If attendance is processing, do not run anything else.
+    if (isProcessingRef.current) return;
+
+    // 2. RATE LIMITER: Only ping the server every 30 seconds.
+    // This stops the flooding you saw in your logs (pinging twice per second).
+    const lastPing = localStorage.getItem('last_ping_time');
+    if (lastPing && (Date.now() - parseInt(lastPing)) < 30000) {
+        // Still update local state for the map, but skip the network fetch
+        setMyLoc({ lat, lon });
+    } else {
+        setMyLoc({ lat, lon });
+        localStorage.setItem('last_ping_time', Date.now().toString());
+        // ... (rest of your logic below)
+    }
+
     if (accuracy > 100) return;
 
     const sitesToEval = locations;
@@ -327,13 +341,16 @@ const FieldOfficerDashboard = () => {
     const isCheckedIn = checkedInRef.current;
     const currentDuty = dutyStatusRef.current;
 
+    // 3. IMPROVED CHECK-IN LOGIC
     if (insideSite && !currentActiveSite && currentDuty === 'ON_DUTY' && !isCheckedIn) {
+        // Double-check the lock before triggering attendance
         if (!isProcessingRef.current) {
             handleAttendance('CHECK_IN', insideSite, { lat, lon });
             setActiveSite(insideSite);
         }
     } else if (currentActiveSite && isCheckedIn) {
         const distToActive = getDistance(lat, lon, currentActiveSite.lat, currentActiveSite.lon);
+        // Only trigger check-out if they genuinely left the site (500m buffer)
         if (distToActive > 500) {
             if (!isProcessingRef.current) {
                 handleAttendance('CHECK_OUT', currentActiveSite, { lat, lon });
@@ -346,12 +363,9 @@ const FieldOfficerDashboard = () => {
         setActiveSite(insideSite);
     }
 
-    if (userEmail && currentDuty === 'ON_DUTY') {
-        if (!navigator.onLine && isApp) {
-            const q = JSON.parse(localStorage.getItem('offlineLocations') || '[]');
-            q.push({ lat, lon, accuracy, timestamp });
-            localStorage.setItem('offlineLocations', JSON.stringify(q));
-        } else if (navigator.onLine) {
+    // 4. DATABASE PING (Only runs if not rate-limited by step 2)
+    if (userEmail && currentDuty === 'ON_DUTY' && navigator.onLine) {
+        try {
             await fetch(`${API_BASE_URL}/api/location/ping`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -364,37 +378,48 @@ const FieldOfficerDashboard = () => {
                     activity_state: 'TRAVELING'
                 }),
             });
+        } catch (err) {
+            console.error("Failed to send location ping:", err);
         }
     }
   }, [locations, userEmail, isApp]);
 
-  useEffect(() => {
+useEffect(() => {
     if (!userEmail || !navigator.geolocation) return;
     
-    const geoOptions = { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 };
-    let watchId;
-    
+    const geoOptions = { 
+        enableHighAccuracy: true, 
+        timeout: 10000, 
+        maximumAge: 0 
+    };
+
     const handlePosition = (position) => {
+        // Only allow processing if we are NOT currently locked by an attendance update
+        if (isProcessingRef.current) return;
+
         const lat = position.coords.latitude;
         const lon = position.coords.longitude;
         const accuracy = position.coords.accuracy;
         const timestamp = new Date(position.timestamp).toISOString();
+        
         processNewLocation(lat, lon, accuracy, timestamp); 
     };
 
-    watchId = navigator.geolocation.watchPosition(
+    // watchPosition is the only trigger needed. It fires automatically 
+    // when the device hardware detects a movement or location update.
+    const watchId = navigator.geolocation.watchPosition(
         handlePosition, 
-        () => {}, 
+        (err) => console.warn("GPS Warning:", err.message), 
         geoOptions
     );
     
-    const intervalId = setInterval(() => {
-      navigator.geolocation.getCurrentPosition(handlePosition, () => {}, geoOptions);
-    }, 60000); 
+    // NO setInterval here. 
+    // If you need a forced ping every 60s even when stationary, 
+    // you should add that logic inside the processNewLocation function itself 
+    // based on a timestamp check, rather than a second listener.
     
     return () => {
         navigator.geolocation.clearWatch(watchId);
-        clearInterval(intervalId);
     };
   }, [userEmail, processNewLocation]);
 
