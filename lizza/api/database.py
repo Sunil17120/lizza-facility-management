@@ -121,6 +121,8 @@ class User(Base):
     
     # --- ADDED: PUSH NOTIFICATION TOKEN ---
     fcm_token = Column(String, nullable=True)
+    checked_in = Column(Boolean, default=False)
+    active_location_id = Column(Integer, ForeignKey("office_locations.id"), nullable=True)
 
 class EmployeeLocation(Base):
     __tablename__ = "employee_locations"
@@ -196,75 +198,34 @@ class FieldOfficerRoute(Base):
 def init_db():
     Base.metadata.create_all(bind=engine)
     
-    columns_to_add = [
-        ("first_name", "VARCHAR"), ("last_name", "VARCHAR"), ("personal_email", "VARCHAR"),
-        ("phone_number", "VARCHAR"), ("dob", "VARCHAR"), ("gender", "VARCHAR"),
-        ("marital_status", "VARCHAR"), ("identity_mark", "VARCHAR"),
-        ("father_name", "VARCHAR"), ("mother_name", "VARCHAR"), ("blood_group", "VARCHAR"), 
-        ("height", "VARCHAR"), ("caste", "VARCHAR"), ("category", "VARCHAR"), 
-        ("religion", "VARCHAR"), ("nationality", "VARCHAR"), ("medical_remarks", "TEXT"),
-        ("perm_address", "TEXT"), ("perm_state", "VARCHAR"), ("perm_pin", "VARCHAR"), ("perm_mobile", "VARCHAR"),
-        ("temp_address", "TEXT"), ("temp_state", "VARCHAR"), ("temp_pin", "VARCHAR"), ("temp_mobile", "VARCHAR"),
-        ("languages_json", "TEXT"), ("education_json", "TEXT"), ("experience_json", "TEXT"),
-        ("family_json", "TEXT"), ("references_json", "TEXT"),
-        ("emergency_contact", "VARCHAR"), ("designation", "VARCHAR"), ("department", "VARCHAR"), 
-        ("experience_years", "FLOAT"), ("prev_company", "VARCHAR"), ("prev_role", "VARCHAR"),
-        ("unit_name", "VARCHAR"), ("location_id", "INTEGER"), ("blockchain_id", "VARCHAR"),
-        ("kyc_mode", "VARCHAR"), ("is_verified", "BOOLEAN DEFAULT FALSE"), ("is_password_changed", "BOOLEAN DEFAULT FALSE"),
-        ("aadhar_enc", "VARCHAR"), ("pan_enc", "VARCHAR"), ("account_number_enc", "VARCHAR"),
-        ("voter_id_enc", "VARCHAR"), ("driving_licence_enc", "VARCHAR"), ("passport_no_enc", "VARCHAR"),
-        ("bank_name", "VARCHAR"), ("ifsc_code", "VARCHAR"),
-        ("profile_photo_path", "TEXT"), ("aadhar_photo_path", "TEXT"), ("pan_photo_path", "TEXT"),
-        ("voter_photo_path", "TEXT"), ("dl_photo_path", "TEXT"), ("passport_photo_path", "TEXT"),
-        ("fingerprints_left_path", "TEXT"), ("fingerprints_right_path", "TEXT"), 
-        ("bank_passbook_path", "TEXT"), ("filled_form_path", "TEXT"),
-        ("extra_documents_json", "TEXT"), 
-        ("fcm_token", "VARCHAR") 
-    ]
     with engine.connect() as conn:
-        # 1. Handle Admin setup
-        try:
-            conn.execute(text("UPDATE users SET is_verified = True WHERE email = 'admin@lizza.com'"))
-            conn.commit()
-        except:
-            conn.rollback()
-            
-        # 2. Use a "DO" block to add columns only if they do not exist (PostgreSQL specific)
-        for col_name, col_type in columns_to_add:
+        # Helper to add columns safely
+        def add_col(table, col, ctype):
             try:
                 conn.execute(text(f"""
                     DO $$ 
-                     BEGIN
-            IF NOT EXISTS (
-                SELECT 1
-                FROM information_schema.columns
-                WHERE table_name='shift_logs'
-                AND column_name='total_break_seconds'
-            ) THEN
-                ALTER TABLE shift_logs
-                ADD COLUMN total_break_seconds INTEGER DEFAULT 0;
-            END IF;
-        END $$;
+                    BEGIN
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                                     WHERE table_name='{table}' AND column_name='{col}') THEN
+                            ALTER TABLE {table} ADD COLUMN {col} {ctype};
+                        END IF;
+                    END $$;
                 """))
                 conn.commit()
             except Exception as e:
                 conn.rollback()
 
-        # 3. Handle Attendance location_id
+        # Update Users Table
+        add_col("users", "checked_in", "BOOLEAN DEFAULT FALSE")
+        add_col("users", "active_location_id", "INTEGER")
+        
+        # Update Shift Logs Table
+        add_col("shift_logs", "total_break_seconds", "INTEGER DEFAULT 0")
+        add_col("shift_logs", "break_start_time", "TIMESTAMP")
+        
+        # Admin setup
         try:
-            conn.execute(text("""
-                DO $$ 
-                IF NOT EXISTS (
-                SELECT 1
-                FROM information_schema.columns
-                WHERE table_name='shift_logs'
-                AND column_name='break_start_time'
-            ) THEN
-                ALTER TABLE shift_logs
-                ADD COLUMN break_start_time TIMESTAMP;
-            END IF;
-                END $$;
-            """))
+            conn.execute(text("UPDATE users SET is_verified = True WHERE email = 'admin@lizza.com'"))
             conn.commit()
         except:
             conn.rollback()
