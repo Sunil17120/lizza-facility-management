@@ -1,16 +1,15 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Container, Card, Row, Col, Form, Button, Alert, Spinner, Table, Badge } from 'react-bootstrap';
-import { MapPin, Camera, Navigation, CheckCircle, FileText, Map as MapIcon, LogIn, LogOut, WifiOff, RefreshCw, Clock, Coffee } from 'lucide-react';
+import { MapPin, Navigation, CheckCircle, FileText, Map as MapIcon, LogIn, LogOut, WifiOff, RefreshCw, Clock, Coffee } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 import { Capacitor, registerPlugin } from '@capacitor/core';
-import { LocalNotifications } from '@capacitor/local-notifications';
 import { AppLauncher } from '@capacitor/app-launcher';
 
 const API_BASE_URL = 'https://lizza-facility-management.vercel.app';
 const isApp = Capacitor.isNativePlatform();
 const LizzaTracker = registerPlugin('LizzaTracker');
 
-const fileToBase64 = (file) => new Promise((resolve, reject) => {
+const fileToBase64 = (file) => new Promise((resolve) => {
   const reader = new FileReader();
   reader.readAsDataURL(file);
   reader.onload = () => resolve(reader.result);
@@ -24,7 +23,7 @@ const base64ToFile = (base64String, filename) => {
   const u8arr = new Uint8Array(n);
   while(n--){ u8arr[n] = bstr.charCodeAt(n); }
   return new File([u8arr], filename, {type:mime});
-}
+};
 
 const compressImage = async (file, maxWidth = 1000, quality = 0.7) => {
   return new Promise((resolve) => {
@@ -56,20 +55,24 @@ const getDistance = (lat1, lon1, lat2, lon2) => {
 };
 
 const FieldOfficerDashboard = () => {
-  const [locations, setLocations] = useState(() => {
-    const cached = localStorage.getItem('cached_sites');
-    return cached ? JSON.parse(cached) : [];
-  });
-  
+  const userEmail = localStorage.getItem('userEmail');
+
   const [dutyStatus, setDutyStatus] = useState(() => localStorage.getItem('lastStatus') || 'OFF_DUTY');
   const [shiftData, setShiftData] = useState(() => {
     const cached = localStorage.getItem('cached_shift');
     return cached ? JSON.parse(cached) : null;
   });
+  const [locations, setLocations] = useState(() => {
+    const cached = localStorage.getItem('cached_sites');
+    return cached ? JSON.parse(cached) : [];
+  });
+  const [visitHistory, setVisitHistory] = useState(() => {
+    const cached = localStorage.getItem('cached_history');
+    return cached ? JSON.parse(cached) : [];
+  });
 
   const [myLoc, setMyLoc] = useState(null);
   const [activeSite, setActiveSite] = useState(null);
-  const [visitHistory, setVisitHistory] = useState([]);
   const [nearbySites, setNearbySites] = useState([]);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   
@@ -83,12 +86,7 @@ const FieldOfficerDashboard = () => {
   const [pendingOfflineActions, setPendingOfflineActions] = useState(0);
   const [isSyncing, setIsSyncing] = useState(false);
 
-  const userEmail = localStorage.getItem('userEmail');
   const isFetchingRef = useRef(false);
-
-  const openNotificationSettings = async () => {
-    if (isApp) await AppLauncher.openSettings();
-  };
 
   useEffect(() => {
       localStorage.setItem('lastStatus', dutyStatus);
@@ -100,7 +98,8 @@ const FieldOfficerDashboard = () => {
       if (!isApp) return;
       const queuedReports = JSON.parse(localStorage.getItem('offlineVisitQueue') || '[]');
       const queuedAttendance = JSON.parse(localStorage.getItem('offlineAttendanceQueue') || '[]');
-      setPendingOfflineActions(queuedReports.length + queuedAttendance.length);
+      const queuedShifts = JSON.parse(localStorage.getItem('offlineShiftQueue') || '[]');
+      setPendingOfflineActions(queuedReports.length + queuedAttendance.length + queuedShifts.length);
   }, []);
 
   const fetchData = useCallback(async () => {
@@ -108,46 +107,49 @@ const FieldOfficerDashboard = () => {
     isFetchingRef.current = true;
     
     const [locRes, histRes, profileRes, shiftRes] = await Promise.all([
-      fetch(`${API_BASE_URL}/api/admin/locations`),
-      fetch(`${API_BASE_URL}/api/field-officer/my-visits?email=${userEmail}`),
-      fetch(`${API_BASE_URL}/api/user/profile?email=${userEmail}`),
-      fetch(`${API_BASE_URL}/api/shift/current?email=${userEmail}`)
+        fetch(`${API_BASE_URL}/api/admin/locations`),
+        fetch(`${API_BASE_URL}/api/field-officer/my-visits?email=${userEmail}`),
+        fetch(`${API_BASE_URL}/api/user/profile?email=${userEmail}`),
+        fetch(`${API_BASE_URL}/api/shift/current?email=${userEmail}`)
     ]);
     
+    const locs = locRes.ok ? await locRes.json() : [];
+    const hist = histRes.ok ? await histRes.json() : [];
+    const prof = profileRes.ok ? await profileRes.json() : null;
+    const shift = shiftRes.ok ? await shiftRes.json() : null;
+
     if (locRes.ok) {
-      const fetchedLocations = await locRes.json();
-      setLocations(fetchedLocations);
-      if (isApp) localStorage.setItem('cached_sites', JSON.stringify(fetchedLocations));
-      
-      if (profileRes.ok) {
-        const profileData = await profileRes.json();
-        setCheckedIn(Boolean(profileData.checked_in));
-        if (profileData.checked_in && profileData.active_location_id) {
-            const site = fetchedLocations.find(l => l.id === profileData.active_location_id);
-            if(site) setActiveSite(site);
+        setLocations(locs);
+        localStorage.setItem('cached_sites', JSON.stringify(locs));
+    }
+    
+    if (profileRes.ok && prof) {
+        setCheckedIn(Boolean(prof.checked_in));
+        if (prof.checked_in && prof.active_location_id) {
+            const site = locs.find(l => l.id === prof.active_location_id);
+            setActiveSite(site || null);
         } else {
             setActiveSite(null);
         }
-      }
     }
     
     if (histRes.ok) {
-        const hist = await histRes.json();
         setVisitHistory(hist);
+        localStorage.setItem('cached_history', JSON.stringify(hist));
     }
 
-    if (shiftRes.ok) {
-      const shift = await shiftRes.json();
-      if (shift.is_active) {
-          setDutyStatus(shift.is_on_break ? 'ON_BREAK' : 'ON_DUTY');
-          setShiftData(shift);
-          if (!shift.is_on_break && isApp) LizzaTracker.startTracking({ email: userEmail });
-      } else {
-          setDutyStatus('OFF_DUTY');
-          setShiftData(null);
-          if (isApp) LizzaTracker.stopTracking();
-      }
+    if (shiftRes.ok && shift) {
+        if (shift.is_active) {
+            setDutyStatus(shift.is_on_break ? 'ON_BREAK' : 'ON_DUTY');
+            setShiftData(shift);
+            if (!shift.is_on_break && isApp) LizzaTracker.startTracking({ email: userEmail });
+        } else {
+            setDutyStatus('OFF_DUTY');
+            setShiftData(null);
+            if (isApp) LizzaTracker.stopTracking();
+        }
     }
+    
     isFetchingRef.current = false;
   }, [userEmail]);
 
@@ -178,49 +180,52 @@ const FieldOfficerDashboard = () => {
     if (!navigator.onLine || isSyncing || !isApp) return;
     setIsSyncing(true);
 
+    const shiftQueue = JSON.parse(localStorage.getItem('offlineShiftQueue') || '[]');
+    let failedShifts = [];
+    for (let s of shiftQueue) {
+        const res = await fetch(`${API_BASE_URL}/api/shift/day-action`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(s) });
+        if (!res.ok) failedShifts.push(s);
+    }
+    localStorage.setItem('offlineShiftQueue', JSON.stringify(failedShifts));
+
     const pings = JSON.parse(localStorage.getItem('offlineLocations') || '[]');
     if (pings.length > 0) {
-      await fetch(`${API_BASE_URL}/api/user/sync-offline-locations`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: userEmail, locations: pings }) });
-      localStorage.removeItem('offlineLocations');
+        await fetch(`${API_BASE_URL}/api/user/sync-offline-locations`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: userEmail, locations: pings }) });
+        localStorage.removeItem('offlineLocations');
     }
 
     const attendanceQueue = JSON.parse(localStorage.getItem('offlineAttendanceQueue') || '[]');
     let failedAtt = [];
-    let lastSuccessfulAction = null;
-    
     for (let act of attendanceQueue) {
-      const ep = act.actionType === 'CHECK_IN' ? '/api/user/checkin' : '/api/user/checkout';
-      const res = await fetch(`${API_BASE_URL}${ep}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(act) });
-      if (res.ok) lastSuccessfulAction = act;
-      else failedAtt.push(act);
+        const ep = act.actionType === 'CHECK_IN' ? '/api/user/checkin' : '/api/user/checkout';
+        const res = await fetch(`${API_BASE_URL}${ep}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(act) });
+        if (!res.ok) failedAtt.push(act);
     }
-    if (lastSuccessfulAction) setCheckedIn(lastSuccessfulAction.actionType === 'CHECK_IN');
     localStorage.setItem('offlineAttendanceQueue', JSON.stringify(failedAtt));
 
     let visitQueue = JSON.parse(localStorage.getItem('offlineVisitQueue') || '[]');
     let failedVisits = [];
-
     for (let visit of visitQueue) {
-      const formData = new FormData();
-      formData.append('email', visit.email);
-      formData.append('location_id', visit.location_id);
-      formData.append('purpose', visit.purpose);
-      formData.append('photo_details', visit.photo_details);
-      formData.append('lat', visit.lat);
-      formData.append('lon', visit.lon);
-      formData.append('timestamp', visit.timestamp);
-      
-      const photoFiles = visit.photosBase64.map((b64, i) => base64ToFile(b64, `offline_capture_${i}_${Date.now()}.jpg`));
-      photoFiles.forEach(f => formData.append('photos', f));
+        const formData = new FormData();
+        formData.append('email', visit.email);
+        formData.append('location_id', visit.location_id);
+        formData.append('purpose', visit.purpose);
+        formData.append('photo_details', visit.photo_details);
+        formData.append('lat', visit.lat);
+        formData.append('lon', visit.lon);
+        formData.append('timestamp', visit.timestamp);
+        
+        const photoFiles = visit.photosBase64.map((b64, i) => base64ToFile(b64, `offline_capture_${i}_${Date.now()}.jpg`));
+        photoFiles.forEach(f => formData.append('photos', f));
 
-      const res = await fetch(`${API_BASE_URL}/api/field-officer/log-visit`, { method: 'POST', body: formData });
-      if (!res.ok) failedVisits.push(visit);
+        const res = await fetch(`${API_BASE_URL}/api/field-officer/log-visit`, { method: 'POST', body: formData });
+        if (!res.ok) failedVisits.push(visit);
     }
-    
     localStorage.setItem('offlineVisitQueue', JSON.stringify(failedVisits));
+
     updateQueueCounts();
     setIsSyncing(false);
-    fetchData(); 
+    fetchData();
   }, [isSyncing, userEmail, fetchData, updateQueueCounts]);
 
   useEffect(() => {
@@ -239,10 +244,9 @@ const FieldOfficerDashboard = () => {
 
   const processNewLocation = useCallback((lat, lon) => {
     setMyLoc({ lat, lon });
-    const cachedSitesStr = localStorage.getItem('cached_sites');
-    const sitesToEval = (cachedSitesStr && isApp) ? JSON.parse(cachedSitesStr) : locations;
-
+    const sitesToEval = locations;
     let insideSite = null;
+    
     const sitesWithDistance = sitesToEval.map(site => {
         const dist = getDistance(lat, lon, site.lat, site.lon);
         if (dist <= (site.radius || 200)) insideSite = site;
@@ -251,6 +255,13 @@ const FieldOfficerDashboard = () => {
 
     sitesWithDistance.sort((a, b) => a.distance - b.distance);
     setNearbySites(sitesWithDistance);
+    
+    // Automatic Check-in Logic
+    if (insideSite && !activeSite && dutyStatus === 'ON_DUTY') {
+        handleAttendance('CHECK_IN', insideSite, { lat, lon });
+    } else if (!insideSite && activeSite && checkedIn) {
+        handleAttendance('CHECK_OUT', activeSite, { lat, lon });
+    }
     setActiveSite(insideSite);
     
     if (userEmail && dutyStatus === 'ON_DUTY') {
@@ -259,14 +270,10 @@ const FieldOfficerDashboard = () => {
         q.push({ lat, lon, timestamp: new Date().toISOString() });
         localStorage.setItem('offlineLocations', JSON.stringify(q));
       } else if (navigator.onLine) {
-        fetch(`${API_BASE_URL}/api/user/update-location?email=${encodeURIComponent(userEmail)}&lat=${lat}&lon=${lon}`, { method: 'POST' }).catch(() => {});
-        if (isApp && !isSyncing) {
-          const qLoc = JSON.parse(localStorage.getItem('offlineLocations') || '[]');
-          if (qLoc.length) syncOfflineData();
-        }
+        fetch(`${API_BASE_URL}/api/user/update-location?email=${encodeURIComponent(userEmail)}&lat=${lat}&lon=${lon}`);
       }
     }
-  }, [locations, userEmail, isApp, isSyncing, syncOfflineData, dutyStatus]);
+  }, [locations, userEmail, isApp, dutyStatus, activeSite, checkedIn]);
 
   useEffect(() => {
     if (!userEmail || !navigator.geolocation) return;
@@ -280,38 +287,55 @@ const FieldOfficerDashboard = () => {
 
   const handleDayShiftAction = async (action) => {
     setIsSubmitting(true);
-    const res = await fetch(`${API_BASE_URL}/api/shift/day-action`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: userEmail, action: action, timestamp: new Date().toISOString() })
-    });
-    
-    if (res.ok) {
-        await fetchData(); 
+    const timestamp = new Date().toISOString();
+    const payload = { email: userEmail, action: action, timestamp: timestamp };
+
+    if (!isOnline && isApp) {
+        const q = JSON.parse(localStorage.getItem('offlineShiftQueue') || '[]');
+        q.push(payload);
+        localStorage.setItem('offlineShiftQueue', JSON.stringify(q));
+        
         if (action === 'START' || action === 'RESUME') {
             setDutyStatus('ON_DUTY');
-            if (isApp) LizzaTracker.startTracking({ email: userEmail });
+            LizzaTracker.startTracking({ email: userEmail });
         } else if (action === 'BREAK') {
             setDutyStatus('ON_BREAK');
-            if (isApp) LizzaTracker.stopTracking();
+            LizzaTracker.stopTracking();
         } else if (action === 'END') {
             setDutyStatus('OFF_DUTY');
-            if (isApp) LizzaTracker.stopTracking();
+            LizzaTracker.stopTracking();
         }
+        updateQueueCounts();
     } else {
-        const errData = await res.json().catch(() => ({}));
-        alert(errData.detail || "Server failed to update shift");
+        const res = await fetch(`${API_BASE_URL}/api/shift/day-action`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        if (res.ok) {
+            await fetchData(); 
+            if (action === 'START' || action === 'RESUME') {
+                setDutyStatus('ON_DUTY');
+                if (isApp) LizzaTracker.startTracking({ email: userEmail });
+            } else if (action === 'BREAK') {
+                setDutyStatus('ON_BREAK');
+                if (isApp) LizzaTracker.stopTracking();
+            } else if (action === 'END') {
+                setDutyStatus('OFF_DUTY');
+                if (isApp) LizzaTracker.stopTracking();
+            }
+        }
     }
     setIsSubmitting(false);
   };
 
-  const handleAttendance = async (type) => {
-    if (type === 'CHECK_IN' && (!activeSite || !myLoc)) return alert("You must be inside the site boundary.");
-    if (!myLoc) return alert("Current location unavailable.");
+  const handleAttendance = async (type, overrideSite = activeSite, overrideLoc = myLoc) => {
+    if (type === 'CHECK_IN' && (!overrideSite || !overrideLoc)) return alert("You must be inside the site boundary.");
+    if (!overrideLoc) return alert("Current location unavailable.");
     if (dutyStatus !== 'ON_DUTY') return alert("You must Start Day Duty first and not be on a break.");
     
     setIsSubmitting(true);
-    const payload = { email: userEmail, lat: myLoc.lat, lon: myLoc.lon, timestamp: new Date().toISOString(), actionType: type };
+    const payload = { email: userEmail, lat: overrideLoc.lat, lon: overrideLoc.lon, timestamp: new Date().toISOString(), actionType: type };
 
     if (!isOnline && isApp) {
         const q = JSON.parse(localStorage.getItem('offlineAttendanceQueue') || '[]');
@@ -321,32 +345,28 @@ const FieldOfficerDashboard = () => {
         setAlertMsg({ type: 'warning', text: `Offline ${type === 'CHECK_IN' ? 'Check-In' : 'Check-Out'} queued.` });
         updateQueueCounts();
     } else {
-      const ep = type === 'CHECK_IN' ? '/api/user/checkin' : '/api/user/checkout';
-      const res = await fetch(`${API_BASE_URL}${ep}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      if (res.ok) {
-        setCheckedIn(type === 'CHECK_IN');
-        setAlertMsg({ type: 'success', text: `Successfully ${type === 'CHECK_IN' ? 'Checked In' : 'Checked Out'}` });
-      }
+        const ep = type === 'CHECK_IN' ? '/api/user/checkin' : '/api/user/checkout';
+        const res = await fetch(`${API_BASE_URL}${ep}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        if (res.ok) {
+            setCheckedIn(type === 'CHECK_IN');
+            setAlertMsg({ type: 'success', text: `Successfully ${type === 'CHECK_IN' ? 'Checked In' : 'Checked Out'}` });
+            fetchData();
+        }
     }
     setIsSubmitting(false);
   };
 
-  const handleAddPhotoEntry = () => {
-      setVisitEntries([...visitEntries, { photo: null, details: '' }]);
-  };
-
+  const handleAddPhotoEntry = () => setVisitEntries([...visitEntries, { photo: null, details: '' }]);
   const handleRemovePhotoEntry = (index) => {
       const newEntries = [...visitEntries];
       newEntries.splice(index, 1);
       setVisitEntries(newEntries);
   };
-
   const handlePhotoChange = (index, file) => {
       const newEntries = [...visitEntries];
       newEntries[index].photo = file;
       setVisitEntries(newEntries);
   };
-
   const handleDetailsChange = (index, text) => {
       const newEntries = [...visitEntries];
       newEntries[index].details = text;
@@ -394,14 +414,13 @@ const FieldOfficerDashboard = () => {
         formData.append('lat', myLoc.lat); 
         formData.append('lon', myLoc.lon);
         formData.append('timestamp', timestamp); 
-        
         compressedPhotos.forEach((p) => { formData.append('photos', p); });
 
         const res = await fetch(`${API_BASE_URL}/api/field-officer/log-visit`, { method: 'POST', body: formData });
         if (res.ok) {
             setAlertMsg({ type: 'success', text: 'Visit logged successfully!' });
             setPurpose(''); setVisitEntries([{ photo: null, details: '' }]);
-            fetchData();
+            fetchData(); 
         }
     }
     setIsSubmitting(false);
@@ -414,38 +433,38 @@ const FieldOfficerDashboard = () => {
       </div>
 
       {(!isOnline || pendingOfflineActions > 0) && isApp && (
-        <Alert variant="warning" className="d-flex justify-content-between align-items-center mb-4 py-2">
+        <Alert variant="warning" className="d-flex justify-content-between align-items-center mb-4 py-2 shadow-sm border-warning">
             <span>
                 {isOnline ? <RefreshCw size={18} className="me-2 text-primary" /> : <WifiOff size={18} className="me-2 text-danger" />}
                 <strong className="me-2">{isOnline ? 'Syncing Backlog...' : 'Offline Mode'}</strong> 
-                {pendingOfflineActions} pending offline action{pendingOfflineActions === 1 ? '' : 's'} saved on device.
+                {pendingOfflineActions} pending offline action{pendingOfflineActions === 1 ? '' : 's'} safely stored on device.
             </span>
         </Alert>
       )}
 
-      <Card className="border-0 shadow-sm mb-4 bg-light">
+      <Card className="border-0 shadow-sm mb-4 bg-light border-start border-5 border-primary">
           <Card.Body className="d-flex justify-content-between align-items-center flex-wrap gap-3">
               <div>
-                  <h5 className="fw-bold mb-1"><Clock className="me-2 text-info"/> Daily Master Shift</h5>
+                  <h5 className="fw-bold mb-1"><Clock className="me-2 text-primary"/> Master Day Shift</h5>
                   <div className="text-muted small">
-                      {dutyStatus === 'OFF_DUTY' ? "Start your day to enable GPS path tracking." : 
-                       dutyStatus === 'ON_BREAK' ? "Tracking paused during break." : 
-                       `Duty Hours: ${Math.floor(dutyHours)}h ${Math.floor((dutyHours % 1) * 60)}m (Breaks excluded)`}
+                      {dutyStatus === 'OFF_DUTY' ? "Start your day shift to enable location tracking and site check-ins." : 
+                       dutyStatus === 'ON_BREAK' ? "Shift paused. Location tracking is currently disabled." : 
+                       `Duty Hours: ${Math.floor(dutyHours)}h ${Math.floor((dutyHours % 1) * 60)}m (Breaks explicitly excluded)`}
                   </div>
               </div>
-              <div className="d-flex gap-2">
+              <div className="d-flex gap-2 flex-wrap">
                   {dutyStatus === 'OFF_DUTY' && (
-                      <Button variant="primary" className="fw-bold" onClick={() => handleDayShiftAction('START')} disabled={isSubmitting}>Day Check-In</Button>
+                      <Button variant="primary" className="fw-bold px-4" onClick={() => handleDayShiftAction('START')} disabled={isSubmitting}>Start Day Shift</Button>
                   )}
                   {dutyStatus === 'ON_DUTY' && (
-                      <Button variant="warning" className="fw-bold" onClick={() => handleDayShiftAction('BREAK')} disabled={isSubmitting}><Coffee size={16} className="me-1"/> Take Break</Button>
+                      <Button variant="warning" className="fw-bold text-dark" onClick={() => handleDayShiftAction('BREAK')} disabled={isSubmitting}><Coffee size={16} className="me-1"/> Take Break</Button>
                   )}
                   {dutyStatus === 'ON_BREAK' && (
-                      <Button variant="success" className="fw-bold" onClick={() => handleDayShiftAction('RESUME')} disabled={isSubmitting}>Resume Duty</Button>
+                      <Button variant="success" className="fw-bold px-4" onClick={() => handleDayShiftAction('RESUME')} disabled={isSubmitting}>Resume Duty</Button>
                   )}
                   {dutyStatus !== 'OFF_DUTY' && (
                       <Button variant="danger" className="fw-bold" onClick={() => handleDayShiftAction('END')} disabled={isSubmitting || dutyHours < 8}>
-                          Day Check-Out {dutyHours < 8 && `(${Math.ceil(8 - dutyHours)}h left)`}
+                          End Day Shift {dutyHours < 8 && `(${Math.ceil(8 - dutyHours)}h left)`}
                       </Button>
                   )}
               </div>
@@ -455,19 +474,27 @@ const FieldOfficerDashboard = () => {
       <Row className="g-4 mb-4">
         <Col lg={8}>
           <Card className="border-0 shadow-sm overflow-hidden" style={{ height: '600px' }}>
-            <MapContainer center={[12.9716, 77.5946]} zoom={11} style={{ height: '100%' }}>
-              <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-              {locations.map(site => (
-                <Circle key={site.id} center={[site.lat, site.lon]} radius={site.radius || 200} pathOptions={{ color: 'blue', fillOpacity: 0.2 }}>
-                  <Popup>{site.name}</Popup>
-                </Circle>
-              ))}
-              {myLoc && (
-                <Marker position={[myLoc.lat, myLoc.lon]}>
-                  <Popup>Your Live Location</Popup>
-                </Marker>
-              )}
-            </MapContainer>
+            {dutyStatus === 'OFF_DUTY' ? (
+                <div className="h-100 d-flex flex-column align-items-center justify-content-center bg-light text-muted">
+                    <MapIcon size={48} className="mb-3 text-secondary"/>
+                    <h5>Map Unavailable</h5>
+                    <p>Start your Master Day Shift to view assignments and enable live tracking.</p>
+                </div>
+            ) : (
+                <MapContainer center={[12.9716, 77.5946]} zoom={11} style={{ height: '100%' }}>
+                  <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+                  {locations.map(site => (
+                    <Circle key={site.id} center={[site.lat, site.lon]} radius={site.radius || 200} pathOptions={{ color: 'blue', fillOpacity: 0.2 }}>
+                      <Popup>{site.name}</Popup>
+                    </Circle>
+                  ))}
+                  {myLoc && (
+                    <Marker position={[myLoc.lat, myLoc.lon]}>
+                      <Popup>Your Live Location</Popup>
+                    </Marker>
+                  )}
+                </MapContainer>
+            )}
           </Card>
         </Col>
 
@@ -477,13 +504,17 @@ const FieldOfficerDashboard = () => {
               <Card.Body>
                 <h5 className="fw-bold mb-3 d-flex align-items-center"><MapPin className="me-2 text-danger"/> Site Attendance</h5>
                 
-                {alertMsg && <Alert variant={alertMsg.type} className="mb-3 small">{alertMsg.text}</Alert>}
+                {alertMsg && <Alert variant={alertMsg.type} className="mb-3 small fw-bold">{alertMsg.text}</Alert>}
                 
                 {dutyStatus === 'OFF_DUTY' ? (
-                    <Alert variant="warning" className="text-center mb-0">
-                        <Clock size={24} className="mb-2 d-block mx-auto text-muted"/>
-                        <span className="fw-bold">Day Shift Not Started</span>
-                        <p className="small mb-0 mt-1">Please start your Day Check-In to enable site attendance and visit logging.</p>
+                    <Alert variant="secondary" className="text-center mb-0">
+                        <span className="d-block mb-1">Shift Inactive</span>
+                        <small className="text-muted">You must be On-Duty to check into a site.</small>
+                    </Alert>
+                ) : dutyStatus === 'ON_BREAK' ? (
+                     <Alert variant="warning" className="text-center mb-0">
+                        <span className="d-block mb-1">On Break</span>
+                        <small className="text-muted">Resume duty to access site actions.</small>
                     </Alert>
                 ) : (
                     <>
@@ -495,22 +526,22 @@ const FieldOfficerDashboard = () => {
 
                         <div className="d-flex gap-2 mb-3">
                           {!checkedIn && activeSite && (
-                            <Button variant="success" className="w-100 fw-bold" disabled={isSubmitting || dutyStatus !== 'ON_DUTY'} onClick={() => handleAttendance('CHECK_IN')}><LogIn className="me-2" size={16}/> Site Check In</Button>
+                            <Button variant="success" className="w-100 fw-bold" disabled={isSubmitting} onClick={() => handleAttendance('CHECK_IN')}><LogIn className="me-2" size={16}/> Manual Check In</Button>
                           )}
                           {checkedIn && (
-                            <Button variant="danger" className="w-100 fw-bold" disabled={isSubmitting || dutyStatus !== 'ON_DUTY'} onClick={() => handleAttendance('CHECK_OUT')}><LogOut className="me-2" size={16}/> Site Check Out</Button>
+                            <Button variant="danger" className="w-100 fw-bold" disabled={isSubmitting} onClick={() => handleAttendance('CHECK_OUT')}><LogOut className="me-2" size={16}/> Manual Check Out</Button>
                           )}
                         </div>
 
-                        {activeSite && checkedIn && dutyStatus === 'ON_DUTY' && (
+                        {activeSite && checkedIn && (
                           <Form onSubmit={handleVisitSubmit} className="mt-2 border-top pt-3">
                             <h6 className="fw-bold mb-3"><FileText className="me-2" size={18}/>Log Visit Report</h6>
                             <Form.Select size="sm" className="mb-2" value={purpose} onChange={e => setPurpose(e.target.value)} required>
                                 <option value="">Select Purpose...</option>
-                                <option value="Site visit">Site visit</option>
-                                <option value="Training">Training</option>
+                                <option value="Routine Inspection">Routine Inspection</option>
                                 <option value="Client Meeting">Client Meeting</option>
-                                <option value="Attendance">Attendance</option>
+                                <option value="Issue Resolution">Issue Resolution</option>
+                                <option value="Training">Training</option>
                                 <option value="Bill Submission">Bill Submission</option>
                             </Form.Select>
 
@@ -524,10 +555,10 @@ const FieldOfficerDashboard = () => {
                                             )}
                                         </div>
                                         <Form.Control type="file" size="sm" accept="image/*" capture="environment" className="mb-2" onChange={(e) => handlePhotoChange(idx, e.target.files[0])} required />
-                                        <Form.Control size="sm" as="textarea" rows={2} placeholder="Specific details for this photo..." value={entry.details} onChange={(e) => handleDetailsChange(idx, e.target.value)} required />
+                                        <Form.Control size="sm" as="textarea" rows={2} placeholder="Description/Remarks..." value={entry.details} onChange={(e) => handleDetailsChange(idx, e.target.value)} required />
                                     </div>
                                 ))}
-                                <Button variant="outline-primary" size="sm" className="w-100 fw-bold border-dashed" onClick={handleAddPhotoEntry}>+ Add Another Photo & Detail</Button>
+                                <Button variant="outline-primary" size="sm" className="w-100 fw-bold border-dashed" onClick={handleAddPhotoEntry}>+ Add Another Photo</Button>
                             </div>
 
                             <Button type="submit" variant="primary" className="w-100 fw-bold" disabled={isSubmitting}>
@@ -553,6 +584,7 @@ const FieldOfficerDashboard = () => {
                           </td>
                         </tr>
                     ))}
+                    {nearbySites.length === 0 && <tr><td className="text-center text-muted py-4">No sites detected nearby.</td></tr>}
                   </tbody>
                 </Table>
               </Card.Body>
@@ -565,8 +597,8 @@ const FieldOfficerDashboard = () => {
         <Col xs={12}>
           <Card className="border-0 shadow-sm">
             <Card.Header className="bg-white py-3 border-bottom-0 d-flex justify-content-between align-items-center">
-              <h6 className="fw-bold m-0"><FileText className="me-2 text-primary" size={18} /> My Recent Site Visits</h6>
-              <Button variant="outline-primary" size="sm" onClick={() => fetchData()}>Refresh Logs</Button>
+              <h6 className="fw-bold m-0"><FileText className="me-2 text-primary" size={18} /> My Recent Site Visit Reports</h6>
+              <Button variant="outline-primary" size="sm" onClick={() => fetchData()} disabled={isFetchingRef.current}><RefreshCw size={14} className="me-1"/> Refresh Logs</Button>
             </Card.Header>
             <Card.Body className="p-0 overflow-auto" style={{ maxHeight: '400px' }}>
                <Table hover responsive className="mb-0 align-middle small">
@@ -575,8 +607,8 @@ const FieldOfficerDashboard = () => {
                            <th className="ps-4">Date & Time</th>
                            <th>Site Name</th>
                            <th>Purpose</th>
-                           <th>Duration</th>
-                           <th>Status</th>
+                           <th>Remarks / Details</th>
+                           <th>Evidence</th>
                        </tr>
                    </thead>
                    <tbody>
@@ -585,13 +617,21 @@ const FieldOfficerDashboard = () => {
                                <td colSpan="5" className="text-center text-muted py-4">No recent site visits recorded.</td>
                            </tr>
                        ) : (
-                           visitHistory.map(v => (
-                               <tr key={v.visit_id}>
-                                   <td className="ps-4 fw-bold">{v.date} <span className="text-muted d-block" style={{fontSize: '0.75rem'}}>{v.time}</span></td>
+                           visitHistory.map((v, i) => (
+                               <tr key={i}>
+                                   <td className="ps-4 fw-bold">{v.visit_time}</td>
                                    <td><MapPin size={12} className="text-danger me-1"/> {v.site_name}</td>
                                    <td><Badge bg="dark">{v.purpose}</Badge></td>
-                                   <td><Badge bg={v.duration === 'In Progress' ? 'primary' : 'secondary'}>{v.duration}</Badge></td>
-                                   <td>{v.exit_time === 'Active' ? <Badge bg="warning" className="text-dark">In Progress</Badge> : <Badge bg="success">Completed</Badge>}</td>
+                                   <td style={{ maxWidth: '250px' }} className="text-truncate" title={v.remarks}>{v.remarks}</td>
+                                   <td>
+                                       {v.photo_url ? (
+                                           <a href={v.photo_url.split(',')[0]} target="_blank" rel="noreferrer">
+                                              <Badge bg="info">View Photo</Badge>
+                                           </a>
+                                       ) : (
+                                           <span className="text-muted">None</span>
+                                       )}
+                                   </td>
                                </tr>
                            ))
                        )}
@@ -601,7 +641,6 @@ const FieldOfficerDashboard = () => {
           </Card>
         </Col>
       </Row>
-
     </Container>
   );
 };

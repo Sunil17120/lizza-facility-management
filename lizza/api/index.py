@@ -313,48 +313,42 @@ def get_current_shift(email: str, db: Session = Depends(get_db)):
     }
 
 @app.post("/api/shift/day-action")
-def perform_day_action(data: DayShiftAction, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == data.email.lower().strip()).first()
-    now_utc = parse_iso_timestamp(data.timestamp)
+def day_shift_action(payload: dict, db: Session = Depends(get_db)):
+    email = payload.get("email")
+    action = payload.get("action")
     
-    active_shift = db.query(ShiftLog).filter(ShiftLog.user_id == user.id, ShiftLog.logout_time == None).first()
-
-    if data.action == "START":
-        if not active_shift:
-            new_shift = ShiftLog(
-                user_id=user.id, 
-                shift_id=f"SFT_{user.id}_{now_utc.strftime('%Y%m%d%H%M')}",
-                login_time=now_utc,
-                total_break_seconds=0,
-                is_on_break=False
-            )
-            db.add(new_shift)
-            r.set(f"officer_state:{user.id}", "TRAVELING")
+    # Parse the exact time from the device to prevent timing drift
+    action_time_str = payload.get("timestamp")
+    action_time = datetime.fromisoformat(action_time_str.replace("Z", "+00:00"))[:19] if action_time_str else datetime.utcnow()
     
-    elif data.action == "BREAK":
-        if active_shift and not active_shift.is_on_break:
-            active_shift.is_on_break = True
-            active_shift.break_start_time = now_utc
-            r.set(f"officer_state:{user.id}", "ON_BREAK")
+    user = db.query(User).filter(User.email == email.lower().strip()).first()
+    if not user: return {"status": "error"}
+    
+    shift = db.query(ShiftLog).filter(ShiftLog.user_id == user.id, ShiftLog.logout_time == None).first()
+    
+    if action == "START" and not shift:
+        shift_id = f"SFT_{user.id}_{action_time.strftime('%Y%m%d%H%M')}"
+        db.add(ShiftLog(user_id=user.id, shift_id=shift_id, shift_date=action_time, login_time=action_time, current_status="ON_DUTY", total_break_minutes=0, total_break_seconds=0))
+    elif shift:
+        if action == "BREAK":
+            shift.current_status = "ON_BREAK"
+            shift.is_on_break = True
+            shift.break_start_time = action_time
+        elif action == "RESUME":
+            shift.current_status = "ON_DUTY"
+            shift.is_on_break = False
+            if shift.break_start_time:
+                break_duration = (action_time - shift.break_start_time).total_seconds()
+                shift.total_break_seconds += int(break_duration)
+                shift.break_start_time = None
+        elif action == "END":
+            shift.current_status = "OFF_DUTY"
+            shift.logout_time = action_time
+            if shift.is_on_break and shift.break_start_time:
+                break_duration = (action_time - shift.break_start_time).total_seconds()
+                shift.total_break_seconds += int(break_duration)
+            shift.is_on_break = False
             
-    elif data.action == "RESUME":
-        if active_shift and active_shift.is_on_break:
-            break_duration = (now_utc - active_shift.break_start_time).total_seconds()
-            active_shift.total_break_seconds += int(break_duration)
-            active_shift.is_on_break = False
-            active_shift.break_start_time = None
-            r.set(f"officer_state:{user.id}", "TRAVELING")
-
-    elif data.action == "END":
-        if active_shift:
-            if active_shift.is_on_break:
-                break_duration = (now_utc - active_shift.break_start_time).total_seconds()
-                active_shift.total_break_seconds += int(break_duration)
-            active_shift.logout_time = now_utc
-            active_shift.is_on_break = False
-            active_shift.break_start_time = None
-            r.set(f"officer_state:{user.id}", "LOGGED_OUT")
-
     db.commit()
     return {"status": "success"}
 
@@ -740,109 +734,40 @@ async def handle_native_webhook(request: Request, db: Session = Depends(get_db))
 async def sync_offline_locations(payload: dict, db: Session = Depends(get_db)):
     email = payload.get("email")
     locations = payload.get("locations", [])
-    if not email or not locations: return {"status": "success", "synced": 0}
-        
     user = db.query(User).filter(User.email == email.lower().strip()).first()
-    if not user: return {"status": "error", "message": "User not found"}
     
-    locations.sort(key=lambda x: x.get("timestamp", ""))
-    from .database import Attendance
-
-    active_shift = db.query(ShiftLog).filter(ShiftLog.user_id == user.id, ShiftLog.logout_time == None).first()
-    shift_id = active_shift.shift_id if active_shift else f"SYNC_{user.id}_{datetime.utcnow().strftime('%Y%m%d%H%M')}"
-
-    last_route_ping = db.query(FieldOfficerRoute).filter(
-        FieldOfficerRoute.user_id == user.id,
-        FieldOfficerRoute.shift_id == shift_id
-    ).order_by(desc(FieldOfficerRoute.ping_timestamp)).first()
-
-    last_lat = last_route_ping.latitude if last_route_ping else None
-    last_lon = last_route_ping.longitude if last_route_ping else None
+    if not user: return {"status": "error"}
     
     for loc in locations:
-        lat, lon, ts_str = loc.get("lat"), loc.get("lon"), loc.get("timestamp")
-        if not lat or not lon or not ts_str: continue
+        lat = float(loc.get("lat"))
+        lon = float(loc.get("lon"))
+        timestamp_str = loc.get("timestamp")
         
-        ping_time = parse_iso_timestamp(ts_str)
-        current_site = get_site_at_location(lat, lon, db)
+        # Crucial: Must extract exact moment the phone recorded the GPS ping
+        ping_time = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))[:19]
         
-        if r: r.set(f"loc:{email}", f"{lat},{lon}", ex=86400)
-
-        activity_status = "TRAVELING"
-        if last_lat is not None and last_lon is not None:
-            distance = get_distance(last_lat, last_lon, lat, lon)
-            if distance < 50:
-                activity_status = "AT_SITE"
-
-        new_route_ping = FieldOfficerRoute(
+        db.add(FieldOfficerRoute(
             user_id=user.id,
-            shift_id=shift_id,
             latitude=lat,
             longitude=lon,
-            activity_state=activity_status,
-            ping_timestamp=ping_time
-        )
-        db.add(new_route_ping)
-
-        last_lat = lat
-        last_lon = lon
-            
+            ping_timestamp=ping_time,
+            activity_state="SYNCED"
+        ))
+        
+        current_site = get_site_at_location(lat, lon, db)
+        
         if current_site:
-            if r:
-                r.set(f"last_inside_time:{email}", ping_time.isoformat(), ex=86400)
-                r.set(f"ping_time:{email}", ping_time.isoformat(), ex=86400)
-            
-            open_att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
-            
-            if open_att and open_att.location_id != current_site.id:
-                open_att.checkout_time = ping_time
-                open_att.duration_seconds = int((ping_time - open_att.checkin_time).total_seconds())
-                open_att = None
-            
-            if not open_att:
-                att = Attendance(user_id=user.id, checkin_time=ping_time, date=ping_time, location_id=current_site.id)
-                user.is_present = True
-                db.add(att)
-                
-                if user.user_type == 'field_officer':
-                    db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).update({"exit_time": ping_time})
+            if user.user_type == 'field_officer':
+                active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
+                if not active_stay:
                     db.add(SiteStay(officer_id=user.id, location_id=current_site.id, entry_time=ping_time))
             else:
-                if not user.is_present:
-                    user.is_present = True
-
-                if user.user_type == 'field_officer':
-                    open_stays = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).all()
-                    has_current = False
-                    for stay in open_stays:
-                        if stay.location_id == current_site.id:
-                            has_current = True
-                        else:
-                            stay.exit_time = ping_time
-                            
-                    if not has_current:
-                        db.add(SiteStay(officer_id=user.id, location_id=current_site.id, entry_time=ping_time))
-        else:
-            if r: r.set(f"ping_time:{email}", ping_time.isoformat(), ex=86400)
-            if user.is_present:
-                last_inside_str = r.get(f"last_inside_time:{email}")
-                last_inside_time = datetime.fromisoformat(last_inside_str) if last_inside_str else ping_time
-                
-                if (ping_time - last_inside_time).total_seconds() / 60.0 >= 15.0:
-                    open_att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
-                    if open_att:
-                        open_att.checkout_time = ping_time
-                        open_att.duration_seconds = int((ping_time - open_att.checkin_time).total_seconds())
-                    stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
-                    if stay: stay.exit_time = ping_time
-                    
-                    if user.user_type != 'field_officer':
-                        user.is_present = False
-                        
-                    if r: r.delete(f"last_inside_time:{email}")
-
-    db.commit()             
-    return {"status": "success", "synced": len(locations)}
+                open_att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
+                if not open_att:
+                    db.add(Attendance(user_id=user.id, checkin_time=ping_time, date=ping_time, location_id=current_site.id))
+    
+    db.commit()
+    return {"status": "success"}
 
 @app.post("/api/user/update-location")
 async def update_location(email: str, lat: float, lon: float, db: Session = Depends(get_db)):
@@ -930,76 +855,49 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
     return { "is_inside": current_site is not None, "status": "inside" if current_site is not None else "outside", "message": "Inside Geofence" if current_site is not None else "Outside Geofence", "site_name": current_site.name if current_site else None }
 
 @app.post("/api/user/checkin")
-def user_checkin(data: CheckAction, db: Session = Depends(get_db)):
-    site = get_site_at_location(data.lat, data.lon, db)
-    if not site: return {"status": "error", "message": "You are not inside any valid geofence area."}
-    user = db.query(User).filter(User.email == data.email.lower().strip()).first()
-    if not user: return {"status": "error", "message": "User not found"}
+def user_checkin(data: dict, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == data.get("email").lower().strip()).first()
+    if not user: return {"status": "error"}
     
-    from .database import Attendance
-    now_utc = parse_iso_timestamp(data.timestamp)
-
-    open_attendance = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
+    action_time_str = data.get("timestamp")
+    action_time = datetime.fromisoformat(action_time_str.replace("Z", "+00:00"))[:19] if action_time_str else datetime.utcnow()
     
-    if open_attendance: 
-        if open_attendance.location_id == site.id:
-            return {
-                "status": "success", 
-                "message": "Already checked in.", 
-                "checked_in": True,
-                "checkin_time": open_attendance.checkin_time.isoformat() + "Z"
-            }
-        else:
-            open_attendance.checkout_time = now_utc
-            open_attendance.duration_seconds = int((now_utc - open_attendance.checkin_time).total_seconds())
-            
-            old_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
-            if old_stay: old_stay.exit_time = now_utc
-            
+    site = get_site_at_location(data.get("lat"), data.get("lon"), db)
+    if not site: return {"status": "error", "message": "Not within geofence"}
 
-    attendance = Attendance(user_id=user.id, checkin_time=now_utc, date=now_utc, location_id=site.id)
     user.is_present = True
-    db.add(attendance)
-    if user.user_type == 'field_officer': db.add(SiteStay(officer_id=user.id, location_id=site.id, entry_time=now_utc))
-    db.commit()
+    user.location_id = site.id
     
-    if r:
-        r.set(f"ping_time:{user.email}", now_utc.isoformat(), ex=86400)
-        r.delete(f"warning_sent:{user.email}")
+    if user.user_type == 'field_officer':
+        db.add(SiteStay(officer_id=user.id, location_id=site.id, entry_time=action_time))
+    else:
+        db.add(Attendance(user_id=user.id, checkin_time=action_time, date=action_time, location_id=site.id))
         
-    return {
-        "status": "success", 
-        "message": f"Checked In at {site.name}", 
-        "site_name": site.name,
-        "checkin_time": now_utc.isoformat() + "Z"
-    }
+    db.commit()
+    return {"status": "success"}
 
 @app.post("/api/user/checkout")
-def user_checkout(data: CheckAction, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == data.email.lower().strip()).first()
-    if not user: return {"status": "error", "message": "User not found"}
-        
-    from .database import Attendance
-    now_utc = parse_iso_timestamp(data.timestamp)
+def user_checkout(data: dict, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == data.get("email").lower().strip()).first()
+    if not user: return {"status": "error"}
     
-    open_attendance = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
-    if open_attendance:
-        open_attendance.checkout_time = now_utc
-        open_attendance.duration_seconds = int((now_utc - open_attendance.checkin_time).total_seconds())
-        
-    active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
-    if active_stay: active_stay.exit_time = now_utc
-        
+    action_time_str = data.get("timestamp")
+    action_time = datetime.fromisoformat(action_time_str.replace("Z", "+00:00"))[:19] if action_time_str else datetime.utcnow()
+    
     user.is_present = False
-    db.commit()
     
-    if r:
-        r.delete(f"ping_time:{user.email}")
-        r.delete(f"warning_sent:{user.email}")
-        r.delete(f"loc:{user.email}")
-        r.delete(f"last_inside_time:{user.email}")
-        
-    return {"status": "success", "message": "Successfully checked out."}
+    if user.user_type == 'field_officer':
+        active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
+        if active_stay:
+            active_stay.exit_time = action_time
+    else:
+        open_att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
+        if open_att:
+            open_att.checkout_time = action_time
+            open_att.duration_seconds = int((action_time - open_att.checkin_time).total_seconds())
+            
+    db.commit()
+    return {"status": "success"}
 
 @app.get("/api/cron/auto-checkout")
 def cron_auto_checkout(db: Session = Depends(get_db)):
