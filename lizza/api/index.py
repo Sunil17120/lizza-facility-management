@@ -607,28 +607,43 @@ def update_location_endpoint(loc_id: int, data: LocationCreate, db: Session = De
     return {"status": "updated"}
 
 @app.get("/api/admin/live-tracking")
-def get_live_tracking(admin_email: str, db: Session = Depends(get_db)):
-    users = db.query(User).filter(User.is_verified == True).all()
-    results = []
-    for u in users:
-        coords = r.get(f"loc:{u.email}") if r else None
-        lat, lon = (None, None)
-        if coords:
-            parts = coords.split(',')
-            lat, lon = float(parts[0]), float(parts[1])
-        
-        site_name = None
-        if lat and lon:
-            site = get_site_at_location(lat, lon, db)
-            site_name = site.name if site else None
-        
-        results.append({
-            "user_id": u.id, "email": u.email, "name": u.full_name, "user_type": u.user_type,
-            "lat": lat, "lon": lon, "present": u.is_present, "site_name": site_name,
-            "manager_id": u.manager_id, "last_ping": r.get(f"ping_time:{u.email}") if r else None
-        })
-    return results
+async def get_live_tracking(admin_email: str = None, db: Session = Depends(get_db)):
+    # 1. Get all employees
+    employees = db.query(User).filter(User.user_type.in_(['field_officer', 'employee'])).all()
+    
+    live_data = []
+    for emp in employees:
+        # 2. Check if they have an active shift right now
+        active_shift = db.query(ShiftLog).filter(
+            ShiftLog.user_id == emp.id,
+            ShiftLog.logout_time == None
+        ).first()
 
+        # Default state
+        emp_data = {
+            "user_id": emp.id,  # CRITICAL: This is needed for the "View Day Path" button
+            "email": emp.email,
+            "name": emp.full_name,
+            "user_type": emp.user_type,
+            "present": False,
+            "lat": None,
+            "lon": None
+        }
+
+        if active_shift:
+            emp_data["present"] = True
+            # 3. Get their MOST RECENT ping from the routes table
+            latest_ping = db.query(FieldOfficerRoute).filter(
+                FieldOfficerRoute.shift_id == active_shift.shift_id
+            ).order_by(desc(FieldOfficerRoute.ping_timestamp)).first()
+            
+            if latest_ping:
+                emp_data["lat"] = latest_ping.latitude
+                emp_data["lon"] = latest_ping.longitude
+
+        live_data.append(emp_data)
+        
+    return live_data
 @app.post("/api/admin/update-employee-inline")
 def update_employee_inline(data: dict, db: Session = Depends(get_db)):
     user_id = data.get("id")
