@@ -87,6 +87,14 @@ const FieldOfficerDashboard = () => {
   const [isSyncing, setIsSyncing] = useState(false);
 
   const isFetchingRef = useRef(false);
+  
+  const activeSiteRef = useRef(null);
+  const checkedInRef = useRef(false);
+  const dutyStatusRef = useRef('OFF_DUTY');
+
+  useEffect(() => { activeSiteRef.current = activeSite; }, [activeSite]);
+  useEffect(() => { checkedInRef.current = checkedIn; }, [checkedIn]);
+  useEffect(() => { dutyStatusRef.current = dutyStatus; }, [dutyStatus]);
 
   useEffect(() => {
       localStorage.setItem('lastStatus', dutyStatus);
@@ -102,7 +110,7 @@ const FieldOfficerDashboard = () => {
       setPendingOfflineActions(queuedReports.length + queuedAttendance.length + queuedShifts.length);
   }, []);
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (isSilentRefresh = false) => {
     if (isFetchingRef.current || !navigator.onLine) return;
     isFetchingRef.current = true;
     
@@ -225,7 +233,7 @@ const FieldOfficerDashboard = () => {
 
     updateQueueCounts();
     setIsSyncing(false);
-    fetchData();
+    fetchData(true);
   }, [isSyncing, userEmail, fetchData, updateQueueCounts]);
 
   useEffect(() => {
@@ -242,8 +250,37 @@ const FieldOfficerDashboard = () => {
     return () => { window.removeEventListener('online', handleOnline); window.removeEventListener('offline', handleOffline); };
   }, [fetchData, syncOfflineData, updateQueueCounts]);
 
-  const processNewLocation = useCallback(async (lat, lon) => { // 1. Make this async
+  const handleAttendance = async (type, overrideSite = activeSiteRef.current, overrideLoc = myLoc) => {
+    if (type === 'CHECK_IN' && (!overrideSite || !overrideLoc)) return alert("You must be inside the site boundary.");
+    if (!overrideLoc) return alert("Current location unavailable.");
+    if (dutyStatusRef.current !== 'ON_DUTY') return alert("You must Start Day Duty first and not be on a break.");
+    
+    setIsSubmitting(true);
+    const payload = { email: userEmail, lat: overrideLoc.lat, lon: overrideLoc.lon, timestamp: new Date().toISOString(), actionType: type };
+
+    if (!isOnline && isApp) {
+        const q = JSON.parse(localStorage.getItem('offlineAttendanceQueue') || '[]');
+        q.push(payload);
+        localStorage.setItem('offlineAttendanceQueue', JSON.stringify(q));
+        setCheckedIn(type === 'CHECK_IN');
+        setAlertMsg({ type: 'warning', text: `Offline ${type === 'CHECK_IN' ? 'Check-In' : 'Check-Out'} queued.` });
+        updateQueueCounts();
+    } else {
+        const ep = type === 'CHECK_IN' ? '/api/user/checkin' : '/api/user/checkout';
+        const res = await fetch(`${API_BASE_URL}${ep}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        if (res.ok) {
+            setCheckedIn(type === 'CHECK_IN');
+            setAlertMsg({ type: 'success', text: `Successfully ${type === 'CHECK_IN' ? 'Checked In' : 'Checked Out'}` });
+            fetchData(true);
+        }
+    }
+    setIsSubmitting(false);
+  };
+
+  const processNewLocation = useCallback(async (lat, lon, accuracy, timestamp) => {
     setMyLoc({ lat, lon });
+    if (accuracy > 100) return;
+
     const sitesToEval = locations;
     let insideSite = null;
     
@@ -256,62 +293,76 @@ const FieldOfficerDashboard = () => {
     sitesWithDistance.sort((a, b) => a.distance - b.distance);
     setNearbySites(sitesWithDistance);
     
-    // Automatic Check-in Logic
-    if (insideSite && !activeSite && dutyStatus === 'ON_DUTY') {
+    const currentActiveSite = activeSiteRef.current;
+    const isCheckedIn = checkedInRef.current;
+    const currentDuty = dutyStatusRef.current;
+
+    if (insideSite && !currentActiveSite && currentDuty === 'ON_DUTY' && !isCheckedIn) {
         handleAttendance('CHECK_IN', insideSite, { lat, lon });
-    } else if (!insideSite && activeSite && checkedIn) {
-        handleAttendance('CHECK_OUT', activeSite, { lat, lon });
+        setActiveSite(insideSite);
+    } else if (currentActiveSite && isCheckedIn) {
+        const distToActive = getDistance(lat, lon, currentActiveSite.lat, currentActiveSite.lon);
+        if (distToActive > 500) {
+            handleAttendance('CHECK_OUT', currentActiveSite, { lat, lon });
+            setActiveSite(null);
+        } else {
+            setActiveSite(currentActiveSite); 
+        }
+    } else if (!isCheckedIn) {
+        setActiveSite(insideSite);
     }
-    setActiveSite(insideSite);
-    
-    // 2. SEND TO DATABASE HERE
-    if (userEmail && dutyStatus === 'ON_DUTY') {
+
+    if (userEmail && currentDuty === 'ON_DUTY') {
         if (!navigator.onLine && isApp) {
             const q = JSON.parse(localStorage.getItem('offlineLocations') || '[]');
-            q.push({ lat, lon, timestamp: new Date().toISOString() });
+            q.push({ lat, lon, accuracy, timestamp });
             localStorage.setItem('offlineLocations', JSON.stringify(q));
         } else if (navigator.onLine) {
-            try {
-                // Use fetch directly or call your async function
-                await fetch(`${API_BASE_URL}/api/location/ping`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        email: userEmail, // Update this to dynamic ID once profile is fetched
-                        lat: lat,
-                        lon: lon,
-                        activity_state: 'TRAVELING'
-                    }),
-                });
-            } catch (err) {
-                console.error("Failed to send location ping:", err);
-            }
+            await fetch(`${API_BASE_URL}/api/location/ping`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    email: userEmail,
+                    lat: lat,
+                    lon: lon,
+                    accuracy: accuracy,
+                    timestamp: timestamp,
+                    activity_state: 'TRAVELING'
+                }),
+            });
         }
     }
-}, [locations, userEmail, isApp, dutyStatus, activeSite, checkedIn]);
+  }, [locations, userEmail, isApp]);
 
-useEffect(() => {
-  if (!userEmail || !navigator.geolocation) return;
-  
-  const handlePosition = (position) => { 
-      processNewLocation(position.coords.latitude, position.coords.longitude); 
-  };
-  
-  // Force the device to skip the cache and use the actual GPS hardware
-  const geoOptions = { 
-      enableHighAccuracy: true, 
-      timeout: 10000, 
-      maximumAge: 0 
-  };
+  useEffect(() => {
+    if (!userEmail || !navigator.geolocation) return;
+    
+    const geoOptions = { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 };
+    let watchId;
+    
+    const handlePosition = (position) => {
+        const lat = position.coords.latitude;
+        const lon = position.coords.longitude;
+        const accuracy = position.coords.accuracy;
+        const timestamp = new Date(position.timestamp).toISOString();
+        processNewLocation(lat, lon, accuracy, timestamp); 
+    };
 
-  navigator.geolocation.getCurrentPosition(handlePosition, (err) => console.error("GPS Error:", err), geoOptions);
-  
-  const intervalId = setInterval(() => {
-    navigator.geolocation.getCurrentPosition(handlePosition, (err) => console.error("GPS Error:", err), geoOptions);
-  }, 60000); 
-  
-  return () => clearInterval(intervalId);
-}, [userEmail, processNewLocation]);
+    watchId = navigator.geolocation.watchPosition(
+        handlePosition, 
+        () => {}, 
+        geoOptions
+    );
+    
+    const intervalId = setInterval(() => {
+      navigator.geolocation.getCurrentPosition(handlePosition, () => {}, geoOptions);
+    }, 60000); 
+    
+    return () => {
+        navigator.geolocation.clearWatch(watchId);
+        clearInterval(intervalId);
+    };
+  }, [userEmail, processNewLocation]);
 
   const handleDayShiftAction = async (action) => {
     setIsSubmitting(true);
@@ -341,7 +392,7 @@ useEffect(() => {
             body: JSON.stringify(payload)
         });
         if (res.ok) {
-            await fetchData(); 
+            await fetchData(true); 
             if (action === 'START' || action === 'RESUME') {
                 setDutyStatus('ON_DUTY');
                 if (isApp) LizzaTracker.startTracking({ email: userEmail });
@@ -352,33 +403,6 @@ useEffect(() => {
                 setDutyStatus('OFF_DUTY');
                 if (isApp) LizzaTracker.stopTracking();
             }
-        }
-    }
-    setIsSubmitting(false);
-  };
-
-  const handleAttendance = async (type, overrideSite = activeSite, overrideLoc = myLoc) => {
-    if (type === 'CHECK_IN' && (!overrideSite || !overrideLoc)) return alert("You must be inside the site boundary.");
-    if (!overrideLoc) return alert("Current location unavailable.");
-    if (dutyStatus !== 'ON_DUTY') return alert("You must Start Day Duty first and not be on a break.");
-    
-    setIsSubmitting(true);
-    const payload = { email: userEmail, lat: overrideLoc.lat, lon: overrideLoc.lon, timestamp: new Date().toISOString(), actionType: type };
-
-    if (!isOnline && isApp) {
-        const q = JSON.parse(localStorage.getItem('offlineAttendanceQueue') || '[]');
-        q.push(payload);
-        localStorage.setItem('offlineAttendanceQueue', JSON.stringify(q));
-        setCheckedIn(type === 'CHECK_IN');
-        setAlertMsg({ type: 'warning', text: `Offline ${type === 'CHECK_IN' ? 'Check-In' : 'Check-Out'} queued.` });
-        updateQueueCounts();
-    } else {
-        const ep = type === 'CHECK_IN' ? '/api/user/checkin' : '/api/user/checkout';
-        const res = await fetch(`${API_BASE_URL}${ep}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-        if (res.ok) {
-            setCheckedIn(type === 'CHECK_IN');
-            setAlertMsg({ type: 'success', text: `Successfully ${type === 'CHECK_IN' ? 'Checked In' : 'Checked Out'}` });
-            fetchData();
         }
     }
     setIsSubmitting(false);
@@ -448,7 +472,7 @@ useEffect(() => {
         if (res.ok) {
             setAlertMsg({ type: 'success', text: 'Visit logged successfully!' });
             setPurpose(''); setVisitEntries([{ photo: null, details: '' }]);
-            fetchData(); 
+            fetchData(true); 
         }
     }
     setIsSubmitting(false);
@@ -626,7 +650,7 @@ useEffect(() => {
           <Card className="border-0 shadow-sm">
             <Card.Header className="bg-white py-3 border-bottom-0 d-flex justify-content-between align-items-center">
               <h6 className="fw-bold m-0"><FileText className="me-2 text-primary" size={18} /> My Recent Site Visit Reports</h6>
-              <Button variant="outline-primary" size="sm" onClick={() => fetchData()} disabled={isFetchingRef.current}><RefreshCw size={14} className="me-1"/> Refresh Logs</Button>
+              <Button variant="outline-primary" size="sm" onClick={() => fetchData(true)} disabled={isFetchingRef.current}><RefreshCw size={14} className="me-1"/> Refresh Logs</Button>
             </Card.Header>
             <Card.Body className="p-0 overflow-auto" style={{ maxHeight: '400px' }}>
                <Table hover responsive className="mb-0 align-middle small">
