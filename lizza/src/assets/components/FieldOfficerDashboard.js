@@ -270,7 +270,17 @@ const FieldOfficerDashboard = () => {
         q.push({ lat, lon, timestamp: new Date().toISOString() });
         localStorage.setItem('offlineLocations', JSON.stringify(q));
       } else if (navigator.onLine) {
-        fetch(`${API_BASE_URL}/api/user/update-location?email=${encodeURIComponent(userEmail)}&lat=${lat}&lon=${lon}`);
+        await fetch(`${API_URL}/api/user/update-location`, {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({
+    email,
+    lat,
+    lon,
+  }),
+});
       }
     }
   }, [locations, userEmail, isApp, dutyStatus, activeSite, checkedIn]);
