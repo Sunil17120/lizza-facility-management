@@ -345,35 +345,32 @@ def day_shift_action(payload: dict, db: Session = Depends(get_db)):
 @app.post("/api/location/ping")
 async def record_location_ping(payload: dict, db: Session = Depends(get_db)):
     email = payload.get("email")
-    shift_cache_key = f"active_shift:{email}"
-    cached_shift = r.get(shift_cache_key)
-    
-    user_id = None
-    shift_id = None
-    
-    if cached_shift and isinstance(cached_shift, str) and "|" in cached_shift:
-        parts = cached_shift.split("|")
-        if len(parts) == 2 and parts[1].isdigit():
-            shift_id = parts[0]
-            user_id = int(parts[1])
-            
-    if not user_id:
-        user = db.query(User).filter(User.email == email).first()
-        if not user: return {"status": "error"}
-        active_shift = db.query(ShiftLog).filter(ShiftLog.user_id == user.id, ShiftLog.logout_time == None).order_by(desc(ShiftLog.login_time)).first()
-        if not active_shift: return {"status": "ignored"}
-        shift_id = active_shift.shift_id
-        user_id = user.id
-        r.set(shift_cache_key, f"{shift_id}|{user_id}", ex=21600)
+    user = db.query(User).filter(User.email == email).first()
+    if not user: return {"status": "error", "message": "User not found"}
 
-    ping_time = parse_iso_timestamp(payload.get("timestamp"))
+    # STRICT PRIVACY LOCK: Instantly reject background pings from normal employees
+    if user.user_type != 'field_officer':
+        return {"status": "ignored", "reason": "Normal employees are not background tracked."}
 
-    db.add(FieldOfficerRoute(
-        user_id=user_id, shift_id=shift_id,
-        latitude=payload.get("lat"), longitude=payload.get("lon"),
+    active_shift = db.query(ShiftLog).filter(
+        ShiftLog.user_id == user.id, 
+        ShiftLog.logout_time == None
+    ).order_by(desc(ShiftLog.login_time)).first()
+    
+    if not active_shift: return {"status": "ignored", "reason": "No active shift"}
+
+    ts_str = payload.get("timestamp")
+    ping_time = parse_iso_timestamp(ts_str) if ts_str else datetime.utcnow()
+
+    new_route = FieldOfficerRoute(
+        user_id=user.id,
+        shift_id=active_shift.shift_id,
+        latitude=payload.get("lat"),
+        longitude=payload.get("lon"),
         activity_state=payload.get("activity_state", "TRAVELING"),
         ping_timestamp=ping_time
-    ))
+    )
+    db.add(new_route)
     db.commit()
     return {"status": "success"}
 
@@ -685,17 +682,46 @@ async def get_live_tracking(admin_email: str = None, db: Session = Depends(get_d
     live_data = []
     
     for emp in employees:
-        active_shift = db.query(ShiftLog).filter(ShiftLog.user_id == emp.id, ShiftLog.logout_time == None).first()
-        emp_data = { "user_id": emp.id, "email": emp.email, "name": emp.full_name, "user_type": emp.user_type, "present": False, "lat": None, "lon": None }
+        emp_data = {
+            "user_id": emp.id,
+            "email": emp.email,
+            "name": emp.full_name,
+            "user_type": emp.user_type,
+            "present": emp.is_present,
+            "lat": None,
+            "lon": None
+        }
 
-        if active_shift:
-            emp_data["present"] = True
-            latest_ping = db.query(FieldOfficerRoute).filter(FieldOfficerRoute.shift_id == active_shift.shift_id).order_by(desc(FieldOfficerRoute.ping_timestamp)).first()
-            if latest_ping:
-                emp_data["lat"] = latest_ping.latitude
-                emp_data["lon"] = latest_ping.longitude
+        if emp.user_type == 'field_officer':
+            # Field Officers use the active shift route
+            active_shift = db.query(ShiftLog).filter(
+                ShiftLog.user_id == emp.id,
+                ShiftLog.logout_time == None
+            ).first()
+
+            if active_shift:
+                emp_data["present"] = True
+                latest_ping = db.query(FieldOfficerRoute).filter(
+                    FieldOfficerRoute.shift_id == active_shift.shift_id
+                ).order_by(desc(FieldOfficerRoute.ping_timestamp)).first()
+                
+                if latest_ping:
+                    emp_data["lat"] = latest_ping.latitude
+                    emp_data["lon"] = latest_ping.longitude
+        else:
+            # STRICT PRIVACY LOCK: Normal employees only appear if physically present
+            if emp.is_present and r:
+                coords = r.get(f"loc:{emp.email}")
+                if coords:
+                    try:
+                        lat, lon = coords.split(',')
+                        emp_data["lat"] = float(lat)
+                        emp_data["lon"] = float(lon)
+                    except:
+                        pass
 
         live_data.append(emp_data)
+        
     return live_data
 
 @app.post("/api/manager/add-employee")
