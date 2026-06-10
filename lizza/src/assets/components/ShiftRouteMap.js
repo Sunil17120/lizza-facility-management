@@ -10,14 +10,26 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
 });
 
-const ChangeMapBounds = ({ path }) => {
+const ChangeMapBounds = ({ path, stays }) => {
   const map = useMap();
   useEffect(() => {
+    const bounds = L.latLngBounds([]);
+    let hasBounds = false;
+
     if (path && path.length > 0) {
-      const bounds = L.latLngBounds(path.map(p => [p.lat, p.lng]));
-      map.fitBounds(bounds, { padding: [50, 50] });
+      path.forEach(p => bounds.extend([p.lat, p.lng]));
+      hasBounds = true;
     }
-  }, [path, map]);
+    
+    if (stays && stays.length > 0) {
+      stays.forEach(s => bounds.extend([parseFloat(s.lat), parseFloat(s.lng)]));
+      hasBounds = true;
+    }
+
+    if (hasBounds) {
+      map.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 });
+    }
+  }, [path, stays, map]);
   return null;
 };
 
@@ -29,16 +41,15 @@ const ShiftRouteMap = ({ userId }) => {
   useEffect(() => {
     fetch(`${API_BASE_URL}/api/admin/employee-route/${userId}`)
       .then(res => {
-          if (!res.ok) throw new Error("No route data found");
-          return res.json();
-      })
-      .then(data => {
-        setRouteData(data);
-        setLoading(false);
-      })
-      .catch(err => {
-        setRouteData({ error: true });
-        setLoading(false);
+          if (!res.ok) {
+              setRouteData({ error: true });
+              setLoading(false);
+              return;
+          }
+          res.json().then(data => {
+              setRouteData(data);
+              setLoading(false);
+          });
       });
   }, [userId]);
 
@@ -50,57 +61,79 @@ const ShiftRouteMap = ({ userId }) => {
     return <div className="p-5 text-center text-danger fw-bold">No active tracking route data available for this user today.</div>;
   }
 
-  const polylinePositions = routeData.snapped_route_path.map(point => [point.lat, point.lng]);
+  const polylinePositions = (routeData.snapped_route_path || []).map(point => [parseFloat(point.lat), parseFloat(point.lng)]);
+  const stays = routeData.site_stays || [];
+
+  let defaultCenter = [12.9716, 77.5946];
+  if (polylinePositions.length > 0) defaultCenter = polylinePositions[0];
+  else if (stays.length > 0) defaultCenter = [parseFloat(stays[0].lat), parseFloat(stays[0].lng)];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '600px' }}>
-      <div style={{ display: 'flex', gap: '20px', padding: '15px', background: '#f4f6f9', borderBottom: '1px solid #ddd' }}>
-        <div><strong>Total Duty Time:</strong> {routeData.metrics.total_duty_hours} Hrs</div>
-        <div><strong>Travel Time:</strong> {routeData.metrics.total_travel_hours} Hrs</div>
-        <div><strong>Site Stay Time:</strong> {routeData.metrics.total_stay_hours} Hrs</div>
-        <div><strong>Breaks:</strong> {routeData.metrics.total_break_hours} Hrs</div>
-        <div><strong>Sites Visited:</strong> {routeData.site_stays.length}</div>
+      <div style={{ display: 'flex', gap: '20px', padding: '15px', background: '#f4f6f9', borderBottom: '1px solid #ddd', flexWrap: 'wrap' }}>
+        <div><strong>Total Duty Time:</strong> {routeData.metrics?.total_duty_hours || 0} Hrs</div>
+        <div><strong>Travel Time:</strong> {routeData.metrics?.total_travel_hours || 0} Hrs</div>
+        <div><strong>Site Stay Time:</strong> {routeData.metrics?.total_stay_hours || 0} Hrs</div>
+        <div><strong>Breaks:</strong> {routeData.metrics?.total_break_hours || 0} Hrs</div>
+        <div><strong>Sites Visited:</strong> {stays.length}</div>
       </div>
 
-      <div style={{ flex: 1, width: '100%' }}>
-        <MapContainer center={[12.9716, 77.5946]} zoom={13} style={{ width: '100%', height: '100%' }}>
+      <div style={{ flex: 1, width: '100%', position: 'relative' }}>
+        <MapContainer center={defaultCenter} zoom={13} style={{ width: '100%', height: '100%' }}>
           <TileLayer
             attribution='&copy; OpenStreetMap contributors'
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           />
           
           {polylinePositions.length > 0 && (
-            <>
-              <Polyline positions={polylinePositions} color="#1a73e8" weight={4} opacity={0.8} />
-              <ChangeMapBounds path={routeData.snapped_route_path} />
-            </>
+            <Polyline positions={polylinePositions} color="#1a73e8" weight={4} opacity={0.8} />
           )}
+          
+          <ChangeMapBounds path={routeData.snapped_route_path} stays={stays} />
 
-          {routeData.site_stays.map((stay, idx) => (
-            <React.Fragment key={idx}>
-              <Circle 
-                  center={[stay.lat, stay.lng]} 
-                  radius={stay.radius || 200} 
-                  pathOptions={{ color: stay.has_log ? 'green' : 'red', fillColor: stay.has_log ? 'green' : 'red', fillOpacity: 0.15 }} 
-              />
-              <Marker position={[stay.lat, stay.lng]}>
-                <Popup>
-                  <div style={{ fontSize: '14px', maxWidth: '250px' }}>
-                    <h5 style={{ margin: '0 0 5px 0', color: '#1a73e8' }}>{stay.name}</h5>
-                    <strong>Arrival:</strong> {stay.arrival}<br />
-                    <strong>Departure:</strong> {stay.departure}<br />
-                    <strong>Stay Duration:</strong> {stay.duration_mins} Minutes<br />
-                    <hr style={{margin: '8px 0'}}/>
-                    {stay.has_log ? (
-                        <span style={{color: 'green', fontWeight: 'bold'}}>✅ Visit Log Recorded</span>
-                    ) : (
-                        <span style={{color: 'red', fontWeight: 'bold'}}>❌ No Evidence Uploaded</span>
-                    )}
-                  </div>
-                </Popup>
-              </Marker>
-            </React.Fragment>
-          ))}
+          {stays.map((stay, idx) => {
+            const sLat = parseFloat(stay.lat);
+            const sLng = parseFloat(stay.lng);
+            if (isNaN(sLat) || isNaN(sLng)) return null;
+
+            return (
+              <React.Fragment key={`stay-${idx}`}>
+                <Circle 
+                    center={[sLat, sLng]} 
+                    radius={stay.radius || 200} 
+                    pathOptions={{ 
+                      color: stay.has_log ? '#28a745' : '#dc3545', 
+                      fillColor: stay.has_log ? '#28a745' : '#dc3545', 
+                      fillOpacity: 0.25,
+                      weight: 2
+                    }} 
+                />
+                <Marker position={[sLat, sLng]}>
+                  <Popup>
+                    <div style={{ fontSize: '14px', minWidth: '200px' }}>
+                      <h5 style={{ margin: '0 0 8px 0', color: '#1a73e8', borderBottom: '1px solid #eee', paddingBottom: '4px' }}>
+                        {stay.name}
+                      </h5>
+                      <div style={{ marginBottom: '4px' }}><strong>Arrival:</strong> {stay.arrival}</div>
+                      <div style={{ marginBottom: '4px' }}><strong>Departure:</strong> {stay.departure}</div>
+                      <div style={{ marginBottom: '8px' }}><strong>Stay Duration:</strong> {stay.duration_mins} Minutes</div>
+                      
+                      <div style={{ 
+                        padding: '6px', 
+                        borderRadius: '4px', 
+                        backgroundColor: stay.has_log ? '#d4edda' : '#f8d7da',
+                        color: stay.has_log ? '#155724' : '#721c24',
+                        fontWeight: 'bold',
+                        textAlign: 'center'
+                      }}>
+                        {stay.has_log ? '✅ Visit Log Recorded' : '❌ No Evidence Uploaded'}
+                      </div>
+                    </div>
+                  </Popup>
+                </Marker>
+              </React.Fragment>
+            );
+          })}
         </MapContainer>
       </div>
     </div>

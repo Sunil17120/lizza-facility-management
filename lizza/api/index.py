@@ -376,7 +376,6 @@ async def record_location_ping(payload: dict, db: Session = Depends(get_db)):
 
 @app.get("/api/admin/employee-route/{user_id}")
 async def get_employee_today_route(user_id: int, db: Session = Depends(get_db)):
-    # 1. Find the active or most recent shift
     active_shift = db.query(ShiftLog).filter(ShiftLog.user_id == user_id, ShiftLog.logout_time == None).order_by(desc(ShiftLog.login_time)).first()
     if not active_shift:
         active_shift = db.query(ShiftLog).filter(ShiftLog.user_id == user_id).order_by(desc(ShiftLog.login_time)).first()
@@ -385,26 +384,38 @@ async def get_employee_today_route(user_id: int, db: Session = Depends(get_db)):
         
     points = db.query(FieldOfficerRoute).filter(FieldOfficerRoute.shift_id == active_shift.shift_id).order_by(FieldOfficerRoute.ping_timestamp.asc()).all()
     
-    # 2. Extract Site Stays joined with Location Table to get Geofence Radius
+    # 1. Expand the Time Window (Look 4 hours into the past to catch early check-ins)
+    window_start = active_shift.login_time - timedelta(hours=4)
+    
     stays = db.query(SiteStay, OfficeLocation).join(OfficeLocation, SiteStay.location_id == OfficeLocation.id).filter(
-        SiteStay.officer_id == user_id, SiteStay.entry_time >= active_shift.login_time
+        SiteStay.officer_id == user_id, 
+        SiteStay.entry_time >= window_start
     ).all()
     
-    # 3. Extract Visit Logs to verify evidence
-    visits = db.query(SiteVisit).filter(SiteVisit.officer_id == user_id, SiteVisit.visit_time >= active_shift.login_time).all()
+    visits = db.query(SiteVisit).filter(
+        SiteVisit.officer_id == user_id, 
+        SiteVisit.visit_time >= window_start
+    ).all()
     
     formatted_stays = []
     total_stay_seconds = 0
     
     for stay, loc in stays:
-        if active_shift.logout_time and stay.entry_time > active_shift.logout_time: continue
+        # Skip if the stay happened after the shift entirely ended
+        if active_shift.logout_time and stay.entry_time > active_shift.logout_time:
+            continue
             
         exit_t = stay.exit_time or (active_shift.logout_time if active_shift.logout_time else datetime.utcnow())
-        dur_sec = max(0, (exit_t - stay.entry_time).total_seconds())
+        
+        # Calculate perfectly avoiding timezone negatives
+        dur_sec = (exit_t - stay.entry_time).total_seconds()
+        if dur_sec < 0:
+            dur_sec = 0
+            
         total_stay_seconds += dur_sec
         
-        # Verify if a visit log was submitted during this specific stay
-        matching_visits = [v for v in visits if v.location_id == loc.id and stay.entry_time <= v.visit_time <= exit_t + timedelta(minutes=5)]
+        # Search for evidence logged within 15 mins of this specific geofence stay
+        matching_visits = [v for v in visits if v.location_id == loc.id and (stay.entry_time - timedelta(minutes=15)) <= v.visit_time <= (exit_t + timedelta(minutes=15))]
         
         formatted_stays.append({
             "lat": loc.lat, 
@@ -417,12 +428,16 @@ async def get_employee_today_route(user_id: int, db: Session = Depends(get_db)):
             "has_log": len(matching_visits) > 0
         })
         
-    # 4. Calculate Perfect Metrics
+    # 2. Perfect Metric Subtractions
     now_t = active_shift.logout_time or datetime.utcnow()
-    duty_sec = max(0, (now_t - active_shift.login_time).total_seconds() - active_shift.total_break_seconds)
+    duty_sec = (now_t - active_shift.login_time).total_seconds() - active_shift.total_break_seconds
+    if duty_sec < 0: 
+        duty_sec = 0
     
     if active_shift.is_on_break and active_shift.break_start_time:
-        duty_sec = max(0, duty_sec - (datetime.utcnow() - active_shift.break_start_time).total_seconds())
+        break_dur = (datetime.utcnow() - active_shift.break_start_time).total_seconds()
+        if break_dur > 0:
+            duty_sec = max(0, duty_sec - break_dur)
         
     travel_sec = max(0, duty_sec - total_stay_seconds)
     
