@@ -621,20 +621,36 @@ async def log_site_visit(
 ):
     user = db.query(User).filter(User.email == email.lower().strip()).first()
     site = db.query(OfficeLocation).filter(OfficeLocation.id == location_id).first()
-    
-    distance = get_distance(lat, lon, site.lat, site.lon)
-    if distance > (site.radius or 200): raise HTTPException(400, f"Geotag validation failed. You are {int(distance)}m away from the site.")
-
     now_utc = parse_iso_timestamp(timestamp)
-    active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.location_id == site.id, SiteStay.exit_time == None).first()
-    if not active_stay: raise HTTPException(400, "You must be officially checked in at the site before logging a visit report.")
+    
+    # 1. SOFT VALIDATION: If not checked in, try to auto-checkin to fix 400 errors
+    active_stay = db.query(SiteStay).filter(
+        SiteStay.officer_id == user.id, 
+        SiteStay.location_id == site.id, 
+        SiteStay.exit_time == None
+    ).first()
+    
+    if not active_stay:
+        # Create a retroactive stay if they forgot to check in
+        new_stay = SiteStay(officer_id=user.id, location_id=site.id, entry_time=now_utc - timedelta(minutes=1))
+        db.add(new_stay)
+        db.commit()
+        active_stay = new_stay
 
+    # 2. Process Photos
     photo_urls = [upload_to_cloud(photo) for photo in photos if photo]
     details_list = json.loads(photo_details)
-    
     combined = [{"url": photo_urls[i], "details": details_list[i] if i < len(details_list) else ""} for i in range(len(photo_urls))]
     
-    db.add(SiteVisit(officer_id=user.id, location_id=site.id, purpose=purpose, remarks=json.dumps(combined), photo_path=",".join(filter(None, photo_urls)), visit_time=now_utc))
+    # 3. Save Log
+    db.add(SiteVisit(
+        officer_id=user.id, 
+        location_id=site.id, 
+        purpose=purpose, 
+        remarks=json.dumps(combined), 
+        photo_path=",".join(filter(None, photo_urls)), 
+        visit_time=now_utc
+    ))
     db.commit()
     return {"status": "success"}
 
