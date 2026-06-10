@@ -296,6 +296,25 @@ const FieldOfficerDashboard = () => {
     }
   }, [locations, userEmail]);
 
+  // ---> NEW ADDITION: Smart Sync Hook for Race Conditions <---
+  useEffect(() => {
+    if (locations.length > 0 && myLoc) {
+      // Recalculate distances automatically when data finishes loading from the server
+      const sitesWithDistance = locations.map(site => ({ 
+        ...site, 
+        distance: calculateDistance(myLoc.lat, myLoc.lon, site.lat, site.lon) 
+      }));
+      
+      sitesWithDistance.sort((a, b) => a.distance - b.distance);
+      setNearbySites(sitesWithDistance);
+
+      const insideSite = sitesWithDistance[0] && sitesWithDistance[0].distance <= (sitesWithDistance[0].radius || 200) ? sitesWithDistance[0] : null;
+      
+      // Update the state so the banner instantly shifts from "Verifying Site..." to the real name
+      setProximateSite(insideSite);
+    }
+  }, [locations, myLoc]); 
+
   useEffect(() => {
     if (!userEmail || !navigator.geolocation) return;
     const watchId = navigator.geolocation.watchPosition(
