@@ -991,7 +991,10 @@ def cron_auto_checkout(db: Session = Depends(get_db)):
         last_ping_str = r.get(f"ping_time:{user.email}")
         
         if last_ping_str:
-            last_ping_time = datetime.fromisoformat(last_ping_str)
+            # Format string from Redis, replace Z, and strip timezone to make it offset-naive
+            raw_ts = str(last_ping_str).replace("Z", "+00:00")
+            last_ping_time = datetime.fromisoformat(raw_ts).replace(tzinfo=None)
+            
             minutes_since_last_ping = (now_utc - last_ping_time).total_seconds() / 60.0
             checkout_timestamp = last_ping_time
         else:
