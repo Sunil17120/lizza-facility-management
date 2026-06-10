@@ -493,7 +493,10 @@ async def sync_offline_locations(payload: dict, db: Session = Depends(get_db)):
     if not user: return {"status": "error"}
     
     for loc in locations:
-        ping_time = datetime.fromisoformat(loc.get("timestamp").replace("Z", "+00:00"))[:19]
+        # Parses the timestamp as a string first, formats it, and removes timezone to make it naive
+        raw_ts = str(loc.get("timestamp")).replace("Z", "+00:00")
+        ping_time = datetime.fromisoformat(raw_ts).replace(tzinfo=None)
+        
         db.add(FieldOfficerRoute(user_id=user.id, latitude=float(loc.get("lat")), longitude=float(loc.get("lon")), ping_timestamp=ping_time, activity_state="SYNCED"))
         
         current_site = get_site_at_location(float(loc.get("lat")), float(loc.get("lon")), r, db)
@@ -504,6 +507,7 @@ async def sync_offline_locations(payload: dict, db: Session = Depends(get_db)):
             else:
                 open_att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
                 if not open_att: db.add(Attendance(user_id=user.id, checkin_time=ping_time, date=ping_time, location_id=current_site.id))
+    
     db.commit()
     return {"status": "success"}
 
