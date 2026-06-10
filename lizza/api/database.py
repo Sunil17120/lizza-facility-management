@@ -2,6 +2,7 @@ import os
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, ForeignKey, Float, Boolean, text, Text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import NullPool
 from datetime import datetime
 from cryptography.fernet import Fernet 
 import base64
@@ -17,10 +18,10 @@ connect_args = {}
 if DATABASE_URL and DATABASE_URL.startswith("postgres"):
     connect_args = {"sslmode": "require"}
 
+# Using NullPool to prevent serverless database connection drops on Vercel
 engine = create_engine(
     DATABASE_URL,
-    pool_pre_ping=True,
-    pool_recycle=1800,
+    poolclass=NullPool,
     connect_args=connect_args
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -167,24 +168,21 @@ class Attendance(Base):
     checkout_time = Column(DateTime, nullable=True)
     duration_seconds = Column(Integer, nullable=True)
     date = Column(DateTime, default=datetime.utcnow)
+
 class ShiftLog(Base):
     __tablename__ = "shift_logs"
-
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
-
     shift_id = Column(String, unique=True, index=True)
-
     shift_date = Column(DateTime, default=datetime.utcnow)
-
     login_time = Column(DateTime, default=datetime.utcnow)
     logout_time = Column(DateTime, nullable=True)
-
     current_status = Column(String, default="ON_DUTY")
-    total_break_minutes = Column(Integer, default=0) # As per your schema
+    total_break_minutes = Column(Integer, default=0) 
     total_break_seconds = Column(Integer, default=0)
     break_start_time = Column(DateTime, nullable=True)
     is_on_break = Column(Boolean, default=False)
+
 class FieldOfficerRoute(Base):
     __tablename__ = "field_officer_routes"
     id = Column(Integer, primary_key=True, index=True)
@@ -199,21 +197,18 @@ def init_db():
     Base.metadata.create_all(bind=engine)
     
     with engine.connect() as conn:
-        # Helper to add columns safely
+        # Helper to add columns strictly via logical checks
         def add_col(table, col, ctype):
-            try:
-                conn.execute(text(f"""
-                    DO $$ 
-                    BEGIN
-                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
-                                     WHERE table_name='{table}' AND column_name='{col}') THEN
-                            ALTER TABLE {table} ADD COLUMN {col} {ctype};
-                        END IF;
-                    END $$;
-                """))
-                conn.commit()
-            except Exception as e:
-                conn.rollback()
+            conn.execute(text(f"""
+                DO $$ 
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                                 WHERE table_name='{table}' AND column_name='{col}') THEN
+                        ALTER TABLE {table} ADD COLUMN {col} {ctype};
+                    END IF;
+                END $$;
+            """))
+            conn.commit()
 
         # Update Users Table
         add_col("users", "checked_in", "BOOLEAN DEFAULT FALSE")
@@ -223,9 +218,6 @@ def init_db():
         add_col("shift_logs", "total_break_seconds", "INTEGER DEFAULT 0")
         add_col("shift_logs", "break_start_time", "TIMESTAMP")
         
-        # Admin setup
-        try:
-            conn.execute(text("UPDATE users SET is_verified = True WHERE email = 'admin@lizza.com'"))
-            conn.commit()
-        except:
-            conn.rollback()
+        # Admin setup logic execution
+        conn.execute(text("UPDATE users SET is_verified = True WHERE email = 'admin@lizza.com'"))
+        conn.commit()
