@@ -461,7 +461,7 @@ const FieldOfficerDashboard = () => {
                           <div className="bg-success bg-opacity-10 border border-success border-2 rounded p-3 mb-3 text-center shadow-sm">
                               <CheckCircle className="text-success mb-2" size={36}/>
                               <h5 className="text-success fw-bold mb-1">ACTIVE CHECK-IN</h5>
-                              <div className="text-dark fs-5 fw-bolder mt-2">{checkedInSite ? checkedInSite.name : 'Verifying Site...'}</div>
+                              <div className="text-dark fs-5 fw-bolder mt-2">{checkedInSite?.name || proximateSite?.name || 'Verifying Site...'}</div>
                           </div>
                         ) : proximateSite ? (
                           <Alert variant="info" className="mb-3 text-center border-info border-2">
