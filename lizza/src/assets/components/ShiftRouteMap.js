@@ -92,9 +92,9 @@ const ShiftRouteMap = ({ userId }) => {
                     <strong>Stay Duration:</strong> {stay.duration_mins} Minutes<br />
                     <hr style={{margin: '8px 0'}}/>
                     {stay.has_log ? (
-                        <span style={{color: 'green', fontWeight: 'bold'}}>✅ Visit Log & Photo Recorded</span>
+                        <span style={{color: 'green', fontWeight: 'bold'}}>✅ Visit Log Recorded</span>
                     ) : (
-                        <span style={{color: 'red', fontWeight: 'bold'}}>❌ No Visit Evidence Uploaded</span>
+                        <span style={{color: 'red', fontWeight: 'bold'}}>❌ No Evidence Uploaded</span>
                     )}
                   </div>
                 </Popup>

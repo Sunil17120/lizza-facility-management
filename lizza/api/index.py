@@ -376,17 +376,21 @@ async def record_location_ping(payload: dict, db: Session = Depends(get_db)):
 
 @app.get("/api/admin/employee-route/{user_id}")
 async def get_employee_today_route(user_id: int, db: Session = Depends(get_db)):
+    # 1. Find the active or most recent shift
     active_shift = db.query(ShiftLog).filter(ShiftLog.user_id == user_id, ShiftLog.logout_time == None).order_by(desc(ShiftLog.login_time)).first()
     if not active_shift:
         active_shift = db.query(ShiftLog).filter(ShiftLog.user_id == user_id).order_by(desc(ShiftLog.login_time)).first()
-    if not active_shift: raise HTTPException(404, "No route tracking data found for this user today.")
+    if not active_shift: 
+        raise HTTPException(404, "No route tracking data found for this user today.")
         
     points = db.query(FieldOfficerRoute).filter(FieldOfficerRoute.shift_id == active_shift.shift_id).order_by(FieldOfficerRoute.ping_timestamp.asc()).all()
     
+    # 2. Extract Site Stays joined with Location Table to get Geofence Radius
     stays = db.query(SiteStay, OfficeLocation).join(OfficeLocation, SiteStay.location_id == OfficeLocation.id).filter(
         SiteStay.officer_id == user_id, SiteStay.entry_time >= active_shift.login_time
     ).all()
     
+    # 3. Extract Visit Logs to verify evidence
     visits = db.query(SiteVisit).filter(SiteVisit.officer_id == user_id, SiteVisit.visit_time >= active_shift.login_time).all()
     
     formatted_stays = []
@@ -399,18 +403,24 @@ async def get_employee_today_route(user_id: int, db: Session = Depends(get_db)):
         dur_sec = max(0, (exit_t - stay.entry_time).total_seconds())
         total_stay_seconds += dur_sec
         
+        # Verify if a visit log was submitted during this specific stay
         matching_visits = [v for v in visits if v.location_id == loc.id and stay.entry_time <= v.visit_time <= exit_t + timedelta(minutes=5)]
         
         formatted_stays.append({
-            "lat": loc.lat, "lng": loc.lon, "radius": loc.radius or 200, "name": loc.name,
+            "lat": loc.lat, 
+            "lng": loc.lon, 
+            "radius": loc.radius or 200, 
+            "name": loc.name,
             "arrival": convert_utc_to_ist(stay.entry_time).strftime("%I:%M %p"),
             "departure": convert_utc_to_ist(stay.exit_time).strftime("%I:%M %p") if stay.exit_time else "Active",
             "duration_mins": int(dur_sec // 60),
             "has_log": len(matching_visits) > 0
         })
         
+    # 4. Calculate Perfect Metrics
     now_t = active_shift.logout_time or datetime.utcnow()
     duty_sec = max(0, (now_t - active_shift.login_time).total_seconds() - active_shift.total_break_seconds)
+    
     if active_shift.is_on_break and active_shift.break_start_time:
         duty_sec = max(0, duty_sec - (datetime.utcnow() - active_shift.break_start_time).total_seconds())
         
