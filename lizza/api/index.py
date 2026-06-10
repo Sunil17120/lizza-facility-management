@@ -1149,3 +1149,109 @@ def get_decrypted_dossier(user_id: int, admin_email: str, db: Session = Depends(
     user_data.pop('salt', None)
     
     return {"status": "success", "data": user_data}
+@app.get("/api/admin/manual-sweep")
+def manual_database_sweep(db: Session = Depends(get_db)):
+    
+    now_utc = datetime.utcnow()
+    cutoff_time = now_utc - timedelta(hours=12)
+
+    # --- LOGIC-ONLY TIME FINDER ---
+    def get_last_known_time(user_id, fallback_time):
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user: return fallback_time
+            
+        last_time = fallback_time
+        
+        # 1. Search Database Route Logs (Field Officers)
+        last_ping = db.query(FieldOfficerRoute).filter(
+            FieldOfficerRoute.user_id == user_id
+        ).order_by(desc(FieldOfficerRoute.ping_timestamp)).first()
+        
+        if last_ping and last_ping.ping_timestamp:
+            last_time = last_ping.ping_timestamp
+        
+        # 2. Search Redis Memory Logs (Normal Employees)
+        if r:
+            redis_time_str = r.get(f"ping_time:{user.email}")
+            if redis_time_str and isinstance(redis_time_str, str):
+                clean_ts = redis_time_str.replace('Z', '+00:00')
+                redis_time = datetime.fromisoformat(clean_ts).replace(tzinfo=None)
+                if redis_time > last_time:
+                    last_time = redis_time
+                    
+        # 3. Security: Prevent future time paradoxes
+        if last_time > now_utc: 
+            return now_utc
+            
+        return last_time
+
+    # 1. Close Ghost Master Shifts (> 12 hours)
+    open_shifts = db.query(ShiftLog).filter(ShiftLog.logout_time == None, ShiftLog.login_time < cutoff_time).all()
+    for shift in open_shifts:
+        checkout_time = get_last_known_time(shift.user_id, now_utc)
+        
+        # Prevent negative durations if last ping was from a previous day
+        if checkout_time < shift.login_time:
+            checkout_time = shift.login_time + timedelta(minutes=5)
+            
+        shift.logout_time = checkout_time
+        shift.current_status = "OFF_DUTY"
+        shift.is_on_break = False
+
+    # 2. Close Ghost Site Stays (> 12 hours)
+    open_stays = db.query(SiteStay).filter(SiteStay.exit_time == None, SiteStay.entry_time < cutoff_time).all()
+    for stay in open_stays:
+        checkout_time = get_last_known_time(stay.officer_id, now_utc)
+        if checkout_time < stay.entry_time:
+            checkout_time = stay.entry_time + timedelta(minutes=5)
+            
+        stay.exit_time = checkout_time
+
+    # 3. Close Ghost Attendances (> 12 hours)
+    open_atts = db.query(Attendance).filter(Attendance.checkout_time == None, Attendance.checkin_time < cutoff_time).all()
+    for att in open_atts:
+        checkout_time = get_last_known_time(att.user_id, now_utc)
+        if checkout_time < att.checkin_time:
+            checkout_time = att.checkin_time + timedelta(minutes=5)
+            
+        att.checkout_time = checkout_time
+        att.duration_seconds = int((checkout_time - att.checkin_time).total_seconds())
+
+    # 4. Sweep and Reset Users
+    users_to_reset = db.query(User).filter(
+        (User.is_present == True) | (User.checked_in == True) | (User.active_location_id != None)
+    ).all()
+    
+    swept_users = []
+    for user in users_to_reset:
+        has_att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
+        has_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
+        has_shift = db.query(ShiftLog).filter(ShiftLog.user_id == user.id, ShiftLog.logout_time == None).first()
+        
+        if not has_att and not has_stay and not has_shift:
+            user.is_present = False
+            user.checked_in = False
+            user.active_location_id = None
+            swept_users.append(user.email)
+            
+            # Obliterate stuck Redis memory keys
+            if r:
+                r.delete(f"active_shift:{user.email}")
+                r.delete(f"loc:{user.email}")
+                r.delete(f"ping_time:{user.email}")
+                r.delete(f"last_inside_time:{user.email}")
+                r.delete(f"warning_sent:{user.email}")
+
+    db.commit()
+    
+    return {
+        "status": "success",
+        "message": "Manual Database Sweep Completed Successfully.",
+        "metrics": {
+            "ghost_site_stays_closed": len(open_stays),
+            "ghost_attendances_closed": len(open_atts),
+            "ghost_shifts_closed": len(open_shifts),
+            "total_users_reset": len(swept_users),
+            "users_affected": swept_users
+        }
+    }
