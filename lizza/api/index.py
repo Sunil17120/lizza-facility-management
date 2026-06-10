@@ -572,22 +572,37 @@ def user_checkin(payload: dict, db: Session = Depends(get_db)):
     email = payload.get("email")
     location_id = payload.get("location_id")
     action_time_str = payload.get("timestamp")
+    
+    if not email:
+        raise HTTPException(400, "Email is required")
+
     action_time = parse_iso_timestamp(action_time_str) if action_time_str else datetime.utcnow()
 
     user = db.query(User).filter(User.email == email.lower().strip()).first()
-    if not user: raise HTTPException(404, "User not found")
+    if not user: 
+        raise HTTPException(404, "User not found")
     
     if user.user_type == 'field_officer':
         active_shift = db.query(ShiftLog).filter(ShiftLog.user_id == user.id, ShiftLog.logout_time == None).first()
-        if not active_shift: raise HTTPException(400, "No active shift")
+        if not active_shift: 
+            raise HTTPException(400, "No active shift")
+            
         db.add(SiteStay(officer_id=user.id, location_id=location_id, entry_time=action_time))
+        
+        # --- THE FIX: Uniformly update global tracking flags ---
         user.active_location_id = location_id
+        user.checked_in = True
+        user.is_present = True
+        
     else:
         existing = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
-        if existing: return {"status": "success", "message": "Already checked in"}
+        if existing: 
+            return {"status": "success", "message": "Already checked in"}
+            
         db.add(Attendance(user_id=user.id, location_id=location_id, checkin_time=action_time, date=action_time))
-        user.checked_in = True
+        
         user.active_location_id = location_id
+        user.checked_in = True
         user.is_present = True
 
     db.commit()
