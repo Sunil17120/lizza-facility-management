@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { MapContainer, TileLayer, Polyline, Marker, Popup, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Polyline, Marker, Popup, Circle, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
@@ -55,8 +55,10 @@ const ShiftRouteMap = ({ userId }) => {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '600px' }}>
       <div style={{ display: 'flex', gap: '20px', padding: '15px', background: '#f4f6f9', borderBottom: '1px solid #ddd' }}>
-        <div><strong>Total Travel:</strong> {routeData.metrics.total_travel_hours} Hours</div>
-        <div><strong>Total Stay:</strong> {routeData.metrics.total_stay_hours} Hours</div>
+        <div><strong>Total Duty Time:</strong> {routeData.metrics.total_duty_hours} Hrs</div>
+        <div><strong>Travel Time:</strong> {routeData.metrics.total_travel_hours} Hrs</div>
+        <div><strong>Site Stay Time:</strong> {routeData.metrics.total_stay_hours} Hrs</div>
+        <div><strong>Breaks:</strong> {routeData.metrics.total_break_hours} Hrs</div>
         <div><strong>Sites Visited:</strong> {routeData.site_stays.length}</div>
       </div>
 
@@ -75,17 +77,29 @@ const ShiftRouteMap = ({ userId }) => {
           )}
 
           {routeData.site_stays.map((stay, idx) => (
-            <Marker key={idx} position={[stay.lat, stay.lng]}>
-              <Popup>
-                <div style={{ fontSize: '14px', maxWidth: '250px' }}>
-                  <h4 style={{ margin: '0 0 5px 0', color: '#1a73e8' }}>Site Stay Detected</h4>
-                  <p style={{ margin: '0 0 10px 0', fontWeight: 'bold' }}>{stay.address}</p>
-                  <strong>Arrival:</strong> {stay.arrival}<br />
-                  <strong>Departure:</strong> {stay.departure}<br />
-                  <strong>Duration:</strong> {stay.duration_mins} Minutes
-                </div>
-              </Popup>
-            </Marker>
+            <React.Fragment key={idx}>
+              <Circle 
+                  center={[stay.lat, stay.lng]} 
+                  radius={stay.radius || 200} 
+                  pathOptions={{ color: stay.has_log ? 'green' : 'red', fillColor: stay.has_log ? 'green' : 'red', fillOpacity: 0.15 }} 
+              />
+              <Marker position={[stay.lat, stay.lng]}>
+                <Popup>
+                  <div style={{ fontSize: '14px', maxWidth: '250px' }}>
+                    <h5 style={{ margin: '0 0 5px 0', color: '#1a73e8' }}>{stay.name}</h5>
+                    <strong>Arrival:</strong> {stay.arrival}<br />
+                    <strong>Departure:</strong> {stay.departure}<br />
+                    <strong>Stay Duration:</strong> {stay.duration_mins} Minutes<br />
+                    <hr style={{margin: '8px 0'}}/>
+                    {stay.has_log ? (
+                        <span style={{color: 'green', fontWeight: 'bold'}}>✅ Visit Log & Photo Recorded</span>
+                    ) : (
+                        <span style={{color: 'red', fontWeight: 'bold'}}>❌ No Visit Evidence Uploaded</span>
+                    )}
+                  </div>
+                </Popup>
+              </Marker>
+            </React.Fragment>
           ))}
         </MapContainer>
       </div>

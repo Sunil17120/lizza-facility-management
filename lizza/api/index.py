@@ -39,16 +39,14 @@ firebase_available = False
 cred = None
 
 def _parse_firebase_credentials(raw_value: str):
-    if not raw_value:
-        return None
-    try:
+    if not raw_value: return None
+    if raw_value.startswith('{'):
         return json.loads(raw_value)
-    except json.JSONDecodeError:
-        try:
-            decoded = base64.b64decode(raw_value).decode("utf-8")
-            return json.loads(decoded)
-        except Exception:
-            return None
+    
+    decoded = base64.b64decode(raw_value).decode("utf-8")
+    if decoded.startswith('{'):
+        return json.loads(decoded)
+    return None
 
 app = FastAPI()
 app.add_middleware(
@@ -60,20 +58,14 @@ app.add_middleware(
 )
 
 class SafeRedisClient:
-    def __init__(self, client):
-        self._client = client
-
-    def __bool__(self):
-        return bool(self._client)
-
+    def __init__(self, client): self._client = client
+    def __bool__(self): return bool(self._client)
     def get(self, key):
         if not self._client: return None
         return self._client.get(key)
-
     def set(self, key, value, ex=None):
         if not self._client: return None
         return self._client.set(key, value, ex=ex)
-
     def delete(self, *keys):
         if not self._client: return None
         return self._client.delete(*keys)
@@ -104,30 +96,41 @@ def get_distance(lat1, lon1, lat2, lon2):
     a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
 
-def get_site_at_location(lat, lon, db):
-    offices = db.query(OfficeLocation).all()
+def get_cached_locations(redis_client, db_session):
+    cached = redis_client.get("all_locations")
+    if cached and str(cached).startswith('['):
+        return json.loads(cached)
+        
+    locs = db_session.query(OfficeLocation).all()
+    loc_list = [{"id": l.id, "name": l.name, "lat": l.lat, "lon": l.lon, "radius": l.radius} for l in locs]
+    redis_client.set("all_locations", json.dumps(loc_list), ex=86400) 
+    return loc_list
+
+class MockOffice:
+    def __init__(self, d):
+        self.id = d["id"]
+        self.name = d["name"]
+        self.lat = d["lat"]
+        self.lon = d["lon"]
+        self.radius = d["radius"]
+
+def get_site_at_location(lat, lon, r_client, db):
+    offices = get_cached_locations(r_client, db)
     for office in offices:
-        lat_diff = office.radius / 111320.0
-        lon_diff = office.radius / (111320.0 * max(0.000001, math.cos(math.radians(office.lat))))
-        if abs(lat - office.lat) > lat_diff or abs(lon - office.lon) > lon_diff:
-            continue
-        distance = get_distance(lat, lon, office.lat, office.lon)
-        if distance <= office.radius:
-            return office
+        dist = get_distance(lat, lon, office["lat"], office["lon"])
+        if dist <= office.get("radius", 200):
+            return MockOffice(office)
     return None
 
 def safe_decrypt(encrypted_data: str) -> str:
-    if not encrypted_data or str(encrypted_data).strip() == "" or encrypted_data in ["null", "undefined"]:
-        return "N/A"
+    if not encrypted_data or str(encrypted_data).strip() == "" or encrypted_data in ["null", "undefined"]: return "N/A"
     return cipher.decrypt(str(encrypted_data).encode()).decode()
 
 def safe_encrypt(data: str) -> str:
-    if not data or str(data).strip() == "" or data == "null" or data == "undefined":
-        return None
+    if not data or str(data).strip() == "" or data == "null" or data == "undefined": return None
     return cipher.encrypt(str(data).encode()).decode()
 
-def get_secure_hash(password: str, salt: str):
-    return hashlib.sha256((password + salt + PEPPER).encode()).hexdigest()
+def get_secure_hash(password: str, salt: str): return hashlib.sha256((password + salt + PEPPER).encode()).hexdigest()
 
 def upload_to_cloud(upload_file: UploadFile) -> str:
     if not upload_file or not upload_file.filename: return None
@@ -136,26 +139,38 @@ def upload_to_cloud(upload_file: UploadFile) -> str:
     url = "https://api.imgbb.com/1/upload"
     payload = {"key": os.environ.get("IMGBB_API_KEY"), "image": encoded_image}
     response = requests.post(url, data=payload)
-    res_data = response.json()
-    if res_data.get("success"): return res_data["data"]["url"]
+    res_json = response.json()
+    if isinstance(res_json, dict) and res_json.get("success"): 
+        return res_json["data"]["url"]
     return None
 
 def send_push_notification(token: str, title: str, body: str, data: dict = None):
-    if not token or not firebase_available:
-        return False
+    if not token or not firebase_available: return False
     data_payload = {"title": title, "body": body}
-    if isinstance(data, dict):
-        data_payload.update(data)
-
+    if isinstance(data, dict): data_payload.update(data)
     message = messaging.Message(
         notification=messaging.Notification(title=title, body=body),
         android=messaging.AndroidConfig(priority='high', notification=messaging.AndroidNotification(sound='default', default_vibrate_timings=True)),
         apns=messaging.APNSConfig(payload=messaging.APNSPayload(aps=messaging.Aps(sound='default', content_available=True))),
-        data=data_payload,
-        token=token,
+        data=data_payload, token=token,
     )
     messaging.send(message)
     return True
+
+async def get_snapped_route(coordinates_list: list) -> list:
+    max_coords = 50
+    if len(coordinates_list) > max_coords:
+        sampled_coords = coordinates_list[::len(coordinates_list) // max_coords]
+    else:
+        sampled_coords = coordinates_list
+    coords_string = ";".join([f"{lng},{lat}" for lat, lng in sampled_coords])
+    url = f"https://router.project-osrm.org/route/v1/driving/{coords_string}?overview=full&geometries=geojson"
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url)
+        if response.status_code != 200: return []
+        data = response.json()
+        if not data.get("routes"): return []
+        return [{"lat": coord[1], "lng": coord[0]} for coord in data["routes"][0]["geometry"]["coordinates"]]
 
 def send_onboarding_email(to_email, full_name, temp_password, login_email):
     user = os.environ.get("SMTP_USER") 
@@ -180,65 +195,26 @@ async def get_address_from_coords(lat: float, lng: float) -> str:
     async with httpx.AsyncClient() as client:
         response = await client.get(url, headers=headers)
         data = response.json()
-        return data.get("display_name", "Address not found")
-
-async def get_snapped_route(coordinates_list: list) -> list:
-    max_coords = 50
-    if len(coordinates_list) > max_coords:
-        step = len(coordinates_list) // max_coords
-        sampled_coords = coordinates_list[::step]
-    else:
-        sampled_coords = coordinates_list
-        
-    coords_string = ";".join([f"{lng},{lat}" for lat, lng in sampled_coords])
-    url = f"https://router.project-osrm.org/route/v1/driving/{coords_string}?overview=full&geometries=geojson"
-    
-    async with httpx.AsyncClient() as client:
-        response = await client.get(url)
-        if response.status_code != 200:
-            return []
-            
-        data = response.json()
-        if not data.get("routes"):
-            return []
-            
-        snapped_coords = data["routes"][0]["geometry"]["coordinates"]
-        return [{"lat": coord[1], "lng": coord[0]} for coord in snapped_coords]
+        if isinstance(data, dict):
+            return data.get("display_name", "Address not found")
+        return "Address not found"
 
 def get_db():
     db = SessionLocal()
     yield db
     db.close()
 
-class AuthRequest(BaseModel): 
-    email: str
-    password: str
-
-class PasswordChange(BaseModel): 
-    email: str
-    old_password: str
-    new_password: str
-
-class LocationCreate(BaseModel): 
-    name: str
-    lat: float
-    lon: float
-    radius: int
-
-class FCMTokenUpdate(BaseModel):
-    email: str
-    fcm_token: str
-
-class LogoutNotify(BaseModel):
-    email: str
+class AuthRequest(BaseModel): email: str; password: str
+class LocationCreate(BaseModel): name: str; lat: float; lon: float; radius: int
+class FCMTokenUpdate(BaseModel): email: str; fcm_token: str
+class LogoutNotify(BaseModel): email: str
+class PasswordChange(BaseModel): email: str; old_password: str; new_password: str
 
 @app.post("/api/login")
 def login(data: AuthRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == data.email.lower().strip()).first()
-    if not user or get_secure_hash(data.password, user.salt) != user.password:
-        raise HTTPException(401, detail="Invalid credentials")
-    if not user.is_verified and user.user_type != 'admin':
-        raise HTTPException(403, detail="Pending Admin Verification")
+    if not user or get_secure_hash(data.password, user.salt) != user.password: raise HTTPException(401, "Invalid credentials")
+    if not user.is_verified and user.user_type != 'admin': raise HTTPException(403, "Pending Admin Verification")
     return {"user_id": user.id, "user": user.full_name, "user_type": user.user_type, "force_password_change": not user.is_password_changed}
 
 @app.post("/api/user/update-fcm-token")
@@ -253,29 +229,22 @@ def update_fcm_token(data: FCMTokenUpdate, db: Session = Depends(get_db)):
 @app.post("/api/user/send-logout-notification")
 def send_logout_notification(data: LogoutNotify, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == data.email.lower().strip()).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    if not user: raise HTTPException(status_code=404, detail="User not found")
     token = getattr(user, 'fcm_token', None)
-    if not token:
-        return {"status": "no_token"}
+    if not token: return {"status": "no_token"}
     ok = send_push_notification(token, "Signed out", "You have been signed out of the app.", data={"type": "logout"})
-    if ok:
-        return {"status": "sent", "token": token}
-    return {"status": "failed", "token": token}
+    return {"status": "sent" if ok else "failed", "token": token}
 
 @app.get("/api/user/profile")
 def get_user_profile(email: str, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == email.lower().strip()).first()
-    if not user: raise HTTPException(status_code=404, detail="User not found")
-    
+    if not user: raise HTTPException(404, "User not found")
     open_att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
-    
     return {
         "id": user.id, "full_name": user.full_name, "email": user.email, "user_type": user.user_type,
         "blockchain_id": user.blockchain_id, "shift_start": user.shift_start, "shift_end": user.shift_end,
         "is_verified": user.is_verified, "location_id": user.location_id, "is_present": user.is_present,
-        "checked_in": open_att is not None,
-        "checkin_time": open_att.checkin_time.isoformat() + "Z" if open_att else None,
+        "checked_in": open_att is not None, "checkin_time": open_att.checkin_time.isoformat() + "Z" if open_att else None,
         "active_location_id": open_att.location_id if open_att else None
     }
 
@@ -293,25 +262,18 @@ def change_password(data: PasswordChange, db: Session = Depends(get_db)):
 @app.get("/api/shift/current")
 def get_current_shift(email: str, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == email.lower().strip()).first()
-    if not user: raise HTTPException(status_code=404, detail="User not found")
+    if not user: raise HTTPException(404, "User not found")
     
     active_shift = db.query(ShiftLog).filter(ShiftLog.user_id == user.id, ShiftLog.logout_time == None).first()
-    if not active_shift:
-        return {"is_active": False}
+    if not active_shift: return {"is_active": False}
         
     now_utc = datetime.utcnow()
-    
-    attendances = db.query(Attendance).filter(
-        Attendance.user_id == user.id, 
-        Attendance.checkin_time >= active_shift.login_time
-    ).all()
+    attendances = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkin_time >= active_shift.login_time).all()
     
     stay_seconds = 0
     for att in attendances:
-        if att.checkout_time: 
-            stay_seconds += (att.checkout_time - att.checkin_time).total_seconds()
-        else: 
-            stay_seconds += (now_utc - att.checkin_time).total_seconds()
+        if att.checkout_time: stay_seconds += (att.checkout_time - att.checkin_time).total_seconds()
+        else: stay_seconds += (now_utc - att.checkin_time).total_seconds()
             
     elapsed_duty = (now_utc - active_shift.login_time).total_seconds() - active_shift.total_break_seconds
     if active_shift.is_on_break and active_shift.break_start_time:
@@ -320,13 +282,10 @@ def get_current_shift(email: str, db: Session = Depends(get_db)):
     travel_seconds = max(0, elapsed_duty - stay_seconds)
 
     return {
-        "is_active": True,
-        "shift_id": active_shift.shift_id,
-        "login_time": active_shift.login_time.isoformat() + "Z",
-        "is_on_break": active_shift.is_on_break,
+        "is_active": True, "shift_id": active_shift.shift_id,
+        "login_time": active_shift.login_time.isoformat() + "Z", "is_on_break": active_shift.is_on_break,
         "break_start_time": active_shift.break_start_time.isoformat() + "Z" if active_shift.break_start_time else None,
-        "total_break_seconds": active_shift.total_break_seconds,
-        "travel_seconds": int(travel_seconds) 
+        "total_break_seconds": active_shift.total_break_seconds, "travel_seconds": int(travel_seconds) 
     }
 
 @app.post("/api/shift/day-action")
@@ -334,11 +293,7 @@ def day_shift_action(payload: dict, db: Session = Depends(get_db)):
     email = payload.get("email")
     action = payload.get("action")
     action_time_str = payload.get("timestamp")
-    
-    if action_time_str:
-        action_time = datetime.fromisoformat(action_time_str.replace("Z", "+00:00")).replace(tzinfo=None)
-    else:
-        action_time = datetime.utcnow()
+    action_time = datetime.fromisoformat(action_time_str.replace("Z", "+00:00")).replace(tzinfo=None) if action_time_str else datetime.utcnow()
     
     user = db.query(User).filter(User.email == email.lower().strip()).first()
     if not user: return {"status": "error"}
@@ -347,7 +302,15 @@ def day_shift_action(payload: dict, db: Session = Depends(get_db)):
     
     if action == "START" and not shift:
         shift_id = f"SFT_{user.id}_{action_time.strftime('%Y%m%d%H%M')}"
-        db.add(ShiftLog(user_id=user.id, shift_id=shift_id, shift_date=action_time, login_time=action_time, current_status="ON_DUTY", total_break_minutes=0, total_break_seconds=0))
+        db.add(ShiftLog(user_id=user.id, shift_id=shift_id, shift_date=action_time, login_time=action_time, current_status="ON_DUTY", total_break_seconds=0))
+        
+        # Field Officers daily attendance is marked when shift starts
+        if user.user_type == 'field_officer':
+            db.add(Attendance(user_id=user.id, checkin_time=action_time, date=action_time))
+            user.is_present = True
+            
+        r.set(f"active_shift:{email}", f"{shift_id}|{user.id}", ex=43200)
+        
     elif shift:
         if action == "BREAK":
             shift.current_status = "ON_BREAK"
@@ -357,16 +320,24 @@ def day_shift_action(payload: dict, db: Session = Depends(get_db)):
             shift.current_status = "ON_DUTY"
             shift.is_on_break = False
             if shift.break_start_time:
-                break_duration = (action_time - shift.break_start_time).total_seconds()
-                shift.total_break_seconds += int(break_duration)
+                shift.total_break_seconds += int((action_time - shift.break_start_time).total_seconds())
                 shift.break_start_time = None
         elif action == "END":
             shift.current_status = "OFF_DUTY"
             shift.logout_time = action_time
             if shift.is_on_break and shift.break_start_time:
-                break_duration = (action_time - shift.break_start_time).total_seconds()
-                shift.total_break_seconds += int(break_duration)
+                shift.total_break_seconds += int((action_time - shift.break_start_time).total_seconds())
             shift.is_on_break = False
+            
+            # Close Field Officer daily attendance
+            if user.user_type == 'field_officer':
+                att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
+                if att:
+                    att.checkout_time = action_time
+                    att.duration_seconds = int((action_time - att.checkin_time).total_seconds())
+                user.is_present = False
+                
+            r.delete(f"active_shift:{email}")
             
     db.commit()
     return {"status": "success"}
@@ -374,106 +345,358 @@ def day_shift_action(payload: dict, db: Session = Depends(get_db)):
 @app.post("/api/location/ping")
 async def record_location_ping(payload: dict, db: Session = Depends(get_db)):
     email = payload.get("email")
-    user = db.query(User).filter(User.email == email).first()
-    if not user: return {"status": "error", "message": "User not found"}
-
-    active_shift = db.query(ShiftLog).filter(
-        ShiftLog.user_id == user.id, 
-        ShiftLog.logout_time == None
-    ).order_by(desc(ShiftLog.login_time)).first()
+    shift_cache_key = f"active_shift:{email}"
+    cached_shift = r.get(shift_cache_key)
     
-    if not active_shift: return {"status": "ignored", "reason": "No active shift"}
+    user_id = None
+    shift_id = None
+    
+    if cached_shift and isinstance(cached_shift, str) and "|" in cached_shift:
+        parts = cached_shift.split("|")
+        if len(parts) == 2 and parts[1].isdigit():
+            shift_id = parts[0]
+            user_id = int(parts[1])
+            
+    if not user_id:
+        user = db.query(User).filter(User.email == email).first()
+        if not user: return {"status": "error"}
+        active_shift = db.query(ShiftLog).filter(ShiftLog.user_id == user.id, ShiftLog.logout_time == None).order_by(desc(ShiftLog.login_time)).first()
+        if not active_shift: return {"status": "ignored"}
+        shift_id = active_shift.shift_id
+        user_id = user.id
+        r.set(shift_cache_key, f"{shift_id}|{user_id}", ex=21600)
 
-    ts_str = payload.get("timestamp")
-    ping_time = parse_iso_timestamp(ts_str) if ts_str else datetime.utcnow()
+    ping_time = parse_iso_timestamp(payload.get("timestamp"))
 
-    new_route = FieldOfficerRoute(
-        user_id=user.id,
-        shift_id=active_shift.shift_id,
-        latitude=payload.get("lat"),
-        longitude=payload.get("lon"),
+    db.add(FieldOfficerRoute(
+        user_id=user_id, shift_id=shift_id,
+        latitude=payload.get("lat"), longitude=payload.get("lon"),
         activity_state=payload.get("activity_state", "TRAVELING"),
         ping_timestamp=ping_time
-    )
-    db.add(new_route)
+    ))
     db.commit()
     return {"status": "success"}
-
-@app.get("/api/routes/summary/{shift_id}")
-async def get_shift_route_summary(shift_id: str, db: Session = Depends(get_db)):
-    points = db.query(FieldOfficerRoute).filter(FieldOfficerRoute.shift_id == shift_id).order_by(FieldOfficerRoute.ping_timestamp.asc()).all()
-    
-    raw_coordinates = []
-    formatted_coordinates = []
-    site_stays = []
-    
-    current_stay = None
-    total_travel_seconds = 0
-    total_stay_seconds = 0
-    
-    for i in range(len(points)):
-        pt = points[i]
-        raw_coordinates.append((float(pt.latitude), float(pt.longitude)))
-        formatted_coordinates.append({
-            "lat": float(pt.latitude),
-            "lng": float(pt.longitude),
-            "time": pt.ping_timestamp.isoformat(),
-            "state": pt.activity_state
-        })
-        
-        if i > 0:
-            time_delta = (pt.ping_timestamp - points[i-1].ping_timestamp).total_seconds()
-            if pt.activity_state == "TRAVELING":
-                total_travel_seconds += time_delta
-            else:
-                total_stay_seconds += time_delta
-
-        if pt.activity_state == "AT_SITE":
-            if current_stay is None:
-                current_stay = { "latitude": float(pt.latitude), "longitude": float(pt.longitude), "arrival": pt.ping_timestamp, "departure": pt.ping_timestamp }
-            else:
-                current_stay["departure"] = pt.ping_timestamp
-        else:
-            if current_stay is not None:
-                stay_duration_minutes = int((current_stay["departure"] - current_stay["arrival"]).total_seconds() / 60)
-                address = await get_address_from_coords(current_stay["latitude"], current_stay["longitude"])
-                site_stays.append({
-                    "lat": current_stay["latitude"], "lng": current_stay["longitude"], "address": address,
-                    "arrival": current_stay["arrival"].strftime("%I:%M %p"), "departure": current_stay["departure"].strftime("%I:%M %p"),
-                    "duration_mins": stay_duration_minutes if stay_duration_minutes > 0 else 5
-                })
-                current_stay = None
-
-    if current_stay is not None:
-        stay_duration_minutes = int((current_stay["departure"] - current_stay["arrival"]).total_seconds() / 60)
-        address = await get_address_from_coords(current_stay["latitude"], current_stay["longitude"])
-        site_stays.append({
-            "lat": current_stay["latitude"], "lng": current_stay["longitude"], "address": address,
-            "arrival": current_stay["arrival"].strftime("%I:%M %p"), "departure": current_stay["departure"].strftime("%I:%M %p"),
-            "duration_mins": stay_duration_minutes if stay_duration_minutes > 0 else 5
-        })
-
-    snapped_path = await get_snapped_route(raw_coordinates) if len(raw_coordinates) >= 2 else formatted_coordinates
-
-    return {
-        "shift_id": shift_id,
-        "original_pings": formatted_coordinates,
-        "snapped_route_path": snapped_path,
-        "site_stays": site_stays,
-        "metrics": {
-            "total_travel_hours": round(total_travel_seconds / 3600, 2),
-            "total_stay_hours": round(total_stay_seconds / 3600, 2)
-        }
-    }
 
 @app.get("/api/admin/employee-route/{user_id}")
 async def get_employee_today_route(user_id: int, db: Session = Depends(get_db)):
     active_shift = db.query(ShiftLog).filter(ShiftLog.user_id == user_id, ShiftLog.logout_time == None).order_by(desc(ShiftLog.login_time)).first()
     if not active_shift:
         active_shift = db.query(ShiftLog).filter(ShiftLog.user_id == user_id).order_by(desc(ShiftLog.login_time)).first()
-    if not active_shift:
-        raise HTTPException(404, "No route tracking data found for this user today.")
-    return await get_shift_route_summary(active_shift.shift_id, db)
+    if not active_shift: raise HTTPException(404, "No route tracking data found for this user today.")
+        
+    points = db.query(FieldOfficerRoute).filter(FieldOfficerRoute.shift_id == active_shift.shift_id).order_by(FieldOfficerRoute.ping_timestamp.asc()).all()
+    
+    stays = db.query(SiteStay, OfficeLocation).join(OfficeLocation, SiteStay.location_id == OfficeLocation.id).filter(
+        SiteStay.officer_id == user_id, SiteStay.entry_time >= active_shift.login_time
+    ).all()
+    
+    visits = db.query(SiteVisit).filter(SiteVisit.officer_id == user_id, SiteVisit.visit_time >= active_shift.login_time).all()
+    
+    formatted_stays = []
+    total_stay_seconds = 0
+    
+    for stay, loc in stays:
+        if active_shift.logout_time and stay.entry_time > active_shift.logout_time: continue
+            
+        exit_t = stay.exit_time or (active_shift.logout_time if active_shift.logout_time else datetime.utcnow())
+        dur_sec = max(0, (exit_t - stay.entry_time).total_seconds())
+        total_stay_seconds += dur_sec
+        
+        matching_visits = [v for v in visits if v.location_id == loc.id and stay.entry_time <= v.visit_time <= exit_t + timedelta(minutes=5)]
+        
+        formatted_stays.append({
+            "lat": loc.lat, "lng": loc.lon, "radius": loc.radius or 200, "name": loc.name,
+            "arrival": convert_utc_to_ist(stay.entry_time).strftime("%I:%M %p"),
+            "departure": convert_utc_to_ist(stay.exit_time).strftime("%I:%M %p") if stay.exit_time else "Active",
+            "duration_mins": int(dur_sec // 60),
+            "has_log": len(matching_visits) > 0
+        })
+        
+    now_t = active_shift.logout_time or datetime.utcnow()
+    duty_sec = max(0, (now_t - active_shift.login_time).total_seconds() - active_shift.total_break_seconds)
+    if active_shift.is_on_break and active_shift.break_start_time:
+        duty_sec = max(0, duty_sec - (datetime.utcnow() - active_shift.break_start_time).total_seconds())
+        
+    travel_sec = max(0, duty_sec - total_stay_seconds)
+    
+    raw_coords = [(float(p.latitude), float(p.longitude)) for p in points]
+    snapped = await get_snapped_route(raw_coords) if len(raw_coords) >= 2 else [{"lat": c[0], "lng": c[1]} for c in raw_coords]
+
+    return {
+        "shift_id": active_shift.shift_id,
+        "metrics": {
+            "total_duty_hours": round(duty_sec / 3600, 2),
+            "total_travel_hours": round(travel_sec / 3600, 2),
+            "total_stay_hours": round(total_stay_seconds / 3600, 2),
+            "total_break_hours": round(active_shift.total_break_seconds / 3600, 2)
+        },
+        "site_stays": formatted_stays,
+        "snapped_route_path": snapped
+    }
+
+@app.get("/api/admin/locations")
+def get_locations(db: Session = Depends(get_db)): 
+    return get_cached_locations(r, db)
+
+@app.post("/api/admin/add-location")
+def add_location(data: LocationCreate, db: Session = Depends(get_db)):
+    db.add(OfficeLocation(**data.dict()))
+    db.commit()
+    r.delete("all_locations")
+    return {"message": "Location Added"}
+
+@app.put("/api/admin/update-location/{loc_id}")
+def update_location_endpoint(loc_id: int, data: LocationCreate, db: Session = Depends(get_db)):
+    loc = db.query(OfficeLocation).filter(OfficeLocation.id == loc_id).first()
+    if not loc: raise HTTPException(404, "Location not found")
+    loc.name, loc.lat, loc.lon, loc.radius = data.name, data.lat, data.lon, data.radius
+    db.commit()
+    r.delete("all_locations")
+    return {"status": "updated"}
+
+@app.delete("/api/admin/delete-location/{loc_id}")
+def delete_location(loc_id: int, db: Session = Depends(get_db)):
+    loc = db.query(OfficeLocation).filter(OfficeLocation.id == loc_id).first()
+    if loc: 
+        db.delete(loc)
+        db.commit()
+        r.delete("all_locations")
+    return {"status": "deleted"}
+
+@app.post("/api/user/sync-offline-locations")
+async def sync_offline_locations(payload: dict, db: Session = Depends(get_db)):
+    email = payload.get("email")
+    locations = payload.get("locations", [])
+    user = db.query(User).filter(User.email == email.lower().strip()).first()
+    if not user: return {"status": "error"}
+    
+    for loc in locations:
+        ping_time = datetime.fromisoformat(loc.get("timestamp").replace("Z", "+00:00"))[:19]
+        db.add(FieldOfficerRoute(user_id=user.id, latitude=float(loc.get("lat")), longitude=float(loc.get("lon")), ping_timestamp=ping_time, activity_state="SYNCED"))
+        
+        current_site = get_site_at_location(float(loc.get("lat")), float(loc.get("lon")), r, db)
+        if current_site:
+            if user.user_type == 'field_officer':
+                active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
+                if not active_stay: db.add(SiteStay(officer_id=user.id, location_id=current_site.id, entry_time=ping_time))
+            else:
+                open_att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
+                if not open_att: db.add(Attendance(user_id=user.id, checkin_time=ping_time, date=ping_time, location_id=current_site.id))
+    db.commit()
+    return {"status": "success"}
+
+@app.post("/api/user/update-location")
+async def update_location(email: str, lat: float, lon: float, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == email.lower().strip()).first()
+    if not user: return {"status": "error", "message": "User not found"}
+    now_utc = datetime.utcnow()
+    current_site = get_site_at_location(lat, lon, r, db)
+
+    r.set(f"loc:{email}", f"{lat},{lon}", ex=86400)
+
+    if current_site:
+        r.set(f"last_inside_time:{email}", now_utc.isoformat(), ex=86400)
+        r.set(f"ping_time:{email}", now_utc.isoformat(), ex=86400)
+        
+        if user.user_type == 'field_officer':
+            open_stays = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).all()
+            has_current = False
+            for stay in open_stays:
+                if stay.location_id == current_site.id: has_current = True
+                else: stay.exit_time = now_utc
+            if not has_current:
+                db.add(SiteStay(officer_id=user.id, location_id=current_site.id, entry_time=now_utc))
+        else:
+            open_attendance = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
+            if open_attendance and open_attendance.location_id != current_site.id:
+                open_attendance.checkout_time = now_utc
+                open_attendance.duration_seconds = int((now_utc - open_attendance.checkin_time).total_seconds())
+                open_attendance = None 
+            if not open_attendance:
+                db.add(Attendance(user_id=user.id, checkin_time=now_utc, date=now_utc, location_id=current_site.id))
+                user.is_present = True
+                user.checked_in = True
+                user.active_location_id = current_site.id
+        db.commit()
+    else:
+        r.set(f"ping_time:{email}", now_utc.isoformat(), ex=86400)
+        
+        last_inside_str = r.get(f"last_inside_time:{email}")
+        last_inside_time = datetime.fromisoformat(last_inside_str) if last_inside_str else now_utc
+        
+        if (now_utc - last_inside_time).total_seconds() / 60.0 >= 15.0:
+            if user.user_type == 'field_officer':
+                active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
+                if active_stay: active_stay.exit_time = now_utc
+            else:
+                open_attendance = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
+                if open_attendance:
+                    open_attendance.checkout_time = now_utc
+                    open_attendance.duration_seconds = int((now_utc - open_attendance.checkin_time).total_seconds())
+                user.is_present = False
+                user.checked_in = False
+                user.active_location_id = None
+            db.commit()
+            r.delete(f"last_inside_time:{email}")
+
+    return { "is_inside": current_site is not None, "site_name": current_site.name if current_site else None }
+
+@app.post("/api/user/checkin")
+def user_checkin(payload: dict, db: Session = Depends(get_db)):
+    email = payload.get("email")
+    location_id = payload.get("location_id")
+    action_time_str = payload.get("timestamp")
+    action_time = parse_iso_timestamp(action_time_str) if action_time_str else datetime.utcnow()
+
+    user = db.query(User).filter(User.email == email.lower().strip()).first()
+    if not user: raise HTTPException(404, "User not found")
+    
+    if user.user_type == 'field_officer':
+        active_shift = db.query(ShiftLog).filter(ShiftLog.user_id == user.id, ShiftLog.logout_time == None).first()
+        if not active_shift: raise HTTPException(400, "No active shift")
+        db.add(SiteStay(officer_id=user.id, location_id=location_id, entry_time=action_time))
+        user.active_location_id = location_id
+    else:
+        existing = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
+        if existing: return {"status": "success", "message": "Already checked in"}
+        db.add(Attendance(user_id=user.id, location_id=location_id, checkin_time=action_time, date=action_time))
+        user.checked_in = True
+        user.active_location_id = location_id
+        user.is_present = True
+
+    db.commit()
+    return {"status": "success"}
+
+@app.post("/api/user/checkout")
+def user_checkout(payload: dict, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == payload.get("email").lower().strip()).first()
+    if not user: raise HTTPException(404, "User not found")
+
+    action_time_str = payload.get("timestamp")
+    action_time = parse_iso_timestamp(action_time_str) if action_time_str else datetime.utcnow()
+    
+    if user.user_type == 'field_officer':
+        active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
+        if active_stay: active_stay.exit_time = action_time
+        user.active_location_id = None
+    else:
+        active_att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).order_by(desc(Attendance.checkin_time)).first()
+        if active_att:
+            active_att.checkout_time = action_time
+            active_att.duration_seconds = int((action_time - active_att.checkin_time).total_seconds())
+        user.checked_in = False
+        user.active_location_id = None
+        user.is_present = False
+
+    db.commit()
+    return {"status": "success"}
+
+@app.post("/api/field-officer/log-visit")
+async def log_site_visit(
+    email: str = Form(...), location_id: int = Form(...), purpose: str = Form(...), 
+    photo_details: str = Form(...), lat: float = Form(...), lon: float = Form(...), 
+    timestamp: str = Form(None), photos: List[UploadFile] = File(...), db: Session = Depends(get_db)
+):
+    user = db.query(User).filter(User.email == email.lower().strip()).first()
+    site = db.query(OfficeLocation).filter(OfficeLocation.id == location_id).first()
+    
+    distance = get_distance(lat, lon, site.lat, site.lon)
+    if distance > (site.radius or 200): raise HTTPException(400, f"Geotag validation failed. You are {int(distance)}m away from the site.")
+
+    now_utc = parse_iso_timestamp(timestamp)
+    active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.location_id == site.id, SiteStay.exit_time == None).first()
+    if not active_stay: raise HTTPException(400, "You must be officially checked in at the site before logging a visit report.")
+
+    photo_urls = [upload_to_cloud(photo) for photo in photos if photo]
+    details_list = json.loads(photo_details)
+    
+    combined = [{"url": photo_urls[i], "details": details_list[i] if i < len(details_list) else ""} for i in range(len(photo_urls))]
+    
+    db.add(SiteVisit(officer_id=user.id, location_id=site.id, purpose=purpose, remarks=json.dumps(combined), photo_path=",".join(filter(None, photo_urls)), visit_time=now_utc))
+    db.commit()
+    return {"status": "success"}
+
+@app.get("/api/field-officer/my-visits")
+def get_my_visits(email: str, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == email.lower().strip()).first()
+    if not user: return []
+    visits = db.query(SiteVisit, OfficeLocation).join(OfficeLocation).filter(SiteVisit.officer_id == user.id).order_by(SiteVisit.visit_time.desc()).all()
+    
+    result = []
+    for v, loc in visits:
+        display_remarks = v.remarks
+        if v.remarks and v.remarks.startswith('['):
+            if '"details"' in v.remarks:
+                parsed = json.loads(v.remarks)
+                display_remarks = " | ".join([item.get('details', '') for item in parsed])
+        result.append({
+            "site_name": loc.name, "purpose": v.purpose, "remarks": display_remarks, 
+            "visit_time": convert_utc_to_ist(v.visit_time).strftime("%d-%b-%Y %I:%M %p") if v.visit_time else "N/A", 
+            "photo_url": v.photo_path
+        })
+    return result
+
+@app.get("/api/admin/reports/monthly-field-visits")
+def get_monthly_field_visits(month: int, year: int, officer_id: Optional[int] = None, location_id: Optional[int] = None, user_type: Optional[str] = None, db: Session = Depends(get_db)):
+    _, last_day = calendar.monthrange(year, month)
+    start_utc = datetime(year, month, 1, 0, 0, 0) - timedelta(hours=5, minutes=30)
+    end_utc = datetime(year, month, last_day, 23, 59, 59) - timedelta(hours=5, minutes=30)
+
+    query = db.query(SiteVisit, User, OfficeLocation).join(User, SiteVisit.officer_id == User.id).join(OfficeLocation, SiteVisit.location_id == OfficeLocation.id)
+    query = query.filter(SiteVisit.visit_time >= start_utc, SiteVisit.visit_time <= end_utc)
+    if officer_id: query = query.filter(SiteVisit.officer_id == officer_id)
+    if location_id: query = query.filter(SiteVisit.location_id == location_id)
+    if user_type: query = query.filter(User.user_type == user_type)
+    
+    results = query.order_by(SiteVisit.visit_time.asc()).all()
+    report_data = []
+    
+    for v, u, loc in results:
+        ist_time = convert_utc_to_ist(v.visit_time)
+        stay = db.query(SiteStay).filter(SiteStay.officer_id == v.officer_id, SiteStay.location_id == v.location_id, SiteStay.entry_time <= v.visit_time + timedelta(minutes=5)).order_by(SiteStay.entry_time.desc()).first()
+
+        entry_str, exit_str, duration_str = "N/A", "N/A", "N/A"
+        if stay and (stay.exit_time is None or stay.exit_time >= v.visit_time - timedelta(minutes=5)):
+            entry_ist = convert_utc_to_ist(stay.entry_time)
+            entry_str = entry_ist.strftime("%I:%M %p") if entry_ist else "N/A"
+            if stay.exit_time:
+                exit_ist = convert_utc_to_ist(stay.exit_time)
+                exit_str = exit_ist.strftime("%I:%M %p")
+                hours, remainder = divmod((stay.exit_time - stay.entry_time).total_seconds(), 3600)
+                duration_str = f"{int(hours)}h {int(remainder // 60)}m"
+            else:
+                exit_str, duration_str = "Active", "In Progress"
+
+        report_data.append({
+            "visit_id": v.id, "date": ist_time.strftime("%d-%b-%Y") if ist_time else "N/A", "time": ist_time.strftime("%I:%M %p") if ist_time else "N/A",
+            "officer_id": u.blockchain_id or f"EMP-{u.id}", "officer_name": u.full_name, "site_id": loc.id, "site_name": loc.name,
+            "entry_time": entry_str, "exit_time": exit_str, "duration": duration_str, "purpose": v.purpose, "remarks": v.remarks,
+            "photo": v.photo_path, "excel_photo": f'=IMAGE("{v.photo_path.split(",")[0] if v.photo_path else ""}", "Visit Photo", 0)' if v.photo_path else "No Photo"
+        })
+    return report_data
+
+@app.get("/api/admin/employees")
+def get_all_employees(admin_email: str, db: Session = Depends(get_db)):
+    return db.query(User).all()
+
+@app.get("/api/admin/live-tracking")
+async def get_live_tracking(admin_email: str = None, db: Session = Depends(get_db)):
+    employees = db.query(User).filter(User.user_type.in_(['field_officer', 'employee'])).all()
+    live_data = []
+    
+    for emp in employees:
+        active_shift = db.query(ShiftLog).filter(ShiftLog.user_id == emp.id, ShiftLog.logout_time == None).first()
+        emp_data = { "user_id": emp.id, "email": emp.email, "name": emp.full_name, "user_type": emp.user_type, "present": False, "lat": None, "lon": None }
+
+        if active_shift:
+            emp_data["present"] = True
+            latest_ping = db.query(FieldOfficerRoute).filter(FieldOfficerRoute.shift_id == active_shift.shift_id).order_by(desc(FieldOfficerRoute.ping_timestamp)).first()
+            if latest_ping:
+                emp_data["lat"] = latest_ping.latitude
+                emp_data["lon"] = latest_ping.longitude
+
+        live_data.append(emp_data)
+    return live_data
 
 @app.post("/api/manager/add-employee")
 async def add_employee(
@@ -596,63 +819,6 @@ def verify_employee(target_email: str, admin_email: str, db: Session = Depends(g
     send_onboarding_email(user.personal_email, user.full_name, user.dob.replace("-",""), user.email)
     return {"status": "success"}
 
-@app.get("/api/admin/employees")
-def get_all_employees(admin_email: str, db: Session = Depends(get_db)):
-    return db.query(User).all()
-
-@app.get("/api/admin/locations")
-def get_locations(db: Session = Depends(get_db)): 
-    return db.query(OfficeLocation).all()
-
-@app.post("/api/admin/add-location")
-def add_location(data: LocationCreate, db: Session = Depends(get_db)):
-    db.add(OfficeLocation(**data.dict()))
-    db.commit()
-    return {"message": "Location Added"}
-
-@app.put("/api/admin/update-location/{loc_id}")
-def update_location_endpoint(loc_id: int, data: LocationCreate, db: Session = Depends(get_db)):
-    loc = db.query(OfficeLocation).filter(OfficeLocation.id == loc_id).first()
-    if not loc: raise HTTPException(404, "Location not found")
-    loc.name, loc.lat, loc.lon, loc.radius = data.name, data.lat, data.lon, data.radius
-    db.commit()
-    return {"status": "updated"}
-
-@app.get("/api/admin/live-tracking")
-async def get_live_tracking(admin_email: str = None, db: Session = Depends(get_db)):
-    employees = db.query(User).filter(User.user_type.in_(['field_officer', 'employee'])).all()
-    live_data = []
-    
-    for emp in employees:
-        active_shift = db.query(ShiftLog).filter(
-            ShiftLog.user_id == emp.id,
-            ShiftLog.logout_time == None
-        ).first()
-
-        emp_data = {
-            "user_id": emp.id,
-            "email": emp.email,
-            "name": emp.full_name,
-            "user_type": emp.user_type,
-            "present": False,
-            "lat": None,
-            "lon": None
-        }
-
-        if active_shift:
-            emp_data["present"] = True
-            latest_ping = db.query(FieldOfficerRoute).filter(
-                FieldOfficerRoute.shift_id == active_shift.shift_id
-            ).order_by(desc(FieldOfficerRoute.ping_timestamp)).first()
-            
-            if latest_ping:
-                emp_data["lat"] = latest_ping.latitude
-                emp_data["lon"] = latest_ping.longitude
-
-        live_data.append(emp_data)
-        
-    return live_data
-
 @app.post("/api/admin/update-employee-inline")
 def update_employee_inline(data: dict, db: Session = Depends(get_db)):
     user_id = data.get("id")
@@ -705,20 +871,11 @@ def delete_employee(user_id: int, db: Session = Depends(get_db)):
     db.query(EmployeeLocation).filter(EmployeeLocation.user_id == user_id).delete()
     db.query(SiteVisit).filter(SiteVisit.officer_id == user_id).delete()
     db.query(SiteStay).filter(SiteStay.officer_id == user_id).delete()
-    from .database import Attendance
     db.query(Attendance).filter(Attendance.user_id == user_id).delete()
     db.execute(text("DELETE FROM field_visit_logs WHERE officer_id = :uid"), {"uid": user_id})
     db.delete(user)
     db.commit()
     return {"status": "success", "message": "Employee and all related records deleted."}
-
-@app.delete("/api/admin/delete-location/{loc_id}")
-def delete_location(loc_id: int, db: Session = Depends(get_db)):
-    loc = db.query(OfficeLocation).filter(OfficeLocation.id == loc_id).first()
-    if loc: 
-        db.delete(loc)
-        db.commit()
-    return {"status": "deleted"}
 
 @app.delete("/api/admin/delete-visit/{visit_id}")
 def delete_visit(visit_id: int, db: Session = Depends(get_db)):
@@ -730,7 +887,6 @@ def delete_visit(visit_id: int, db: Session = Depends(get_db)):
 
 @app.delete("/api/admin/delete-attendance/{attendance_id}")
 def delete_attendance(attendance_id: int, db: Session = Depends(get_db)):
-    from .database import Attendance
     att = db.query(Attendance).filter(Attendance.id == attendance_id).first()
     if not att: raise HTTPException(status_code=404, detail="Attendance record not found")
     if att.checkout_time is None:
@@ -744,7 +900,6 @@ def delete_attendance(attendance_id: int, db: Session = Depends(get_db)):
 async def handle_native_webhook(request: Request, db: Session = Depends(get_db)):
     data = await request.json()
     loc_data = data.get("location", data)
-    
     payload = {
         "email": request.headers.get("x-user-email") or data.get("email"),
         "lat": loc_data.get("latitude") or loc_data.get("lat"),
@@ -752,385 +907,79 @@ async def handle_native_webhook(request: Request, db: Session = Depends(get_db))
         "timestamp": loc_data.get("timestamp"),
         "activity_state": "TRAVELING"
     }
-    
     return await record_location_ping(payload, db)
 
-@app.post("/api/user/sync-offline-locations")
-async def sync_offline_locations(payload: dict, db: Session = Depends(get_db)):
-    email = payload.get("email")
-    locations = payload.get("locations", [])
-    user = db.query(User).filter(User.email == email.lower().strip()).first()
-    
-    if not user: return {"status": "error"}
-    
-    for loc in locations:
-        lat = float(loc.get("lat"))
-        lon = float(loc.get("lon"))
-        timestamp_str = loc.get("timestamp")
-        ping_time = parse_iso_timestamp(timestamp_str)
-        
-        db.add(FieldOfficerRoute(
-            user_id=user.id,
-            latitude=lat,
-            longitude=lon,
-            ping_timestamp=ping_time,
-            activity_state="SYNCED"
-        ))
-        
-        current_site = get_site_at_location(lat, lon, db)
-        
-        if current_site:
-            if user.user_type == 'field_officer':
-                active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
-                if not active_stay:
-                    db.add(SiteStay(officer_id=user.id, location_id=current_site.id, entry_time=ping_time))
-            else:
-                open_att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
-                if not open_att:
-                    db.add(Attendance(user_id=user.id, checkin_time=ping_time, date=ping_time, location_id=current_site.id))
-    
-    db.commit()
-    return {"status": "success"}
-
-@app.post("/api/user/update-location")
-async def update_location(email: str, lat: float, lon: float, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == email.lower().strip()).first()
-    if not user: return {"status": "error", "message": "User not found"}
-    
-    now_utc = datetime.utcnow()
-    current_site = get_site_at_location(lat, lon, db)
-    from .database import Attendance
-
-    if r:
-        r.set(f"loc:{email}", f"{lat},{lon}", ex=86400)
-
-    if current_site:
-        if r: 
-            r.set(f"last_inside_time:{email}", now_utc.isoformat(), ex=86400)
-            r.set(f"ping_time:{email}", now_utc.isoformat(), ex=86400)
-
-        open_attendance = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
-        
-        if open_attendance and open_attendance.location_id != current_site.id:
-            open_attendance.checkout_time = now_utc
-            open_attendance.duration_seconds = int((now_utc - open_attendance.checkin_time).total_seconds())
-            
-            old_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
-            if old_stay: old_stay.exit_time = now_utc
-            
-            open_attendance = None 
-        
-        if not open_attendance:
-            attendance = Attendance(user_id=user.id, checkin_time=now_utc, date=now_utc, location_id=current_site.id)
-            user.is_present = True
-            db.add(attendance)
-            
-            if user.user_type == 'field_officer':
-                db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).update({"exit_time": now_utc})
-                db.add(SiteStay(officer_id=user.id, location_id=current_site.id, entry_time=now_utc))
-                
-            db.commit()
-            if getattr(user, 'fcm_token', None): send_push_notification(user.fcm_token, "✅ Auto Check-In Done", f"You are inside {current_site.name} and have been checked in.")
-        else:
-            if not user.is_present:
-                user.is_present = True
-
-            if user.user_type == 'field_officer':
-                open_stays = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).all()
-                has_current = False
-                
-                for stay in open_stays:
-                    if stay.location_id == current_site.id:
-                        has_current = True
-                    else:
-                        stay.exit_time = now_utc
-                        
-                if not has_current:
-                    db.add(SiteStay(officer_id=user.id, location_id=current_site.id, entry_time=now_utc))
-                    
-            db.commit()
-    else:
-        if r: r.set(f"ping_time:{email}", now_utc.isoformat(), ex=86400)
-
-        open_attendance = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
-        
-        if open_attendance or user.is_present:
-            last_inside_str = r.get(f"last_inside_time:{email}")
-            last_inside_time = datetime.fromisoformat(last_inside_str) if last_inside_str else now_utc
-            
-            if (now_utc - last_inside_time).total_seconds() / 60.0 >= 15.0:
-                if open_attendance:
-                    open_attendance.checkout_time = now_utc
-                    open_attendance.duration_seconds = int((now_utc - open_attendance.checkin_time).total_seconds())
-                
-                active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
-                if active_stay:
-                    active_stay.exit_time = now_utc
-                
-                if user.user_type != 'field_officer':
-                    user.is_present = False
-                    
-                db.commit()
-                if getattr(user, 'fcm_token', None) and user.user_type != 'field_officer': 
-                    send_push_notification(user.fcm_token, "🚪 Auto Check-Out", "You left the site boundary.")
-                if r: r.delete(f"last_inside_time:{email}")
-
-    return { "is_inside": current_site is not None, "status": "inside" if current_site is not None else "outside", "message": "Inside Geofence" if current_site is not None else "Outside Geofence", "site_name": current_site.name if current_site else None }
-
-@app.post("/api/user/checkin")
-def user_checkin(payload: dict, db: Session = Depends(get_db)):
-    email = payload.get("email")
-    location_id = payload.get("location_id")
-    action_time_str = payload.get("timestamp")
-    action_time = parse_iso_timestamp(action_time_str) if action_time_str else datetime.utcnow()
-
-    user = db.query(User).filter(User.email == email.lower().strip()).first()
-    if not user: raise HTTPException(status_code=404, detail="User not found")
-
-    active_shift = db.query(ShiftLog).filter(ShiftLog.user_id == user.id, ShiftLog.logout_time == None).first()
-    if not active_shift: raise HTTPException(status_code=400, detail="No active shift")
-
-    # Prevent duplicate attendance rows
-    existing = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
-    if existing: return {"status": "success", "message": "Already checked in"}
-
-    attendance = Attendance(user_id=user.id, location_id=location_id, checkin_time=action_time, date=action_time)
-    db.add(attendance)
-
-    # CRITICAL FIX: Ensure SiteStay is created so the Visit Log endpoint doesn't throw a 400 error
-    if user.user_type == 'field_officer':
-        db.add(SiteStay(officer_id=user.id, location_id=location_id, entry_time=action_time))
-
-    user.checked_in = True
-    # CRITICAL FIX: Extract from dict properly (payload.get) to prevent 500 crashes
-    user.active_location_id = location_id
-
-    db.commit()
-    return {"status": "success", "message": "Checked in successfully"}
-
-@app.post("/api/user/checkout")
-def user_checkout(payload: dict, db: Session = Depends(get_db)):
-    email = payload.get("email")
-    action_time_str = payload.get("timestamp")
-    action_time = parse_iso_timestamp(action_time_str) if action_time_str else datetime.utcnow()
-
-    user = db.query(User).filter(User.email == email.lower().strip()).first()
-    if not user: raise HTTPException(status_code=404, detail="User not found")
-
-    active_attendance = db.query(Attendance).filter(
-        Attendance.user_id == user.id, Attendance.checkout_time == None
-    ).order_by(Attendance.checkin_time.desc()).first()
-
-    if active_attendance:
-        active_attendance.checkout_time = action_time
-        duration = action_time - active_attendance.checkin_time
-        active_attendance.duration_seconds = int(duration.total_seconds())
-
-    if user.user_type == 'field_officer':
-        active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
-        if active_stay:
-            active_stay.exit_time = action_time
-
-    user.checked_in = False
-    user.active_location_id = None
-
-    db.commit()
-    return {"status": "success", "message": "Checked out successfully"}
 @app.get("/api/cron/auto-checkout")
 def cron_auto_checkout(db: Session = Depends(get_db)):
-    from .database import Attendance
     now_utc = datetime.utcnow()
-    active_users = db.query(User).filter(User.is_present == True).all()
+    # Find users who are physically checked into a site right now
+    active_users = db.query(User).filter(User.active_location_id != None).all()
     swept_users = []
     
     for user in active_users:
         last_ping_str = r.get(f"ping_time:{user.email}")
-        warning_key = f"warning_sent:{user.email}"
-        warning_sent = r.get(warning_key) if r else None
         
         if last_ping_str:
             last_ping_time = datetime.fromisoformat(last_ping_str)
             minutes_since_last_ping = (now_utc - last_ping_time).total_seconds() / 60.0
+            checkout_timestamp = last_ping_time
         else:
             minutes_since_last_ping = float('inf')
+            checkout_timestamp = now_utc
 
-        if minutes_since_last_ping >= 30 and not warning_sent:
-            if getattr(user, 'fcm_token', None):
-                send_push_notification(
-                    token=user.fcm_token,
-                    title="⚠️ Location Paused",
-                    body="We haven't received your location update. Please open the app if you are moving."
-                )
-            if r:
-                r.set(warning_key, '1', ex=3600)
-
-        open_att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
         force_checkout = False
-        checkout_timestamp = now_utc
-
-        if open_att:
-            hours_since_checkin = (now_utc - open_att.checkin_time).total_seconds() / 3600.0
-            
-            if hours_since_checkin >= 14.0:
-                force_checkout = True
-                checkout_timestamp = now_utc
-            
-            elif minutes_since_last_ping >= 60.0:
-                force_checkout = True
-                checkout_timestamp = last_ping_time if last_ping_str else now_utc
         
+        # Rule 1: No ping for 60 minutes
+        if minutes_since_last_ping >= 60.0:
+            force_checkout = True
+
+        # Rule 2: Exceeded maximum site stay (14 hours)
+        if not force_checkout:
+            if user.user_type == 'field_officer':
+                active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
+                if active_stay and (now_utc - active_stay.entry_time).total_seconds() / 3600.0 >= 14.0:
+                    force_checkout = True
+                    checkout_timestamp = now_utc
+            else:
+                active_att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).order_by(desc(Attendance.checkin_time)).first()
+                if active_att and (now_utc - active_att.checkin_time).total_seconds() / 3600.0 >= 14.0:
+                    force_checkout = True
+                    checkout_timestamp = now_utc
+
         if force_checkout:
-            if open_att:
-                open_att.checkout_time = checkout_timestamp
-                open_att.duration_seconds = int((open_att.checkout_time - open_att.checkin_time).total_seconds())
+            if user.user_type == 'field_officer':
+                active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
+                if active_stay: 
+                    active_stay.exit_time = checkout_timestamp
+            else:
+                active_att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).order_by(desc(Attendance.checkin_time)).first()
+                if active_att:
+                    active_att.checkout_time = checkout_timestamp
+                    active_att.duration_seconds = int((checkout_timestamp - active_att.checkin_time).total_seconds())
+                user.is_present = False
                 
-            active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
-            if active_stay: 
-                active_stay.exit_time = checkout_timestamp
-                
-            user.is_present = False
+            user.checked_in = False
+            user.active_location_id = None
             db.commit()
             
-            if getattr(user, 'fcm_token', None):
-                send_push_notification(
-                    token=user.fcm_token, 
-                    title="⏱️ Shift Automatically Closed", 
-                    body="Your shift was closed due to inactivity or reaching maximum duty hours."
-                )
-                
             if r:
-                r.delete(f"ping_time:{user.email}")
                 r.delete(f"last_inside_time:{user.email}")
-                r.delete(warning_key)
                 r.delete(f"loc:{user.email}")
                 
             swept_users.append(user.email)
             
-    return {"status": "success", "message": "Cron sweep complete", "auto_checked_out": swept_users}
-
-@app.post("/api/field-officer/log-visit")
-async def log_site_visit(
-    email: str = Form(...), location_id: int = Form(...), purpose: str = Form(...), 
-    photo_details: str = Form(...), lat: float = Form(...), lon: float = Form(...), 
-    timestamp: str = Form(None), photos: List[UploadFile] = File(...), db: Session = Depends(get_db)
-):
-    user = db.query(User).filter(User.email == email.lower().strip()).first()
-    if not user: raise HTTPException(404, "User not found")
-        
-    site = db.query(OfficeLocation).filter(OfficeLocation.id == location_id).first()
-    if not site: raise HTTPException(404, "Site not found")
-
-    distance = get_distance(lat, lon, site.lat, site.lon)
-    if distance > (site.radius or 200):
-        raise HTTPException(400, f"Geotag validation failed. You are {int(distance)}m away from the site.")
-
-    # CRITICAL FIX: Relax timestamp constraints to make it immune to phone clock drift
-    active_stay = db.query(SiteStay).filter(
-        SiteStay.officer_id == user.id, 
-        SiteStay.location_id == site.id,
-        SiteStay.exit_time == None
-    ).first()
-    
-    if not active_stay:
-        raise HTTPException(400, "You must be officially checked in at the site before logging a visit report.")
-
-    photo_urls = [upload_to_cloud(photo) for photo in photos if photo]
-    details_list = json.loads(photo_details)
-    
-    combined = [{"url": photo_urls[i], "details": details_list[i] if i < len(details_list) else ""} for i in range(len(photo_urls))]
-    
-    db.add(SiteVisit(
-        officer_id=user.id, location_id=site.id, purpose=purpose, 
-        remarks=json.dumps(combined), photo_path=",".join(filter(None, photo_urls)), 
-        visit_time=parse_iso_timestamp(timestamp)
-    ))
-    db.commit()
-    return {"status": "success", "message": "Visit logged and geofence verified."}
-@app.get("/api/field-officer/my-visits")
-def get_my_visits(email: str, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == email.lower().strip()).first()
-    if not user: 
-        return [] # Return empty list gracefully instead of throwing an error
-        
-    visits = db.query(SiteVisit, OfficeLocation).join(OfficeLocation).filter(SiteVisit.officer_id == user.id).order_by(SiteVisit.visit_time.desc()).all()
-    
-    result = []
-    for v, loc in visits:
-        display_remarks = v.remarks
-        
-        # Safely parse the JSON remarks if they exist
-        if v.remarks and v.remarks.startswith('['):
-            try:
-                parsed_remarks = json.loads(v.remarks)
-                display_remarks = " | ".join([item.get('details', '') for item in parsed_remarks])
-            except Exception:
-                pass # Fallback to raw text if parsing fails
-
-        result.append({
-            "site_name": loc.name, 
-            "purpose": v.purpose, 
-            "remarks": display_remarks, 
-            "visit_time": convert_utc_to_ist(v.visit_time).strftime("%d-%b-%Y %I:%M %p") if v.visit_time else "N/A", 
-            "photo_url": v.photo_path
-        })
-    return result
-@app.get("/api/admin/reports/monthly-field-visits")
-def get_monthly_field_visits(month: int, year: int, officer_id: Optional[int] = None, location_id: Optional[int] = None, user_type: Optional[str] = None, db: Session = Depends(get_db)):
-    _, last_day = calendar.monthrange(year, month)
-    start_utc = datetime(year, month, 1, 0, 0, 0) - timedelta(hours=5, minutes=30)
-    end_utc = datetime(year, month, last_day, 23, 59, 59) - timedelta(hours=5, minutes=30)
-
-    query = db.query(SiteVisit, User, OfficeLocation).join(User, SiteVisit.officer_id == User.id).join(OfficeLocation, SiteVisit.location_id == OfficeLocation.id)
-    query = query.filter(SiteVisit.visit_time >= start_utc, SiteVisit.visit_time <= end_utc)
-    if officer_id: query = query.filter(SiteVisit.officer_id == officer_id)
-    if location_id: query = query.filter(SiteVisit.location_id == location_id)
-    if user_type: query = query.filter(User.user_type == user_type)
-    
-    results = query.order_by(SiteVisit.visit_time.asc()).all()
-    report_data = []
-    
-    for v, u, loc in results:
-        ist_time = convert_utc_to_ist(v.visit_time)
-        stay = db.query(SiteStay).filter(SiteStay.officer_id == v.officer_id, SiteStay.location_id == v.location_id, SiteStay.entry_time <= v.visit_time + timedelta(minutes=5)).order_by(SiteStay.entry_time.desc()).first()
-
-        entry_str, exit_str, duration_str = "N/A", "N/A", "N/A"
-        if stay and (stay.exit_time is None or stay.exit_time >= v.visit_time - timedelta(minutes=5)):
-            entry_ist = convert_utc_to_ist(stay.entry_time)
-            entry_str = entry_ist.strftime("%I:%M %p") if entry_ist else "N/A"
-            if stay.exit_time:
-                exit_ist = convert_utc_to_ist(stay.exit_time)
-                exit_str = exit_ist.strftime("%I:%M %p")
-                hours, remainder = divmod((stay.exit_time - stay.entry_time).total_seconds(), 3600)
-                duration_str = f"{int(hours)}h {int(remainder // 60)}m"
-            else:
-                exit_str, duration_str = "Active", "In Progress"
-
-        report_data.append({
-            "visit_id": v.id, "date": ist_time.strftime("%d-%b-%Y") if ist_time else "N/A", "time": ist_time.strftime("%I:%M %p") if ist_time else "N/A",
-            "officer_id": u.blockchain_id or f"EMP-{u.id}", "officer_name": u.full_name, "site_id": loc.id, "site_name": loc.name,
-            "entry_time": entry_str, "exit_time": exit_str, "duration": duration_str, "purpose": v.purpose, "remarks": v.remarks,
-            "photo": v.photo_path, "excel_photo": f'=IMAGE("{v.photo_path.split(",")[0] if v.photo_path else ""}", "Visit Photo", 0)' if v.photo_path else "No Photo"
-        })
-    return report_data
+    return {"status": "success", "message": "Cron sweep complete", "auto_checked_out_sites": swept_users}
 
 @app.get("/api/admin/reports/monthly-attendance")
 def get_monthly_attendance(
-    month: Optional[int] = None,
-    year: Optional[int] = None,
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
-    user_id: Optional[int] = None,
-    location_id: Optional[int] = None,
-    user_type: Optional[str] = None,
-    db: Session = Depends(get_db)
+    month: Optional[int] = None, year: Optional[int] = None, start_date: Optional[str] = None,
+    end_date: Optional[str] = None, user_id: Optional[int] = None, location_id: Optional[int] = None,
+    user_type: Optional[str] = None, db: Session = Depends(get_db)
 ):
     if start_date or end_date:
-        if start_date:
-            start_utc = parse_iso_timestamp(start_date)
-        elif month and year:
-            start_utc = datetime(year, month, 1, 0, 0, 0) - timedelta(hours=5, minutes=30)
-        else:
-            raise HTTPException(status_code=400, detail="start_date or month/year required")
+        if start_date: start_utc = parse_iso_timestamp(start_date)
+        elif month and year: start_utc = datetime(year, month, 1, 0, 0, 0) - timedelta(hours=5, minutes=30)
+        else: raise HTTPException(status_code=400, detail="start_date or month/year required")
 
         if end_date:
             end_utc = parse_iso_timestamp(end_date)
@@ -1139,16 +988,13 @@ def get_monthly_attendance(
         elif month and year:
             _, last_day = calendar.monthrange(year, month)
             end_utc = datetime(year, month, last_day, 23, 59, 59) - timedelta(hours=5, minutes=30)
-        else:
-            raise HTTPException(status_code=400, detail="end_date or month/year required")
+        else: raise HTTPException(status_code=400, detail="end_date or month/year required")
     else:
-        if month is None or year is None:
-            raise HTTPException(status_code=400, detail="month and year are required")
+        if month is None or year is None: raise HTTPException(status_code=400, detail="month and year are required")
         _, last_day = calendar.monthrange(year, month)
         start_utc = datetime(year, month, 1, 0, 0, 0) - timedelta(hours=5, minutes=30)
         end_utc = datetime(year, month, last_day, 23, 59, 59) - timedelta(hours=5, minutes=30)
 
-    from .database import Attendance
     query = db.query(Attendance, User, OfficeLocation).join(User, Attendance.user_id == User.id).outerjoin(OfficeLocation, Attendance.location_id == OfficeLocation.id)
     query = query.filter(Attendance.date >= start_utc, Attendance.date <= end_utc)
     if user_id: query = query.filter(User.id == user_id)
@@ -1187,9 +1033,7 @@ async def extract_ekyc(file: UploadFile = File(...), share_code: str = Form(...)
     poi, pht = root.find('.//Poi'), root.find('.//Pht')
     name = poi.attrib.get('name', '')
     dob_val = poi.attrib.get('dob', '')
-    if "-" in dob_val: dob_formatted = datetime.strptime(dob_val, "%d-%m-%Y").strftime("%Y-%m-%d")
-    else: dob_formatted = dob_val
-        
+    dob_formatted = datetime.strptime(dob_val, "%d-%m-%Y").strftime("%Y-%m-%d") if "-" in dob_val else dob_val
     name_parts = name.split(' ', 1)
     photo_base64 = f"data:image/jpeg;base64,{pht.text}" if (pht is not None and pht.text) else ""
     ref_id = root.attrib.get('referenceId', '')
@@ -1233,10 +1077,7 @@ async def extract_qr(file: UploadFile = File(...)):
         name_parts = name_raw.strip().split(' ')
         first_name = name_parts[0]
         last_name = ' '.join(name_parts[1:]) if len(name_parts) > 1 else ''
-        
-        if "-" in dob_raw: dob_formatted = datetime.strptime(dob_raw, "%d-%m-%Y").strftime("%Y-%m-%d")
-        else: dob_formatted = dob_raw
-
+        dob_formatted = datetime.strptime(dob_raw, "%d-%m-%Y").strftime("%Y-%m-%d") if "-" in dob_raw else dob_raw
         father_name = care_of.replace('S/O', '').replace('D/O', '').replace('C/O', '').replace(':', '').strip()
         return { "status": "success", "data": { "firstName": first_name, "lastName": last_name, "dob": dob_formatted, "gender": "Male" if gender_raw == 'M' else "Female" if gender_raw == 'F' else gender_raw, "fatherName": father_name, "aadhar_reference": "XXXX-XXXX-VERIFIED" } }
     else:
