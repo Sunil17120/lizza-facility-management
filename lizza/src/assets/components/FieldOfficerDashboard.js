@@ -26,9 +26,9 @@ const FieldOfficerDashboard = () => {
   const [nearbySites, setNearbySites] = useState([]);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   
-  // Separation of Truth (Fixes UI Traps & Flickering)
-  const [proximateSite, setProximateSite] = useState(null); // Physical GPS proximity
-  const [checkedInSite, setCheckedInSite] = useState(null); // Logical DB status
+  // Separation of Truth
+  const [proximateSite, setProximateSite] = useState(null); 
+  const [checkedInSite, setCheckedInSite] = useState(null); 
   const [checkedIn, setCheckedIn] = useState(false);
   
   // Metrics & Forms
@@ -60,7 +60,8 @@ const FieldOfficerDashboard = () => {
       const v = JSON.parse(localStorage.getItem('offlineVisitQueue') || '[]').length;
       const a = JSON.parse(localStorage.getItem('offlineAttendanceQueue') || '[]').length;
       const s = JSON.parse(localStorage.getItem('offlineShiftQueue') || '[]').length;
-      setPendingOfflineActions(v + a + s);
+      const l = JSON.parse(localStorage.getItem('offlineLocationQueue') || '[]').length;
+      setPendingOfflineActions(v + a + s + l);
   }, []);
 
   const fetchData = useCallback(async (isSilent = false) => {
@@ -68,48 +69,45 @@ const FieldOfficerDashboard = () => {
     isFetchingRef.current = true;
     const t = Date.now();
     
-    try {
-        const [locRes, histRes, profRes, shiftRes] = await Promise.all([
-            fetch(`${API_BASE_URL}/api/admin/locations?_t=${t}`),
-            fetch(`${API_BASE_URL}/api/field-officer/my-visits?email=${userEmail}&_t=${t}`),
-            fetch(`${API_BASE_URL}/api/user/profile?email=${userEmail}&_t=${t}`),
-            fetch(`${API_BASE_URL}/api/shift/current?email=${userEmail}&_t=${t}`)
-        ]);
-        
-        let loadedLocs = [];
-        if (locRes.ok) {
-            loadedLocs = await locRes.json();
-            setLocations(loadedLocs);
-        }
-        if (histRes.ok) setVisitHistory(await histRes.json());
-        
-        if (profRes.ok) {
-            const prof = await profRes.json();
-            setCheckedIn(Boolean(prof.checked_in));
-            if (prof.checked_in && prof.active_location_id) {
-                const site = loadedLocs.find(l => Number(l.id) === Number(prof.active_location_id));
-                setCheckedInSite(site || null);
-            } else {
-                setCheckedInSite(null);
-            }
-        }
-        
-        if (shiftRes.ok) {
-            const shift = await shiftRes.json();
-            if (shift.is_active) {
-                setDutyStatus(shift.is_on_break ? 'ON_BREAK' : 'ON_DUTY');
-                setShiftData(shift);
-                if (!shift.is_on_break && isApp) LizzaTracker.startTracking({ email: userEmail });
-            } else {
-                setDutyStatus('OFF_DUTY');
-                setShiftData(null);
-                setTravelHours(0);
-                if (isApp) LizzaTracker.stopTracking();
-            }
-        }
-    } finally {
-        isFetchingRef.current = false;
+    const [locRes, histRes, profRes, shiftRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/api/admin/locations?_t=${t}`).catch(() => ({ ok: false })),
+        fetch(`${API_BASE_URL}/api/field-officer/my-visits?email=${userEmail}&_t=${t}`).catch(() => ({ ok: false })),
+        fetch(`${API_BASE_URL}/api/user/profile?email=${userEmail}&_t=${t}`).catch(() => ({ ok: false })),
+        fetch(`${API_BASE_URL}/api/shift/current?email=${userEmail}&_t=${t}`).catch(() => ({ ok: false }))
+    ]);
+    
+    let loadedLocs = [];
+    if (locRes && locRes.ok) {
+        loadedLocs = await locRes.json();
+        setLocations(loadedLocs);
     }
+    if (histRes && histRes.ok) setVisitHistory(await histRes.json());
+    
+    if (profRes && profRes.ok) {
+        const prof = await profRes.json();
+        setCheckedIn(Boolean(prof.checked_in));
+        if (prof.checked_in && prof.active_location_id) {
+            const site = loadedLocs.find(l => Number(l.id) === Number(prof.active_location_id));
+            setCheckedInSite(site || null);
+        } else {
+            setCheckedInSite(null);
+        }
+    }
+    
+    if (shiftRes && shiftRes.ok) {
+        const shift = await shiftRes.json();
+        if (shift.is_active) {
+            setDutyStatus(shift.is_on_break ? 'ON_BREAK' : 'ON_DUTY');
+            setShiftData(shift);
+            if (!shift.is_on_break && isApp) LizzaTracker.startTracking({ email: userEmail });
+        } else {
+            setDutyStatus('OFF_DUTY');
+            setShiftData(null);
+            setTravelHours(0);
+            if (isApp) LizzaTracker.stopTracking();
+        }
+    }
+    isFetchingRef.current = false;
   }, [userEmail]);
 
   // LIVE TICKING CLOCKS (Duty & Perfect Travel Time)
@@ -134,7 +132,6 @@ const FieldOfficerDashboard = () => {
         let activeDutyMs = Math.max(0, elapsedMs - breakMs);
         setDutyHours(activeDutyMs / (1000 * 60 * 60));
 
-        // Increment travel time by 1 sec ONLY if driving and not checked in
         if (dutyStatus === 'ON_DUTY' && !checkedInRef.current) {
             currentTravelSec += 1;
         }
@@ -144,7 +141,7 @@ const FieldOfficerDashboard = () => {
     return () => clearInterval(interval);
   }, [dutyStatus, shiftData]); 
 
-  // OFFLINE SYNC LOGIC
+  // STRICTLY SEQUENCED OFFLINE SYNC LOGIC
   const syncOfflineData = useCallback(async () => {
     if (!navigator.onLine || isSyncing || !isApp) return;
     setIsSyncing(true);
@@ -154,29 +151,36 @@ const FieldOfficerDashboard = () => {
         let failed = [];
         for (let item of queue) {
             const req = mapFunc ? mapFunc(item) : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(item) };
-            try {
-                const res = await fetch(`${API_BASE_URL}${endpoint}`, req);
-                if (!res.ok) failed.push(item);
-            } catch { failed.push(item); }
+            const res = await fetch(`${API_BASE_URL}${endpoint}`, req).catch(() => ({ ok: false }));
+            if (!res || !res.ok) failed.push(item);
         }
         localStorage.setItem(storageKey, JSON.stringify(failed));
     };
 
+    // 1. Sync Shift Actions First
     await syncQueue('offlineShiftQueue', '/api/shift/day-action');
+
+    // 2. Sync Location GPS Path Pings
+    let locQ = JSON.parse(localStorage.getItem('offlineLocationQueue') || '[]');
+    if (locQ.length > 0) {
+        const locRes = await fetch(`${API_BASE_URL}/api/user/sync-offline-locations`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: userEmail, locations: locQ })
+        }).catch(() => ({ ok: false }));
+        if (locRes && locRes.ok) localStorage.setItem('offlineLocationQueue', '[]');
+    }
     
-    // Sync Attendance
+    // 3. Sync Attendance (Check-ins/Outs)
     let attQ = JSON.parse(localStorage.getItem('offlineAttendanceQueue') || '[]');
     let fAtt = [];
     for (let act of attQ) {
         const ep = act.actionType === 'CHECK_IN' ? '/api/user/checkin' : '/api/user/checkout';
-        try {
-            const res = await fetch(`${API_BASE_URL}${ep}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(act) });
-            if (!res.ok) fAtt.push(act);
-        } catch { fAtt.push(act); }
+        const res = await fetch(`${API_BASE_URL}${ep}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(act) }).catch(() => ({ ok: false }));
+        if (!res || !res.ok) fAtt.push(act);
     }
     localStorage.setItem('offlineAttendanceQueue', JSON.stringify(fAtt));
 
-    // Sync Visits
+    // 4. Sync Visits (Must happen AFTER attendance is verified by server)
     await syncQueue('offlineVisitQueue', '/api/field-officer/log-visit', (visit) => {
         const formData = new FormData();
         formData.append('email', visit.email); formData.append('location_id', visit.location_id); formData.append('purpose', visit.purpose);
@@ -188,7 +192,7 @@ const FieldOfficerDashboard = () => {
     updateQueueCounts();
     setIsSyncing(false);
     fetchData();
-  }, [isSyncing, fetchData, updateQueueCounts]);
+  }, [isSyncing, fetchData, updateQueueCounts, userEmail]);
 
   useEffect(() => {
     const handleOnline = () => { setIsOnline(true); if (isApp) syncOfflineData(); };
@@ -224,36 +228,61 @@ const FieldOfficerDashboard = () => {
         setIsSubmitting(false);
     } else {
         const ep = type === 'CHECK_IN' ? '/api/user/checkin' : '/api/user/checkout';
-        try {
-            const res = await fetch(`${API_BASE_URL}${ep}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-            if (res.ok) {
-                setAlertMsg({ type: 'success', text: `Successfully ${type === 'CHECK_IN' ? 'Checked In' : 'Checked Out'}` });
-                await fetchData();
-            }
-        } catch (err) {
-            console.error("Attendance Request Failed:", err);
-        } finally {
-            setIsSubmitting(false);
-            isProcessingRef.current = false;
+        const res = await fetch(`${API_BASE_URL}${ep}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }).catch(() => ({ ok: false }));
+        if (res && res.ok) {
+            setAlertMsg({ type: 'success', text: `Successfully ${type === 'CHECK_IN' ? 'Checked In' : 'Checked Out'}` });
+            await fetchData();
         }
+        setIsSubmitting(false);
+        isProcessingRef.current = false;
     }
   };
 
   // CORE GPS GEOFENCE PROCESSOR
-  const processNewLocation = useCallback(async (lat, lon, accuracy, timestamp) => {
-    if (accuracy > 100) return; // Ignore terrible GPS noise
-    
-    // Throttle API pings to max 1 per 30 seconds
+  const processNewLocation = useCallback(async (lat, lon, accuracy, timestamp, speedMetersPerSec) => {
+    if (accuracy > 100) return; 
+
+    // --- ACTIVITY RECOGNITION (SPEED MATH) ---
+    let speedKmh = 0;
+    if (speedMetersPerSec !== null && speedMetersPerSec !== undefined && speedMetersPerSec >= 0) {
+        speedKmh = speedMetersPerSec * 3.6;
+    } else if (lastSentPositionRef.current && lastSentPositionRef.current.timestamp) {
+        const distMeters = calculateDistance(lastSentPositionRef.current.lat, lastSentPositionRef.current.lon, lat, lon);
+        const timeDiffSec = (new Date(timestamp).getTime() - new Date(lastSentPositionRef.current.timestamp).getTime()) / 1000;
+        if (timeDiffSec > 0) speedKmh = (distMeters / timeDiffSec) * 3.6;
+    }
+
+    let inferredActivity = 'STILL';
+    if (speedKmh > 30) inferredActivity = 'IN_VEHICLE';
+    else if (speedKmh > 12) inferredActivity = 'ON_BICYCLE';
+    else if (speedKmh > 2) inferredActivity = 'WALKING';
+
     const lastPing = localStorage.getItem('last_ping_time');
     if (!lastPing || (Date.now() - parseInt(lastPing)) >= 30000) {
         localStorage.setItem('last_ping_time', Date.now().toString());
-        if (userEmail && dutyStatusRef.current === 'ON_DUTY' && navigator.onLine) {
-            fetch(`${API_BASE_URL}/api/location/ping`, {
-                method: "POST", headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ email: userEmail, lat, lon, accuracy, timestamp, activity_state: 'TRAVELING' })
-            }).catch(()=>{});
+        
+        const payload = { 
+            email: userEmail, lat, lon, accuracy, timestamp, 
+            activity_state: 'TRAVELING',
+            speed: parseFloat(speedKmh.toFixed(2)),
+            activity_type: inferredActivity
+        };
+
+        if (userEmail && dutyStatusRef.current === 'ON_DUTY') {
+            if (navigator.onLine) {
+                fetch(`${API_BASE_URL}/api/location/ping`, {
+                    method: "POST", headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                }).catch(()=>{});
+            } else if (isApp) {
+                const q = JSON.parse(localStorage.getItem('offlineLocationQueue') || '[]');
+                q.push(payload);
+                localStorage.setItem('offlineLocationQueue', JSON.stringify(q));
+                updateQueueCounts();
+            }
         }
     }
+    
     setMyLoc({ lat, lon });
 
     // Calculate Distances
@@ -264,17 +293,14 @@ const FieldOfficerDashboard = () => {
     const insideSite = sitesWithDistance[0] && sitesWithDistance[0].distance <= (sitesWithDistance[0].radius || 200) ? sitesWithDistance[0] : null;
     setProximateSite(insideSite);
 
-    // Auto-Geofence Actions (Trigger Check-in/out if not locked)
+    // Auto-Geofence Actions
     if (dutyStatusRef.current === 'ON_DUTY' && !isProcessingRef.current) {
         if (insideSite && !checkedInRef.current) {
-            // Entered Geofence -> Auto Check In
             handleAttendance('CHECK_IN', insideSite, { lat, lon });
         } 
         else if (!insideSite && checkedInRef.current && checkedInSiteRef.current) {
             const distToActive = calculateDistance(lat, lon, checkedInSiteRef.current.lat, checkedInSiteRef.current.lon);
-            // 300m threshold: Prevents accidental checkouts due to slight GPS drift
             if (distToActive > 300) {
-                // Left Geofence -> Auto Check Out
                 handleAttendance('CHECK_OUT', checkedInSiteRef.current, { lat, lon });
             }
         }
@@ -286,13 +312,22 @@ const FieldOfficerDashboard = () => {
     const watchId = navigator.geolocation.watchPosition(
         (position) => {
             if (isProcessingRef.current) return;
-            const { latitude: lat, longitude: lon, accuracy } = position.coords;
+            const { latitude: lat, longitude: lon, accuracy, speed } = position.coords;
+            const timestamp = new Date(position.timestamp).toISOString();
             
-            // Debounce tiny 5m movements to save processing
-            if (lastSentPositionRef.current && calculateDistance(lastSentPositionRef.current.lat, lastSentPositionRef.current.lon, lat, lon) < 5) return;
-            lastSentPositionRef.current = { lat, lon };
-            
-            processNewLocation(lat, lon, accuracy, new Date(position.timestamp).toISOString()); 
+            let shouldUpdate = false;
+            if (!lastSentPositionRef.current) {
+                shouldUpdate = true;
+            } else {
+                const dist = calculateDistance(lastSentPositionRef.current.lat, lastSentPositionRef.current.lon, lat, lon);
+                const timePassed = (new Date(timestamp).getTime() - new Date(lastSentPositionRef.current.timestamp).getTime()) / 1000;
+                if (dist > 5 || timePassed > 120) shouldUpdate = true;
+            }
+
+            if (shouldUpdate) {
+                lastSentPositionRef.current = { lat, lon, timestamp };
+                processNewLocation(lat, lon, accuracy, timestamp, speed); 
+            }
         }, 
         () => {}, { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
@@ -311,8 +346,8 @@ const FieldOfficerDashboard = () => {
         else { setDutyStatus(action === 'BREAK' ? 'ON_BREAK' : 'OFF_DUTY'); LizzaTracker.stopTracking(); }
         updateQueueCounts();
     } else {
-        const res = await fetch(`${API_BASE_URL}/api/shift/day-action`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-        if (res.ok) {
+        const res = await fetch(`${API_BASE_URL}/api/shift/day-action`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }).catch(() => ({ ok: false }));
+        if (res && res.ok) {
             await fetchData(); 
             if (action === 'START' || action === 'RESUME') { if (isApp) LizzaTracker.startTracking({ email: userEmail }); } 
             else { if (isApp) LizzaTracker.stopTracking(); }
@@ -324,7 +359,9 @@ const FieldOfficerDashboard = () => {
   const handleVisitSubmit = async (e) => {
     e.preventDefault();
     
-    // SAFEGUARD: Use checkedInSite first, fallback to proximateSite if GPS drifts
+    // SAFEGUARD: Wait for Check In Status Update
+    if (!checkedIn) return alert("Wait! The system has not confirmed your check-in yet. Please wait for the 'Inside Geofence' green status.");
+    
     const targetSiteForVisit = checkedInSite || proximateSite || (nearbySites.length > 0 ? nearbySites[0] : null);
     
     if (!targetSiteForVisit || !myLoc) return alert("You must be officially checked into a site to log a visit.");
@@ -358,8 +395,8 @@ const FieldOfficerDashboard = () => {
         formData.append('lat', myLoc.lat); formData.append('lon', myLoc.lon); formData.append('timestamp', timestamp); 
         compressedPhotos.forEach((p) => { formData.append('photos', p); });
 
-        const res = await fetch(`${API_BASE_URL}/api/field-officer/log-visit`, { method: 'POST', body: formData });
-        if (res.ok) {
+        const res = await fetch(`${API_BASE_URL}/api/field-officer/log-visit`, { method: 'POST', body: formData }).catch(() => ({ ok: false, json: async () => ({ detail: "Network error" }) }));
+        if (res && res.ok) {
             setAlertMsg({ type: 'success', text: 'Visit logged successfully!' });
             setPurpose(''); setVisitEntries([{ photo: null, details: '' }]);
             fetchData(); 
@@ -464,13 +501,11 @@ const FieldOfficerDashboard = () => {
                         )}
 
                         <div className="d-flex gap-2 mb-3">
-                          {/* Only show Manual Check In if NOT checked in and physically near a site */}
                           {!checkedIn && proximateSite && (
                             <Button variant="success" className="w-100 fw-bold" disabled={isSubmitting} onClick={() => handleAttendance('CHECK_IN', proximateSite, myLoc)}>
                                 <LogIn className="me-2" size={16}/> Manual Check In
                             </Button>
                           )}
-                          {/* ALWAYS show Manual Check Out if checked in, regardless of proximity */}
                           {checkedIn && (
                             <Button variant="danger" className="w-100 fw-bold" disabled={isSubmitting} onClick={() => handleAttendance('CHECK_OUT', checkedInSite || proximateSite, myLoc)}>
                                 <LogOut className="me-2" size={16}/> Manual Check Out
@@ -478,7 +513,6 @@ const FieldOfficerDashboard = () => {
                           )}
                         </div>
 
-                        {/* ALWAYS show Visit form if checked in, preventing the ghost-trap bug */}
                         {checkedIn && (
                           <Form onSubmit={handleVisitSubmit} className="mt-2 border-top pt-3">
                             <h6 className="fw-bold mb-3"><FileText className="me-2" size={18}/>Log Visit Report</h6>
