@@ -1425,22 +1425,47 @@ const AdminDashboard = () => {
           </Modal.Body>
       </Modal>
 
-      <Modal show={editLocModal} onHide={() => setEditLocModal(false)} centered>
-          <Modal.Header closeButton><Modal.Title className="h6 fw-bold">Edit Branch Location</Modal.Title></Modal.Header>
-          <Modal.Body>
-              {editingLoc && (
-                  <Form onSubmit={handleUpdateBranch}>
-                      <Form.Group className="mb-2"><Form.Label className="small fw-bold">Branch Name</Form.Label><Form.Control size="sm" value={editingLoc?.name || ''} onChange={e => setEditingLoc({...editingLoc, name: e.target.value})} required /></Form.Group>
-                      <Row>
-                          <Col><Form.Group className="mb-2"><Form.Label className="small fw-bold">Latitude</Form.Label><Form.Control size="sm" value={editingLoc?.lat || ''} onChange={e => setEditingLoc({...editingLoc, lat: e.target.value})} required /></Form.Group></Col>
-                          <Col><Form.Group className="mb-2"><Form.Label className="small fw-bold">Longitude</Form.Label><Form.Control size="sm" value={editingLoc?.lon || ''} onChange={e => setEditingLoc({...editingLoc, lon: e.target.value})} required /></Form.Group></Col>
-                      </Row>
-                      <Form.Group className="mb-4"><Form.Label className="small fw-bold">Radius (meters)</Form.Label><Form.Control size="sm" type="number" value={editingLoc?.radius || 200} onChange={e => setEditingLoc({...editingLoc, radius: e.target.value})} required /></Form.Group>
-                      <Button type="submit" variant="primary" size="sm" className="w-100 fw-bold">UPDATE BRANCH</Button>
-                  </Form>
-              )}
-          </Modal.Body>
-      </Modal>
+    <Modal show={editLocModal} onHide={() => setEditLocModal(false)} centered>
+    <Modal.Header closeButton><Modal.Title className="h6 fw-bold">Edit Branch Location</Modal.Title></Modal.Header>
+    <Modal.Body>
+        {editingLoc && (
+            <Form onSubmit={handleUpdateBranch}>
+                <Form.Group className="mb-2">
+                    <Form.Label className="small fw-bold">Branch Name</Form.Label>
+                    <Form.Control size="sm" value={editingLoc?.name || ''} onChange={e => setEditingLoc({...editingLoc, name: e.target.value})} required />
+                </Form.Group>
+                <Row>
+                    <Col>
+                        <Form.Group className="mb-2">
+                            <Form.Label className="small fw-bold">Latitude</Form.Label>
+                            <Form.Control size="sm" type="number" step="any" value={editingLoc?.lat || ''} onChange={e => setEditingLoc({...editingLoc, lat: e.target.value})} required />
+                        </Form.Group>
+                    </Col>
+                    <Col>
+                        <Form.Group className="mb-2">
+                            <Form.Label className="small fw-bold">Longitude</Form.Label>
+                            <Form.Control size="sm" type="number" step="any" value={editingLoc?.lon || ''} onChange={e => setEditingLoc({...editingLoc, lon: e.target.value})} required />
+                        </Form.Group>
+                    </Col>
+                </Row>
+                <Form.Group className="mb-4">
+                    <Form.Label className="small fw-bold text-primary">Geofence Radius (in meters)</Form.Label>
+                    <Form.Control 
+                        size="sm" 
+                        type="number" 
+                        value={editingLoc?.radius || 200} 
+                        onChange={e => setEditingLoc({...editingLoc, radius: e.target.value})} 
+                        required 
+                    />
+                    <Form.Text className="text-muted">
+                        Changes will apply to all officers within 30 seconds.
+                    </Form.Text>
+                </Form.Group>
+                <Button type="submit" variant="primary" size="sm" className="w-100 fw-bold">UPDATE BRANCH SETTINGS</Button>
+            </Form>
+        )}
+    </Modal.Body>
+</Modal>
 
       <Modal show={editEmpModal} onHide={() => setEditEmpModal(false)} size="lg" centered>
         <Modal.Header closeButton className="bg-info text-white">
