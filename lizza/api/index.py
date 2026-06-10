@@ -569,44 +569,60 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
 
 @app.post("/api/user/checkin")
 def user_checkin(payload: dict, db: Session = Depends(get_db)):
-    email = payload.get("email")
-    location_id = payload.get("location_id")
-    action_time_str = payload.get("timestamp")
-    
-    if not email:
-        raise HTTPException(400, "Email is required")
-
-    action_time = parse_iso_timestamp(action_time_str) if action_time_str else datetime.utcnow()
-
-    user = db.query(User).filter(User.email == email.lower().strip()).first()
-    if not user: 
-        raise HTTPException(404, "User not found")
-    
-    if user.user_type == 'field_officer':
-        active_shift = db.query(ShiftLog).filter(ShiftLog.user_id == user.id, ShiftLog.logout_time == None).first()
-        if not active_shift: 
-            raise HTTPException(400, "No active shift")
-            
-        db.add(SiteStay(officer_id=user.id, location_id=location_id, entry_time=action_time))
+    try:
+        email = payload.get("email", "").lower().strip()
+        location_id = payload.get("location_id")
+        action_time = datetime.utcnow()
         
-        # --- THE FIX: Uniformly update global tracking flags ---
+        if not email or not location_id:
+            raise HTTPException(400, "Email and location_id are required")
+
+        user = db.query(User).filter(User.email == email).first()
+        if not user: 
+            raise HTTPException(404, "User not found")
+        
+        # 1. PRE-CHECK: Validate Business Rules
+        if user.user_type == 'field_officer':
+            # Ensure they have an active shift before allowing site check-in
+            active_shift = db.query(ShiftLog).filter(
+                ShiftLog.user_id == user.id, 
+                ShiftLog.logout_time == None
+            ).first()
+            if not active_shift:
+                raise HTTPException(400, "Field Officer must have an active shift to check in.")
+            
+            # Add site stay log
+            db.add(SiteStay(officer_id=user.id, location_id=location_id, entry_time=action_time))
+            
+        else:
+            # Check if normal user is already checked in
+            existing = db.query(Attendance).filter(
+                Attendance.user_id == user.id, 
+                Attendance.checkout_time == None
+            ).first()
+            if existing:
+                return {"status": "success", "message": "Already checked in"}
+            
+            # Add attendance log
+            db.add(Attendance(user_id=user.id, location_id=location_id, checkin_time=action_time, date=action_time))
+        
+        # 2. Update user state (Unified for both types)
         user.active_location_id = location_id
         user.checked_in = True
         user.is_present = True
         
-    else:
-        existing = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
-        if existing: 
-            return {"status": "success", "message": "Already checked in"}
-            
-        db.add(Attendance(user_id=user.id, location_id=location_id, checkin_time=action_time, date=action_time))
-        
-        user.active_location_id = location_id
-        user.checked_in = True
-        user.is_present = True
+        # 3. Commit
+        db.flush()
+        db.commit()
+        return {"status": "success"}
 
-    db.commit()
-    return {"status": "success"}
+    except HTTPException as he:
+        db.rollback()
+        raise he
+    except Exception as e:
+        db.rollback()
+        print(f"DATABASE WRITE FAILED: {str(e)}")
+        raise HTTPException(500, detail=f"Database write failed: {str(e)}")
 
 @app.post("/api/user/checkout")
 def user_checkout(payload: dict, db: Session = Depends(get_db)):
