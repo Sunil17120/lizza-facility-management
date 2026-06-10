@@ -110,7 +110,6 @@ const FieldOfficerDashboard = () => {
     isFetchingRef.current = false;
   }, [userEmail]);
 
-  // LIVE TICKING CLOCKS (Duty & Perfect Travel Time)
   useEffect(() => {
     if (dutyStatus === 'OFF_DUTY' || !shiftData || !shiftData.login_time) {
         setDutyHours(0); setTravelHours(0); return;
@@ -141,7 +140,6 @@ const FieldOfficerDashboard = () => {
     return () => clearInterval(interval);
   }, [dutyStatus, shiftData]); 
 
-  // STRICTLY SEQUENCED OFFLINE SYNC LOGIC
   const syncOfflineData = useCallback(async () => {
     if (!navigator.onLine || isSyncing || !isApp) return;
     setIsSyncing(true);
@@ -157,10 +155,8 @@ const FieldOfficerDashboard = () => {
         localStorage.setItem(storageKey, JSON.stringify(failed));
     };
 
-    // 1. Sync Shift Actions First
     await syncQueue('offlineShiftQueue', '/api/shift/day-action');
 
-    // 2. Sync Location GPS Path Pings
     let locQ = JSON.parse(localStorage.getItem('offlineLocationQueue') || '[]');
     if (locQ.length > 0) {
         const locRes = await fetch(`${API_BASE_URL}/api/user/sync-offline-locations`, {
@@ -170,7 +166,6 @@ const FieldOfficerDashboard = () => {
         if (locRes && locRes.ok) localStorage.setItem('offlineLocationQueue', '[]');
     }
     
-    // 3. Sync Attendance (Check-ins/Outs)
     let attQ = JSON.parse(localStorage.getItem('offlineAttendanceQueue') || '[]');
     let fAtt = [];
     for (let act of attQ) {
@@ -180,7 +175,6 @@ const FieldOfficerDashboard = () => {
     }
     localStorage.setItem('offlineAttendanceQueue', JSON.stringify(fAtt));
 
-    // 4. Sync Visits (Must happen AFTER attendance is verified by server)
     await syncQueue('offlineVisitQueue', '/api/field-officer/log-visit', (visit) => {
         const formData = new FormData();
         formData.append('email', visit.email); formData.append('location_id', visit.location_id); formData.append('purpose', visit.purpose);
@@ -204,7 +198,6 @@ const FieldOfficerDashboard = () => {
     return () => { window.removeEventListener('online', handleOnline); window.removeEventListener('offline', handleOffline); };
   }, [fetchData, syncOfflineData, updateQueueCounts]);
 
-  // CORE ATTENDANCE HANDLER
   const handleAttendance = async (type, targetSite, loc) => {
     if (isProcessingRef.current) return;
     isProcessingRef.current = true;
@@ -238,11 +231,9 @@ const FieldOfficerDashboard = () => {
     }
   };
 
-  // CORE GPS GEOFENCE PROCESSOR
   const processNewLocation = useCallback(async (lat, lon, accuracy, timestamp, speedMetersPerSec) => {
     if (accuracy > 100) return; 
 
-    // --- ACTIVITY RECOGNITION (SPEED MATH) ---
     let speedKmh = 0;
     if (speedMetersPerSec !== null && speedMetersPerSec !== undefined && speedMetersPerSec >= 0) {
         speedKmh = speedMetersPerSec * 3.6;
@@ -285,7 +276,6 @@ const FieldOfficerDashboard = () => {
     
     setMyLoc({ lat, lon });
 
-    // Calculate Distances
     const sitesWithDistance = locations.map(site => ({ ...site, distance: calculateDistance(lat, lon, site.lat, site.lon) }));
     sitesWithDistance.sort((a, b) => a.distance - b.distance);
     setNearbySites(sitesWithDistance);
@@ -293,7 +283,6 @@ const FieldOfficerDashboard = () => {
     const insideSite = sitesWithDistance[0] && sitesWithDistance[0].distance <= (sitesWithDistance[0].radius || 200) ? sitesWithDistance[0] : null;
     setProximateSite(insideSite);
 
-    // Auto-Geofence Actions
     if (dutyStatusRef.current === 'ON_DUTY' && !isProcessingRef.current) {
         if (insideSite && !checkedInRef.current) {
             handleAttendance('CHECK_IN', insideSite, { lat, lon });
@@ -358,8 +347,6 @@ const FieldOfficerDashboard = () => {
 
   const handleVisitSubmit = async (e) => {
     e.preventDefault();
-    
-    // SAFEGUARD: Wait for Check In Status Update
     if (!checkedIn) return alert("Wait! The system has not confirmed your check-in yet. Please wait for the 'Inside Geofence' green status.");
     
     const targetSiteForVisit = checkedInSite || proximateSite || (nearbySites.length > 0 ? nearbySites[0] : null);
@@ -409,51 +396,146 @@ const FieldOfficerDashboard = () => {
   };
 
   return (
-    <Container className="py-4">
+    <Container fluid="md" className="py-3 py-md-4">
       <div className="d-flex justify-content-between align-items-center mb-3">
-        <h2 className="fw-bold m-0"><Navigation className="text-primary me-2" />Field Operations</h2>
+        <h3 className="fw-bold m-0"><Navigation className="text-primary me-2" size={24}/>Field Operations</h3>
       </div>
 
       {(!isOnline || pendingOfflineActions > 0) && isApp && (
-        <Alert variant="warning" className="d-flex justify-content-between align-items-center mb-4 py-2 shadow-sm border-warning">
+        <Alert variant="warning" className="d-flex justify-content-between align-items-center mb-3 py-2 shadow-sm border-warning small">
             <span>
-                {isOnline ? <RefreshCw size={18} className="me-2 text-primary" /> : <WifiOff size={18} className="me-2 text-danger" />}
-                <strong className="me-2">{isOnline ? 'Syncing Backlog...' : 'Offline Mode'}</strong> 
-                {pendingOfflineActions} pending offline action{pendingOfflineActions === 1 ? '' : 's'} safely stored on device.
+                {isOnline ? <RefreshCw size={16} className="me-2 text-primary" /> : <WifiOff size={16} className="me-2 text-danger" />}
+                <strong className="me-1">{isOnline ? 'Syncing...' : 'Offline Mode'}</strong> 
+                {pendingOfflineActions} pending action{pendingOfflineActions === 1 ? '' : 's'}.
             </span>
         </Alert>
       )}
 
+      {/* SHIFT CONTROL CARD */}
       <Card className="border-0 shadow-sm mb-4 bg-light border-start border-5 border-primary">
-          <Card.Body className="d-flex justify-content-between align-items-center flex-wrap gap-3">
+          <Card.Body className="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3">
               <div>
-                  <h5 className="fw-bold mb-1"><Clock className="me-2 text-primary"/> Master Day Shift</h5>
+                  <h5 className="fw-bold mb-1"><Clock className="me-2 text-primary" size={20}/> Master Day Shift</h5>
                   <div className="text-muted small">
                       {dutyStatus === 'OFF_DUTY' ? "Start your day shift to enable location tracking and site check-ins." : 
                        dutyStatus === 'ON_BREAK' ? "Shift paused. Location tracking is currently disabled." : 
-                       <>Duty Hours: {Math.floor(dutyHours)}h {Math.floor((dutyHours % 1) * 60)}m &nbsp;|&nbsp; <Activity size={14} className="text-success ms-1 me-1"/> Travel Time: {Math.floor(travelHours)}h {Math.floor((travelHours % 1) * 60)}m</>}
+                       <div className="d-flex align-items-center flex-wrap mt-1">
+                           <span className="me-3"><strong>Duty:</strong> {Math.floor(dutyHours)}h {Math.floor((dutyHours % 1) * 60)}m</span>
+                           <span><Activity size={14} className="text-success ms-1 me-1"/> <strong>Travel:</strong> {Math.floor(travelHours)}h {Math.floor((travelHours % 1) * 60)}m</span>
+                       </div>}
                   </div>
               </div>
-              <div className="d-flex gap-2 flex-wrap">
-                  {dutyStatus === 'OFF_DUTY' && <Button variant="primary" className="fw-bold px-4" onClick={() => handleDayShiftAction('START')} disabled={isSubmitting}>Start Day Shift</Button>}
-                  {dutyStatus === 'ON_DUTY' && <Button variant="warning" className="fw-bold text-dark" onClick={() => handleDayShiftAction('BREAK')} disabled={isSubmitting}><Coffee size={16} className="me-1"/> Take Break</Button>}
-                  {dutyStatus === 'ON_BREAK' && <Button variant="success" className="fw-bold px-4" onClick={() => handleDayShiftAction('RESUME')} disabled={isSubmitting}>Resume Duty</Button>}
-                  {dutyStatus !== 'OFF_DUTY' && <Button variant="danger" className="fw-bold" onClick={() => handleDayShiftAction('END')} disabled={isSubmitting || dutyHours < 8}>End Day Shift</Button>}
+              <div className="d-flex gap-2">
+                  {dutyStatus === 'OFF_DUTY' && <Button variant="primary" className="fw-bold flex-grow-1" onClick={() => handleDayShiftAction('START')} disabled={isSubmitting}>Start Shift</Button>}
+                  {dutyStatus === 'ON_DUTY' && <Button variant="warning" className="fw-bold text-dark flex-grow-1" onClick={() => handleDayShiftAction('BREAK')} disabled={isSubmitting}><Coffee size={16} className="me-1"/> Break</Button>}
+                  {dutyStatus === 'ON_BREAK' && <Button variant="success" className="fw-bold flex-grow-1" onClick={() => handleDayShiftAction('RESUME')} disabled={isSubmitting}>Resume Duty</Button>}
+                  {dutyStatus !== 'OFF_DUTY' && <Button variant="danger" className="fw-bold flex-grow-1" onClick={() => handleDayShiftAction('END')} disabled={isSubmitting || dutyHours < 8}>End Shift</Button>}
               </div>
           </Card.Body>
       </Card>
 
-      <Row className="g-4 mb-4">
-        <Col lg={8}>
-          <Card className="border-0 shadow-sm overflow-hidden" style={{ height: '600px' }}>
+      <Row className="g-3 mb-4">
+        {/* MOBILE FIRST: ACTION PANEL (Order 1 on mobile, Order 2 on desktop) */}
+        <Col lg={4} className="order-1 order-lg-2">
+          <div className="d-flex flex-column gap-3 h-100">
+            <Card className="border-0 shadow-sm">
+              <Card.Body>
+                <h5 className="fw-bold mb-3 d-flex align-items-center"><MapPin className="me-2 text-danger"/> Site Attendance</h5>
+                
+                {alertMsg && <Alert variant={alertMsg.type} className="mb-3 small fw-bold">{alertMsg.text}</Alert>}
+                
+                {dutyStatus === 'OFF_DUTY' ? (
+                    <Alert variant="secondary" className="text-center mb-0">
+                        <span className="d-block mb-1 fw-bold">Shift Inactive</span>
+                        <small className="text-muted">You must be On-Duty to check into a site.</small>
+                    </Alert>
+                ) : dutyStatus === 'ON_BREAK' ? (
+                     <Alert variant="warning" className="text-center mb-0">
+                        <span className="d-block mb-1 fw-bold">On Break</span>
+                        <small className="text-muted">Resume duty to access site actions.</small>
+                    </Alert>
+                ) : (
+                    <>
+                        {/* PROMINENT CHECK-IN UI FOR MOBILE */}
+                        {checkedIn ? (
+                          <div className="bg-success bg-opacity-10 border border-success border-2 rounded p-3 mb-3 text-center shadow-sm">
+                              <CheckCircle className="text-success mb-2" size={36}/>
+                              <h5 className="text-success fw-bold mb-1">ACTIVE CHECK-IN</h5>
+                              <div className="text-dark fs-5 fw-bolder mt-2">{checkedInSite ? checkedInSite.name : 'Verifying Site...'}</div>
+                          </div>
+                        ) : proximateSite ? (
+                          <Alert variant="info" className="mb-3 text-center border-info border-2">
+                              You are currently near <br/><strong className="fs-6">{proximateSite.name}</strong>
+                          </Alert>
+                        ) : (
+                          <Alert variant="secondary" className="mb-3 text-center">Drive to a geofence to check in.</Alert>
+                        )}
+
+                        <div className="d-flex gap-2 mb-3">
+                          {!checkedIn && proximateSite && (
+                            <Button variant="success" size="lg" className="w-100 fw-bold shadow-sm" disabled={isSubmitting} onClick={() => handleAttendance('CHECK_IN', proximateSite, myLoc)}>
+                                <LogIn className="me-2" size={20}/> Check In Here
+                            </Button>
+                          )}
+                          {checkedIn && (
+                            <Button variant="danger" size="lg" className="w-100 fw-bold shadow-sm" disabled={isSubmitting} onClick={() => handleAttendance('CHECK_OUT', checkedInSite || proximateSite, myLoc)}>
+                                <LogOut className="me-2" size={20}/> Check Out
+                            </Button>
+                          )}
+                        </div>
+
+                        {checkedIn && (
+                          <Form onSubmit={handleVisitSubmit} className="mt-4 border-top pt-3">
+                            <h6 className="fw-bold mb-3 text-primary"><FileText className="me-2" size={18}/>Submit Site Report</h6>
+                            
+                            <Form.Select className="mb-3 py-2" value={purpose} onChange={e => setPurpose(e.target.value)} required>
+                                <option value="">Select Purpose of Visit...</option>
+                                <option value="Routine Inspection">Routine Inspection</option>
+                                <option value="Client Meeting">Client Meeting</option>
+                                <option value="Issue Resolution">Issue Resolution</option>
+                                <option value="Training">Training</option>
+                                <option value="Bill Submission">Bill Submission</option>
+                            </Form.Select>
+
+                            <div className="bg-light p-2 rounded mb-3" style={{maxHeight: '350px', overflowY: 'auto'}}>
+                                {visitEntries.map((entry, idx) => (
+                                    <div key={idx} className="mb-3 p-3 bg-white border rounded shadow-sm">
+                                        <div className="d-flex justify-content-between align-items-center mb-3">
+                                            <small className="fw-bold text-primary">Evidence #{idx + 1}</small>
+                                            {visitEntries.length > 1 && (
+                                                <Badge bg="danger" style={{cursor: 'pointer', padding: '6px 10px'}} onClick={() => { const n = [...visitEntries]; n.splice(idx, 1); setVisitEntries(n); }}>Remove</Badge>
+                                            )}
+                                        </div>
+                                        <Form.Control type="file" accept="image/*" capture="environment" className="mb-3" onChange={(e) => { const n = [...visitEntries]; n[idx].photo = e.target.files[0]; setVisitEntries(n); }} required />
+                                        <Form.Control as="textarea" rows={3} placeholder="Add detailed remarks or observations here..." value={entry.details} onChange={(e) => { const n = [...visitEntries]; n[idx].details = e.target.value; setVisitEntries(n); }} required />
+                                    </div>
+                                ))}
+                                <Button variant="outline-primary" className="w-100 fw-bold py-2 border-dashed" onClick={() => setVisitEntries([...visitEntries, { photo: null, details: '' }])}>+ Add Another Photo</Button>
+                            </div>
+
+                            <Button type="submit" variant="primary" size="lg" className="w-100 fw-bold shadow-sm mt-2" disabled={isSubmitting}>
+                              {isSubmitting ? <Spinner size="sm" /> : "SUBMIT FULL REPORT"}
+                            </Button>
+                          </Form>
+                        )}
+                    </>
+                )}
+              </Card.Body>
+            </Card>
+          </div>
+        </Col>
+
+        {/* MOBILE SECOND: MAP (Order 2 on mobile, Order 1 on desktop) */}
+        <Col lg={8} className="order-2 order-lg-1">
+          <Card className="border-0 shadow-sm overflow-hidden h-100" style={{ minHeight: '350px' }}>
             {dutyStatus === 'OFF_DUTY' ? (
-                <div className="h-100 d-flex flex-column align-items-center justify-content-center bg-light text-muted">
-                    <MapIcon size={48} className="mb-3 text-secondary"/>
-                    <h5>Map Unavailable</h5>
-                    <p>Start your Master Day Shift to view assignments and enable live tracking.</p>
+                <div className="h-100 d-flex flex-column align-items-center justify-content-center bg-light text-muted p-4 text-center">
+                    <MapIcon size={48} className="mb-3 text-secondary opacity-50"/>
+                    <h5 className="fw-bold text-dark">Map Offline</h5>
+                    <p className="small mb-0">Start your Master Day Shift to view assignments and enable live GPS tracking.</p>
                 </div>
             ) : (
-                <MapContainer center={[12.9716, 77.5946]} zoom={11} style={{ height: '100%' }}>
+                <MapContainer center={[12.9716, 77.5946]} zoom={11} style={{ height: '100%', minHeight: '350px' }}>
                   <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
                   {locations.map(site => (
                     <Circle key={site.id} center={[site.lat, site.lon]} radius={site.radius || 200} pathOptions={{ color: 'blue', fillOpacity: 0.2 }}>
@@ -469,144 +551,64 @@ const FieldOfficerDashboard = () => {
             )}
           </Card>
         </Col>
+      </Row>
 
+      {/* RECENT VISITS & NEARBY SITES DIRECTORY */}
+      <Row className="g-3 mb-4">
         <Col lg={4}>
-          <div className="d-flex flex-column gap-3 h-100">
-            <Card className="border-0 shadow-sm">
-              <Card.Body>
-                <h5 className="fw-bold mb-3 d-flex align-items-center"><MapPin className="me-2 text-danger"/> Site Attendance</h5>
-                
-                {alertMsg && <Alert variant={alertMsg.type} className="mb-3 small fw-bold">{alertMsg.text}</Alert>}
-                
-                {dutyStatus === 'OFF_DUTY' ? (
-                    <Alert variant="secondary" className="text-center mb-0">
-                        <span className="d-block mb-1">Shift Inactive</span>
-                        <small className="text-muted">You must be On-Duty to check into a site.</small>
-                    </Alert>
-                ) : dutyStatus === 'ON_BREAK' ? (
-                     <Alert variant="warning" className="text-center mb-0">
-                        <span className="d-block mb-1">On Break</span>
-                        <small className="text-muted">Resume duty to access site actions.</small>
-                    </Alert>
-                ) : (
-                    <>
-                        {checkedIn ? (
-                          <Alert variant="success" className="d-flex align-items-center fw-bold mb-3">
-                              <CheckCircle className="me-2"/> Checked In {checkedInSite ? `at ${checkedInSite.name}` : ''}
-                          </Alert>
-                        ) : proximateSite ? (
-                          <Alert variant="info" className="mb-3">You are near <b>{proximateSite.name}</b></Alert>
-                        ) : (
-                          <Alert variant="secondary" className="mb-3">Drive to a geofence to check in.</Alert>
-                        )}
-
-                        <div className="d-flex gap-2 mb-3">
-                          {!checkedIn && proximateSite && (
-                            <Button variant="success" className="w-100 fw-bold" disabled={isSubmitting} onClick={() => handleAttendance('CHECK_IN', proximateSite, myLoc)}>
-                                <LogIn className="me-2" size={16}/> Manual Check In
-                            </Button>
-                          )}
-                          {checkedIn && (
-                            <Button variant="danger" className="w-100 fw-bold" disabled={isSubmitting} onClick={() => handleAttendance('CHECK_OUT', checkedInSite || proximateSite, myLoc)}>
-                                <LogOut className="me-2" size={16}/> Manual Check Out
-                            </Button>
-                          )}
-                        </div>
-
-                        {checkedIn && (
-                          <Form onSubmit={handleVisitSubmit} className="mt-2 border-top pt-3">
-                            <h6 className="fw-bold mb-3"><FileText className="me-2" size={18}/>Log Visit Report</h6>
-                            <Form.Select size="sm" className="mb-2" value={purpose} onChange={e => setPurpose(e.target.value)} required>
-                                <option value="">Select Purpose...</option>
-                                <option value="Routine Inspection">Routine Inspection</option>
-                                <option value="Client Meeting">Client Meeting</option>
-                                <option value="Issue Resolution">Issue Resolution</option>
-                                <option value="Training">Training</option>
-                                <option value="Bill Submission">Bill Submission</option>
-                            </Form.Select>
-
-                            <div className="bg-light p-2 rounded mb-3" style={{maxHeight: '300px', overflowY: 'auto'}}>
-                                {visitEntries.map((entry, idx) => (
-                                    <div key={idx} className="mb-3 p-2 bg-white border rounded shadow-sm">
-                                        <div className="d-flex justify-content-between align-items-center mb-2">
-                                            <small className="fw-bold text-primary">Evidence #{idx + 1}</small>
-                                            {visitEntries.length > 1 && (
-                                                <Badge bg="danger" style={{cursor: 'pointer'}} onClick={() => { const n = [...visitEntries]; n.splice(idx, 1); setVisitEntries(n); }}>Remove</Badge>
-                                            )}
-                                        </div>
-                                        <Form.Control type="file" size="sm" accept="image/*" capture="environment" className="mb-2" onChange={(e) => { const n = [...visitEntries]; n[idx].photo = e.target.files[0]; setVisitEntries(n); }} required />
-                                        <Form.Control size="sm" as="textarea" rows={2} placeholder="Description/Remarks..." value={entry.details} onChange={(e) => { const n = [...visitEntries]; n[idx].details = e.target.value; setVisitEntries(n); }} required />
-                                    </div>
-                                ))}
-                                <Button variant="outline-primary" size="sm" className="w-100 fw-bold border-dashed" onClick={() => setVisitEntries([...visitEntries, { photo: null, details: '' }])}>+ Add Another Photo</Button>
-                            </div>
-
-                            <Button type="submit" variant="primary" className="w-100 fw-bold" disabled={isSubmitting}>
-                              {isSubmitting ? <Spinner size="sm" /> : "SUBMIT FULL REPORT"}
-                            </Button>
-                          </Form>
-                        )}
-                    </>
-                )}
-              </Card.Body>
-            </Card>
-
-            <Card className="border-0 shadow-sm flex-grow-1 d-flex flex-column">
+            <Card className="border-0 shadow-sm h-100">
               <Card.Header className="bg-white py-3 border-bottom-0"><h6 className="fw-bold m-0"><MapIcon className="me-2 text-primary" size={18} /> Nearby Sites Directory</h6></Card.Header>
-              <Card.Body className="p-0 overflow-auto" style={{ maxHeight: '250px' }}>
+              <Card.Body className="p-0 overflow-auto" style={{ maxHeight: '300px' }}>
                 <Table hover responsive className="mb-0 align-middle small">
                   <tbody>
                     {nearbySites.map(site => (
                         <tr key={site.id}>
-                          <td className="ps-3 border-0 border-bottom">
-                            <div className="fw-bold">{site.name}</div>
-                            <div className="text-muted">{site.distance < 1000 ? `${Math.round(site.distance)}m` : `${(site.distance / 1000).toFixed(1)}km`}</div>
+                          <td className="ps-4 border-0 border-bottom py-3">
+                            <div className="fw-bold text-dark">{site.name}</div>
+                            <div className="text-muted mt-1">{site.distance < 1000 ? `${Math.round(site.distance)}m away` : `${(site.distance / 1000).toFixed(1)}km away`}</div>
                           </td>
                         </tr>
                     ))}
-                    {nearbySites.length === 0 && <tr><td className="text-center text-muted py-4">No sites detected nearby.</td></tr>}
+                    {nearbySites.length === 0 && <tr><td className="text-center text-muted py-5">No sites detected nearby.</td></tr>}
                   </tbody>
                 </Table>
               </Card.Body>
             </Card>
-          </div>
         </Col>
-      </Row>
 
-      <Row className="g-4 mb-4">
-        <Col xs={12}>
-          <Card className="border-0 shadow-sm">
+        <Col lg={8}>
+          <Card className="border-0 shadow-sm h-100">
             <Card.Header className="bg-white py-3 border-bottom-0 d-flex justify-content-between align-items-center">
               <h6 className="fw-bold m-0"><FileText className="me-2 text-primary" size={18} /> My Recent Site Visit Reports</h6>
-              <Button variant="outline-primary" size="sm" onClick={() => fetchData(true)} disabled={isFetchingRef.current}><RefreshCw size={14} className="me-1"/> Refresh Logs</Button>
+              <Button variant="outline-primary" size="sm" onClick={() => fetchData(true)} disabled={isFetchingRef.current}><RefreshCw size={14} className="me-1"/> Refresh</Button>
             </Card.Header>
-            <Card.Body className="p-0 overflow-auto" style={{ maxHeight: '400px' }}>
-               <Table hover responsive className="mb-0 align-middle small">
+            <Card.Body className="p-0 overflow-auto" style={{ maxHeight: '300px' }}>
+               <Table hover responsive className="mb-0 align-middle small text-nowrap">
                    <thead className="table-light">
                        <tr>
-                           <th className="ps-4">Date & Time</th>
-                           <th>Site Name</th>
-                           <th>Purpose</th>
-                           <th>Remarks / Details</th>
-                           <th>Evidence</th>
+                           <th className="ps-4 py-3">Date & Time</th>
+                           <th className="py-3">Site Name</th>
+                           <th className="py-3">Purpose</th>
+                           <th className="py-3">Remarks</th>
+                           <th className="py-3 pe-4">Evidence</th>
                        </tr>
                    </thead>
                    <tbody>
                        {visitHistory.length === 0 ? (
                            <tr>
-                               <td colSpan="5" className="text-center text-muted py-4">No recent site visits recorded.</td>
+                               <td colSpan="5" className="text-center text-muted py-5">No recent site visits recorded.</td>
                            </tr>
                        ) : (
                            visitHistory.map((v, i) => (
                                <tr key={i}>
                                    <td className="ps-4 fw-bold">{v.visit_time}</td>
-                                   <td><MapPin size={12} className="text-danger me-1"/> {v.site_name}</td>
-                                   <td><Badge bg="dark">{v.purpose}</Badge></td>
-                                   <td style={{ maxWidth: '250px' }} className="text-truncate" title={v.remarks}>{v.remarks}</td>
-                                   <td>
+                                   <td><MapPin size={14} className="text-danger me-1"/> {v.site_name}</td>
+                                   <td><Badge bg="dark" className="px-2 py-1">{v.purpose}</Badge></td>
+                                   <td style={{ maxWidth: '200px' }} className="text-truncate" title={v.remarks}>{v.remarks}</td>
+                                   <td className="pe-4">
                                        {v.photo_url ? (
                                            <a href={v.photo_url.split(',')[0]} target="_blank" rel="noreferrer">
-                                              <Badge bg="info">View Photo</Badge>
+                                              <Badge bg="info" className="px-2 py-1 text-decoration-none">View Photo</Badge>
                                            </a>
                                        ) : (
                                            <span className="text-muted">None</span>
