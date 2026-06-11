@@ -63,8 +63,11 @@ const parseReferencesJSON = (jsonStr) => {
     }
 };
 
-// Dynamic - Uses the variable from Vercel/Local .env
-const API_BASE_URL = process.env.REACT_APP_API_BASE_URL;
+// REPLACE THIS:
+// const API_BASE_URL = process.env.REACT_APP_API_BASE_URL;
+
+// WITH THIS (Your actual Hugging Face backend URL):
+const API_BASE_URL = "https://sunil0034-lizza-facility-backend.hf.space";
 
 const AdminDashboard = () => {
   const [mainTab, setMainTab] = useState('overview');
