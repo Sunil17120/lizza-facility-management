@@ -1,14 +1,8 @@
 {
-  "functions": {
-    "api/index.py": {
-      "maxDuration": 10,
-      "memory": 256
-    }
-  },
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": "/api/index.py"
+      "destination": "https://sunil0034-lizza-facility-backend.hf.space/api/$1"
     },
     {
       "source": "/(.*)",

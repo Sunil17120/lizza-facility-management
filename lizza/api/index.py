@@ -1,5 +1,6 @@
 import hashlib, os, math, smtplib, base64, json, requests, calendar, re
 import httpx 
+import uvicorn
 from email.mime.text import MIMEText
 from typing import Optional, List
 from fastapi import FastAPI, Depends, HTTPException, Query, File, UploadFile, Form, Request
@@ -19,7 +20,26 @@ from upstash_redis import Redis as UpstashRedis
 import firebase_admin
 from firebase_admin import credentials, messaging
 
-from .database import engine, SessionLocal, User, EmployeeLocation, OfficeLocation, SiteVisit, SiteStay, ShiftLog, FieldOfficerRoute, Attendance, init_db, cipher
+from database import engine, SessionLocal, User, EmployeeLocation, OfficeLocation, SiteVisit, SiteStay, ShiftLog, FieldOfficerRoute, Attendance, init_db, cipher
+app = FastAPI()
+
+# Explicitly list all allowed frontends to bypass the security block
+origins = [
+    "https://lizza-facility-management.vercel.app",            
+    "https://lizza-facility-management-k81ei4cen.vercel.app",  
+    "http://localhost:3000",                                   
+    "capacitor://localhost",                                   
+    "http://localhost"                                         
+]
+
+# This middleware block MUST be right here, before any @app.get routes
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins, 
+    allow_credentials=True,
+    allow_methods=["*"], 
+    allow_headers=["*"],
+)
 
 with engine.connect() as conn:
     conn.execute(text("""
@@ -33,6 +53,8 @@ with engine.connect() as conn:
         END $$;
     """))
     conn.commit()
+if __name__ == "__main__":
+    uvicorn.run("api.index:app", host="0.0.0.0", port=7860)
 
 firebase_env = os.environ.get("FIREBASE_CREDENTIALS")
 firebase_available = False
@@ -48,14 +70,6 @@ def _parse_firebase_credentials(raw_value: str):
         return json.loads(decoded)
     return None
 
-app = FastAPI()
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"], 
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"], 
-    allow_headers=["*"],
-)
 
 class SafeRedisClient:
     def __init__(self, client): self._client = client
@@ -594,10 +608,12 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
 def user_checkin(payload: dict, db: Session = Depends(get_db)):
     email = payload.get("email", "").lower().strip()
     location_id = payload.get("location_id")
-    action_time = datetime.utcnow()
+    action_time_str = payload.get("timestamp")
     
     if not email or not location_id:
         raise HTTPException(400, "Email and location_id are required")
+
+    action_time = parse_iso_timestamp(action_time_str) if action_time_str else datetime.utcnow()
 
     user = db.query(User).filter(User.email == email).first()
     if not user: 
@@ -611,6 +627,16 @@ def user_checkin(payload: dict, db: Session = Depends(get_db)):
         if not active_shift:
             raise HTTPException(400, "Field Officer must have an active shift to check in.")
         
+        # PREVENT OVERWRITE: Check if already in this exact site
+        active_stay = db.query(SiteStay).filter(
+            SiteStay.officer_id == user.id,
+            SiteStay.location_id == location_id,
+            SiteStay.exit_time == None
+        ).first()
+        
+        if active_stay:
+            return {"status": "success", "message": "Already checked in"}
+            
         db.add(SiteStay(officer_id=user.id, location_id=location_id, entry_time=action_time))
         
     else:
