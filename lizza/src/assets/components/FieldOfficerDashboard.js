@@ -5,7 +5,8 @@ import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { LocalNotifications } from '@capacitor/local-notifications';
 
-const API_BASE_URL = 'https://lizza-facility-management.vercel.app';
+// Dynamic - Uses the variable from Vercel/Local .env
+const API_BASE_URL = process.env.REACT_APP_API_BASE_URL;
 const isApp = Capacitor.isNativePlatform();
 const LizzaTracker = registerPlugin('LizzaTracker');
 

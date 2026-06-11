@@ -5,7 +5,8 @@ import { ShieldCheck, MapPin, MapIcon, AlertTriangle, KeyRound, EyeOff, WifiOff 
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { useUser } from './UserContext'; 
 
-const API_BASE_URL = 'https://lizza-facility-management.vercel.app';
+// Dynamic - Uses the variable from Vercel/Local .env
+const API_BASE_URL = process.env.REACT_APP_API_BASE_URL;
 const isApp = Capacitor.isNativePlatform();
 
 const calculateDistance = (lat1, lon1, lat2, lon2) => { const R = 6371000; const toRad = (deg) => (deg * Math.PI) / 180; const dLat = toRad(lat2 - lat1); const dLon = toRad(lon2 - lon1); const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2; return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)); };
