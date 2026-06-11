@@ -1,10 +1,6 @@
 {
   "rewrites": [
     {
-      "source": "/api/(.*)",
-      "destination": "https://sunil0034-lizza-facility-backend.hf.space/api/$1"
-    },
-    {
       "source": "/(.*)",
       "destination": "/index.html"
     }
