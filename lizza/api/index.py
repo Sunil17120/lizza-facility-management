@@ -293,35 +293,50 @@ def day_shift_action(payload: dict, db: Session = Depends(get_db)):
     email = payload.get("email")
     action = payload.get("action")
     action_time_str = payload.get("timestamp")
-    action_time = datetime.fromisoformat(action_time_str.replace("Z", "+00:00")).replace(tzinfo=None) if action_time_str else datetime.utcnow()
+    action_time = parse_iso_timestamp(action_time_str) if action_time_str else datetime.utcnow()
     
     user = db.query(User).filter(User.email == email.lower().strip()).first()
-    if not user: return {"status": "error"}
+    if not user: 
+        raise HTTPException(404, "User not found")
     
+    today_start = action_time.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_end = today_start + timedelta(days=1)
+    
+    existing_today_shift = db.query(ShiftLog).filter(
+        ShiftLog.user_id == user.id,
+        ShiftLog.shift_date >= today_start,
+        ShiftLog.shift_date < today_end
+    ).first()
+
     shift = db.query(ShiftLog).filter(ShiftLog.user_id == user.id, ShiftLog.logout_time == None).first()
     
-    if action == "START" and not shift:
-        shift_id = f"SFT_{user.id}_{action_time.strftime('%Y%m%d%H%M')}"
-        db.add(ShiftLog(user_id=user.id, shift_id=shift_id, shift_date=action_time, login_time=action_time, current_status="ON_DUTY", total_break_seconds=0))
-        
-        # Field Officers daily attendance is marked when shift starts
-        if user.user_type == 'field_officer':
-            db.add(Attendance(user_id=user.id, checkin_time=action_time, date=action_time))
-            user.is_present = True
+    if action == "START":
+        if existing_today_shift:
+            raise HTTPException(400, "You have already completed a shift today. Only one shift per day is allowed.")
             
-        r.set(f"active_shift:{email}", f"{shift_id}|{user.id}", ex=43200)
-        
+        if not shift:
+            shift_id = f"SFT_{user.id}_{action_time.strftime('%Y%m%d%H%M')}"
+            db.add(ShiftLog(user_id=user.id, shift_id=shift_id, shift_date=action_time, login_time=action_time, current_status="ON_DUTY", total_break_seconds=0))
+            
+            if user.user_type == 'field_officer':
+                db.add(Attendance(user_id=user.id, checkin_time=action_time, date=action_time))
+                user.is_present = True
+                
+            r.set(f"active_shift:{email}", f"{shift_id}|{user.id}", ex=43200)
+            
     elif shift:
         if action == "BREAK":
             shift.current_status = "ON_BREAK"
             shift.is_on_break = True
             shift.break_start_time = action_time
+            
         elif action == "RESUME":
             shift.current_status = "ON_DUTY"
             shift.is_on_break = False
             if shift.break_start_time:
                 shift.total_break_seconds += int((action_time - shift.break_start_time).total_seconds())
                 shift.break_start_time = None
+                
         elif action == "END":
             shift.current_status = "OFF_DUTY"
             shift.logout_time = action_time
@@ -329,16 +344,24 @@ def day_shift_action(payload: dict, db: Session = Depends(get_db)):
                 shift.total_break_seconds += int((action_time - shift.break_start_time).total_seconds())
             shift.is_on_break = False
             
-            # Close Field Officer daily attendance
             if user.user_type == 'field_officer':
                 att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).first()
                 if att:
                     att.checkout_time = action_time
                     att.duration_seconds = int((action_time - att.checkin_time).total_seconds())
+                
+                # Auto-checkout of any active site geofence when ending day shift
+                active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
+                if active_stay:
+                    active_stay.exit_time = action_time
+                
                 user.is_present = False
+                user.active_location_id = None
+                user.checked_in = False
                 
             r.delete(f"active_shift:{email}")
             
+    db.flush()
     db.commit()
     return {"status": "success"}
 
@@ -569,72 +592,58 @@ async def update_location(email: str, lat: float, lon: float, db: Session = Depe
 
 @app.post("/api/user/checkin")
 def user_checkin(payload: dict, db: Session = Depends(get_db)):
-    try:
-        email = payload.get("email", "").lower().strip()
-        location_id = payload.get("location_id")
-        action_time = datetime.utcnow()
-        
-        if not email or not location_id:
-            raise HTTPException(400, "Email and location_id are required")
+    email = payload.get("email", "").lower().strip()
+    location_id = payload.get("location_id")
+    action_time = datetime.utcnow()
+    
+    if not email or not location_id:
+        raise HTTPException(400, "Email and location_id are required")
 
-        user = db.query(User).filter(User.email == email).first()
-        if not user: 
-            raise HTTPException(404, "User not found")
+    user = db.query(User).filter(User.email == email).first()
+    if not user: 
+        raise HTTPException(404, "User not found")
+    
+    if user.user_type == 'field_officer':
+        active_shift = db.query(ShiftLog).filter(
+            ShiftLog.user_id == user.id, 
+            ShiftLog.logout_time == None
+        ).first()
+        if not active_shift:
+            raise HTTPException(400, "Field Officer must have an active shift to check in.")
         
-        # 1. PRE-CHECK: Validate Business Rules
-        if user.user_type == 'field_officer':
-            # Ensure they have an active shift before allowing site check-in
-            active_shift = db.query(ShiftLog).filter(
-                ShiftLog.user_id == user.id, 
-                ShiftLog.logout_time == None
-            ).first()
-            if not active_shift:
-                raise HTTPException(400, "Field Officer must have an active shift to check in.")
-            
-            # Add site stay log
-            db.add(SiteStay(officer_id=user.id, location_id=location_id, entry_time=action_time))
-            
-        else:
-            # Check if normal user is already checked in
-            existing = db.query(Attendance).filter(
-                Attendance.user_id == user.id, 
-                Attendance.checkout_time == None
-            ).first()
-            if existing:
-                return {"status": "success", "message": "Already checked in"}
-            
-            # Add attendance log
-            db.add(Attendance(user_id=user.id, location_id=location_id, checkin_time=action_time, date=action_time))
+        db.add(SiteStay(officer_id=user.id, location_id=location_id, entry_time=action_time))
         
-        # 2. Update user state (Unified for both types)
-        user.active_location_id = location_id
-        user.checked_in = True
-        user.is_present = True
+    else:
+        existing = db.query(Attendance).filter(
+            Attendance.user_id == user.id, 
+            Attendance.checkout_time == None
+        ).first()
+        if existing:
+            return {"status": "success", "message": "Already checked in"}
         
-        # 3. Commit
-        db.flush()
-        db.commit()
-        return {"status": "success"}
-
-    except HTTPException as he:
-        db.rollback()
-        raise he
-    except Exception as e:
-        db.rollback()
-        print(f"DATABASE WRITE FAILED: {str(e)}")
-        raise HTTPException(500, detail=f"Database write failed: {str(e)}")
+        db.add(Attendance(user_id=user.id, location_id=location_id, checkin_time=action_time, date=action_time))
+    
+    user.active_location_id = location_id
+    user.checked_in = True
+    user.is_present = True
+    
+    db.flush()
+    db.commit()
+    return {"status": "success"}
 
 @app.post("/api/user/checkout")
 def user_checkout(payload: dict, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == payload.get("email").lower().strip()).first()
-    if not user: raise HTTPException(404, "User not found")
+    if not user: 
+        raise HTTPException(404, "User not found")
 
     action_time_str = payload.get("timestamp")
     action_time = parse_iso_timestamp(action_time_str) if action_time_str else datetime.utcnow()
     
     if user.user_type == 'field_officer':
         active_stay = db.query(SiteStay).filter(SiteStay.officer_id == user.id, SiteStay.exit_time == None).first()
-        if active_stay: active_stay.exit_time = action_time
+        if active_stay: 
+            active_stay.exit_time = action_time
         user.active_location_id = None
     else:
         active_att = db.query(Attendance).filter(Attendance.user_id == user.id, Attendance.checkout_time == None).order_by(desc(Attendance.checkin_time)).first()
@@ -645,6 +654,7 @@ def user_checkout(payload: dict, db: Session = Depends(get_db)):
         user.active_location_id = None
         user.is_present = False
 
+    db.flush()
     db.commit()
     return {"status": "success"}
 
