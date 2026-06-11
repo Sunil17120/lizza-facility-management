@@ -63,10 +63,6 @@ const parseReferencesJSON = (jsonStr) => {
     }
 };
 
-// REPLACE THIS:
-// const API_BASE_URL = process.env.REACT_APP_API_BASE_URL;
-
-// WITH THIS (Your actual Hugging Face backend URL):
 const API_BASE_URL = "https://sunil0034-lizza-facility-backend.hf.space";
 
 const AdminDashboard = () => {
@@ -137,11 +133,12 @@ const AdminDashboard = () => {
         fetch(`${API_BASE_URL}/api/admin/locations`),
         fetch(`${API_BASE_URL}/api/admin/live-tracking?admin_email=${adminEmail}`)
       ]);
-      if (empRes.ok && locRes.ok) {
-        setEmployees(await empRes.json());
-        setLocations(await locRes.json());
-        if (liveRes.ok) setLiveLocations(await liveRes.json());
-      }
+      
+      // Independent checks to prevent the && trap
+      if (empRes.ok) setEmployees(await empRes.json());
+      if (locRes.ok) setLocations(await locRes.json());
+      if (liveRes.ok) setLiveLocations(await liveRes.json());
+      
       setLoading(false);
   }, [adminEmail]);
 
@@ -151,7 +148,11 @@ const AdminDashboard = () => {
     if (mainTab !== 'overview' || !autoRefreshEnabled) return;
     const interval = setInterval(async () => {
         const res = await fetch(`${API_BASE_URL}/api/admin/live-tracking?admin_email=${adminEmail}`);
-        if (res.ok) setLiveLocations(await res.json());
+        if (res.ok) {
+            setLiveLocations(await res.json());
+        } else {
+            setLiveLocations([]);
+        }
     }, 15000); 
     return () => clearInterval(interval);
   }, [mainTab, autoRefreshEnabled, adminEmail]);
@@ -177,7 +178,11 @@ const AdminDashboard = () => {
       if (filterRole && filterRole !== 'all') url += `&user_type=${filterRole}`;
       
       const res = await fetch(url);
-      if (res.ok) setFieldReports(await res.json());
+      if (res.ok) {
+          setFieldReports(await res.json());
+      } else {
+          setFieldReports([]);
+      }
     setReportsLoading(false);
   }, [reportMonth, reportYear, reportOfficerSearch, filterSite, filterRole, mainTab, employees]);
 
@@ -741,7 +746,6 @@ const AdminDashboard = () => {
           <small className="text-muted d-block">{loc.user_type?.replace('_', ' ')}</small>
           <Badge bg="success" className="mt-1 mb-2">Active / Checked In</Badge>
           
-          {/* CRITICAL: Role-based check for the View Path button */}
           {loc.user_type === 'field_officer' && (
             <Button 
               variant="outline-primary" 
