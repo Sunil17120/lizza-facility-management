@@ -4,7 +4,11 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Mail, Lock, Eye, EyeOff } from 'lucide-react';
 import { useUser } from './UserContext';
 
-const API_BASE_URL = 'https://lizza-facility-management.vercel.app';
+// REPLACE THIS:
+// const API_BASE_URL = process.env.REACT_APP_API_BASE_URL;
+
+// WITH THIS (Your actual Hugging Face backend URL):
+const API_BASE_URL = "https://sunil0034-lizza-facility-backend.hf.space";
 
 const Auth = () => {
   const isLogin = true; 

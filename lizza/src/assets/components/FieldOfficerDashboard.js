@@ -5,8 +5,11 @@ import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { LocalNotifications } from '@capacitor/local-notifications';
 
-// Dynamic - Uses the variable from Vercel/Local .env
-const API_BASE_URL = process.env.REACT_APP_API_BASE_URL;
+// REPLACE THIS:
+// const API_BASE_URL = process.env.REACT_APP_API_BASE_URL;
+
+// WITH THIS (Your actual Hugging Face backend URL):
+const API_BASE_URL = "https://sunil0034-lizza-facility-backend.hf.space";
 const isApp = Capacitor.isNativePlatform();
 const LizzaTracker = registerPlugin('LizzaTracker');
 
