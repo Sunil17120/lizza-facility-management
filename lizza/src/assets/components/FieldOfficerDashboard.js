@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Container, Card, Row, Col, Form, Button, Alert, Spinner, Table, Badge } from 'react-bootstrap';
-import { MapPin, Navigation, CheckCircle, FileText, Map as MapIcon, LogIn, LogOut, WifiOff, RefreshCw, Clock, Coffee, Activity } from 'lucide-react';
+import { MapPin, Navigation, CheckCircle, FileText, Map as MapIcon, LogIn, LogOut, WifiOff, RefreshCw, Clock, Coffee, Activity, AlertTriangle } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 import { Capacitor, registerPlugin } from '@capacitor/core';
+import { LocalNotifications } from '@capacitor/local-notifications';
 
 const API_BASE_URL = 'https://lizza-facility-management.vercel.app';
 const isApp = Capacitor.isNativePlatform();
@@ -30,6 +31,7 @@ const FieldOfficerDashboard = () => {
   const [proximateSite, setProximateSite] = useState(null); 
   const [checkedInSite, setCheckedInSite] = useState(null); 
   const [checkedIn, setCheckedIn] = useState(false);
+  const [hasSubmittedReport, setHasSubmittedReport] = useState(false);
   
   // Metrics & Forms
   const [dutyHours, setDutyHours] = useState(0);
@@ -54,6 +56,24 @@ const FieldOfficerDashboard = () => {
   useEffect(() => { checkedInRef.current = checkedIn; }, [checkedIn]);
   useEffect(() => { checkedInSiteRef.current = checkedInSite; }, [checkedInSite]);
   useEffect(() => { dutyStatusRef.current = dutyStatus; localStorage.setItem('lastStatus', dutyStatus); }, [dutyStatus]);
+
+  const resetIdleWarningTimer = async () => {
+    if (!isApp) return;
+    const permissionStatus = await LocalNotifications.checkPermissions();
+    if (permissionStatus.display !== 'granted') {
+        await LocalNotifications.requestPermissions();
+    }
+    await LocalNotifications.cancel({ notifications: [{ id: 999 }] });
+    await LocalNotifications.schedule({
+        notifications: [{
+            title: "⚠️ Tracking Paused",
+            body: "No location update in 30 minutes. Please open Lizza.",
+            id: 999,
+            schedule: { at: new Date(Date.now() + 30 * 60 * 1000) },
+            smallIcon: "ic_stat_icon_config_sample",
+        }]
+    });
+  };
 
   const updateQueueCounts = useCallback(() => {
       if (!isApp) return;
@@ -81,7 +101,12 @@ const FieldOfficerDashboard = () => {
         loadedLocs = await locRes.json();
         setLocations(loadedLocs);
     }
-    if (histRes && histRes.ok) setVisitHistory(await histRes.json());
+    
+    let parsedVisits = [];
+    if (histRes && histRes.ok) {
+        parsedVisits = await histRes.json();
+        setVisitHistory(parsedVisits);
+    }
     
     if (profRes && profRes.ok) {
         const prof = await profRes.json();
@@ -89,8 +114,13 @@ const FieldOfficerDashboard = () => {
         if (prof.checked_in && prof.active_location_id) {
             const site = loadedLocs.find(l => Number(l.id) === Number(prof.active_location_id));
             setCheckedInSite(site || null);
+            
+            const todayStr = new Date().toISOString().split('T')[0];
+            const hasReport = parsedVisits.some(v => v.site_name === (site?.name) && v.visit_time.includes(todayStr));
+            setHasSubmittedReport(hasReport);
         } else {
             setCheckedInSite(null);
+            setHasSubmittedReport(false);
         }
     }
     
@@ -215,6 +245,7 @@ const FieldOfficerDashboard = () => {
         
         setCheckedIn(type === 'CHECK_IN');
         setCheckedInSite(type === 'CHECK_IN' ? targetSite : null);
+        if (type === 'CHECK_IN') setHasSubmittedReport(false);
         updateQueueCounts();
         
         isProcessingRef.current = false; 
@@ -224,6 +255,7 @@ const FieldOfficerDashboard = () => {
         const res = await fetch(`${API_BASE_URL}${ep}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }).catch(() => ({ ok: false }));
         if (res && res.ok) {
             setAlertMsg({ type: 'success', text: `Successfully ${type === 'CHECK_IN' ? 'Checked In' : 'Checked Out'}` });
+            if (type === 'CHECK_IN') setHasSubmittedReport(false);
             await fetchData();
         }
         setIsSubmitting(false);
@@ -251,6 +283,7 @@ const FieldOfficerDashboard = () => {
     const lastPing = localStorage.getItem('last_ping_time');
     if (!lastPing || (Date.now() - parseInt(lastPing)) >= 30000) {
         localStorage.setItem('last_ping_time', Date.now().toString());
+        resetIdleWarningTimer(); // Set 30 Min idle warning limit
         
         const payload = { 
             email: userEmail, lat, lon, accuracy, timestamp, 
@@ -289,6 +322,7 @@ const FieldOfficerDashboard = () => {
         } 
         else if (!insideSite && checkedInRef.current && checkedInSiteRef.current) {
             const distToActive = calculateDistance(lat, lon, checkedInSiteRef.current.lat, checkedInSiteRef.current.lon);
+            // Auto Checkout forcefully logs you out if you drift > 300m away
             if (distToActive > 300) {
                 handleAttendance('CHECK_OUT', checkedInSiteRef.current, { lat, lon });
             }
@@ -296,10 +330,8 @@ const FieldOfficerDashboard = () => {
     }
   }, [locations, userEmail]);
 
-  // ---> NEW ADDITION: Smart Sync Hook for Race Conditions <---
   useEffect(() => {
     if (locations.length > 0 && myLoc) {
-      // Recalculate distances automatically when data finishes loading from the server
       const sitesWithDistance = locations.map(site => ({ 
         ...site, 
         distance: calculateDistance(myLoc.lat, myLoc.lon, site.lat, site.lon) 
@@ -307,10 +339,7 @@ const FieldOfficerDashboard = () => {
       
       sitesWithDistance.sort((a, b) => a.distance - b.distance);
       setNearbySites(sitesWithDistance);
-
       const insideSite = sitesWithDistance[0] && sitesWithDistance[0].distance <= (sitesWithDistance[0].radius || 200) ? sitesWithDistance[0] : null;
-      
-      // Update the state so the banner instantly shifts from "Verifying Site..." to the real name
       setProximateSite(insideSite);
     }
   }, [locations, myLoc]); 
@@ -359,6 +388,9 @@ const FieldOfficerDashboard = () => {
             await fetchData(); 
             if (action === 'START' || action === 'RESUME') { if (isApp) LizzaTracker.startTracking({ email: userEmail }); } 
             else { if (isApp) LizzaTracker.stopTracking(); }
+        } else {
+            const errData = await res.json();
+            alert(errData.detail || "Action blocked by server.");
         }
     }
     setIsSubmitting(false);
@@ -366,10 +398,9 @@ const FieldOfficerDashboard = () => {
 
   const handleVisitSubmit = async (e) => {
     e.preventDefault();
-    if (!checkedIn) return alert("Wait! The system has not confirmed your check-in yet. Please wait for the 'Inside Geofence' green status.");
+    if (!checkedIn) return alert("Wait! The system has not confirmed your check-in yet.");
     
     const targetSiteForVisit = checkedInSite || proximateSite || (nearbySites.length > 0 ? nearbySites[0] : null);
-    
     if (!targetSiteForVisit || !myLoc) return alert("You must be officially checked into a site to log a visit.");
     
     const validEntries = visitEntries.filter(entry => entry.photo !== null);
@@ -393,6 +424,7 @@ const FieldOfficerDashboard = () => {
         localStorage.setItem('offlineVisitQueue', JSON.stringify(q));
         setAlertMsg({ type: 'warning', text: 'No internet. Visit report safely queued.' });
         setPurpose(''); setVisitEntries([{ photo: null, details: '' }]);
+        setHasSubmittedReport(true); // Unlock checkout button in offline state
         updateQueueCounts();
     } else {
         const formData = new FormData();
@@ -405,6 +437,7 @@ const FieldOfficerDashboard = () => {
         if (res && res.ok) {
             setAlertMsg({ type: 'success', text: 'Visit logged successfully!' });
             setPurpose(''); setVisitEntries([{ photo: null, details: '' }]);
+            setHasSubmittedReport(true); // Unlock checkout button
             fetchData(); 
         } else {
             const errData = await res.json();
@@ -448,13 +481,12 @@ const FieldOfficerDashboard = () => {
                   {dutyStatus === 'OFF_DUTY' && <Button variant="primary" className="fw-bold flex-grow-1" onClick={() => handleDayShiftAction('START')} disabled={isSubmitting}>Start Shift</Button>}
                   {dutyStatus === 'ON_DUTY' && <Button variant="warning" className="fw-bold text-dark flex-grow-1" onClick={() => handleDayShiftAction('BREAK')} disabled={isSubmitting}><Coffee size={16} className="me-1"/> Break</Button>}
                   {dutyStatus === 'ON_BREAK' && <Button variant="success" className="fw-bold flex-grow-1" onClick={() => handleDayShiftAction('RESUME')} disabled={isSubmitting}>Resume Duty</Button>}
-                  {dutyStatus !== 'OFF_DUTY' && <Button variant="danger" className="fw-bold flex-grow-1" onClick={() => handleDayShiftAction('END')} disabled={isSubmitting || dutyHours < 8}>End Shift</Button>}
+                  {dutyStatus !== 'OFF_DUTY' && <Button variant="danger" className="fw-bold flex-grow-1" onClick={() => handleDayShiftAction('END')} disabled={isSubmitting}>End Shift</Button>}
               </div>
           </Card.Body>
       </Card>
 
       <Row className="g-3 mb-4">
-        {/* MOBILE FIRST: ACTION PANEL (Order 1 on mobile, Order 2 on desktop) */}
         <Col lg={4} className="order-1 order-lg-2">
           <div className="d-flex flex-column gap-3 h-100">
             <Card className="border-0 shadow-sm">
@@ -475,7 +507,6 @@ const FieldOfficerDashboard = () => {
                     </Alert>
                 ) : (
                     <>
-                        {/* PROMINENT CHECK-IN UI FOR MOBILE */}
                         {checkedIn ? (
                           <div className="bg-success bg-opacity-10 border border-success border-2 rounded p-3 mb-3 text-center shadow-sm">
                               <CheckCircle className="text-success mb-2" size={36}/>
@@ -490,19 +521,27 @@ const FieldOfficerDashboard = () => {
                           <Alert variant="secondary" className="mb-3 text-center">Drive to a geofence to check in.</Alert>
                         )}
 
-                        <div className="d-flex gap-2 mb-3">
+                        <div className="d-flex flex-column gap-2 mb-3">
                           {!checkedIn && proximateSite && (
                             <Button variant="success" size="lg" className="w-100 fw-bold shadow-sm" disabled={isSubmitting} onClick={() => handleAttendance('CHECK_IN', proximateSite, myLoc)}>
                                 <LogIn className="me-2" size={20}/> Check In Here
                             </Button>
                           )}
-                          {checkedIn && (
+                          
+                          {/* CHECKOUT GATING LOGIC */}
+                          {checkedIn && hasSubmittedReport && (
                             <Button variant="danger" size="lg" className="w-100 fw-bold shadow-sm" disabled={isSubmitting} onClick={() => handleAttendance('CHECK_OUT', checkedInSite || proximateSite, myLoc)}>
                                 <LogOut className="me-2" size={20}/> Check Out
                             </Button>
                           )}
+                          {checkedIn && !hasSubmittedReport && (
+                            <Alert variant="warning" className="text-center small fw-bold mb-0">
+                                <AlertTriangle size={16} className="me-1 mb-1"/> Evidence Upload Required to Check Out
+                            </Alert>
+                          )}
                         </div>
 
+                        {/* REPORT FORM ONLY SHOWS WHILE CHECKED IN */}
                         {checkedIn && (
                           <Form onSubmit={handleVisitSubmit} className="mt-4 border-top pt-3">
                             <h6 className="fw-bold mb-3 text-primary"><FileText className="me-2" size={18}/>Submit Site Report</h6>
@@ -544,7 +583,6 @@ const FieldOfficerDashboard = () => {
           </div>
         </Col>
 
-        {/* MOBILE SECOND: MAP (Order 2 on mobile, Order 1 on desktop) */}
         <Col lg={8} className="order-2 order-lg-1">
           <Card className="border-0 shadow-sm overflow-hidden h-100" style={{ minHeight: '350px' }}>
             {dutyStatus === 'OFF_DUTY' ? (
@@ -572,7 +610,6 @@ const FieldOfficerDashboard = () => {
         </Col>
       </Row>
 
-      {/* RECENT VISITS & NEARBY SITES DIRECTORY */}
       <Row className="g-3 mb-4">
         <Col lg={4}>
             <Card className="border-0 shadow-sm h-100">
