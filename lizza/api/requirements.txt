@@ -2,6 +2,7 @@ fastapi
 psycopg2-binary
 sqlalchemy
 uvicorn
+gunicorn
 upstash-redis==0.14.1
 python-multipart
 cryptography
@@ -12,3 +13,4 @@ numpy
 zxing-cpp
 firebase-admin==6.5.0
 httpx
+apscheduler
