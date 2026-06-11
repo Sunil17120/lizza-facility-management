@@ -9,7 +9,6 @@ const API_BASE_URL = 'https://lizza-facility-management.vercel.app';
 const isApp = Capacitor.isNativePlatform();
 const LizzaTracker = registerPlugin('LizzaTracker');
 
-// --- Helper Functions ---
 const fileToBase64 = (file) => new Promise((resolve) => { const reader = new FileReader(); reader.readAsDataURL(file); reader.onload = () => resolve(reader.result); });
 const base64ToFile = (base64String, filename) => { const arr = base64String.split(','); const mime = arr[0].match(/:(.*?);/)[1]; const bstr = atob(arr[1]); let n = bstr.length; const u8arr = new Uint8Array(n); while(n--){ u8arr[n] = bstr.charCodeAt(n); } return new File([u8arr], filename, {type:mime}); };
 const compressImage = async (file, maxWidth = 1000, quality = 0.7) => { return new Promise((resolve) => { const reader = new FileReader(); reader.readAsDataURL(file); reader.onload = (event) => { const img = new Image(); img.src = event.target.result; img.onload = () => { const canvas = document.createElement('canvas'); let width = img.width; let height = img.height; if (width > maxWidth) { height = Math.round((height * maxWidth) / width); width = maxWidth; } canvas.width = width; canvas.height = height; const ctx = canvas.getContext('2d'); ctx.drawImage(img, 0, 0, width, height); canvas.toBlob((blob) => { resolve(new File([blob], file.name, { type: 'image/jpeg', lastModified: Date.now() })); }, 'image/jpeg', quality); }; }; }); };
@@ -18,7 +17,6 @@ const calculateDistance = (lat1, lon1, lat2, lon2) => { const R = 6371000; const
 const FieldOfficerDashboard = () => {
   const userEmail = localStorage.getItem('userEmail');
 
-  // Core Data States
   const [dutyStatus, setDutyStatus] = useState(() => localStorage.getItem('lastStatus') || 'OFF_DUTY');
   const [shiftData, setShiftData] = useState(null);
   const [locations, setLocations] = useState([]);
@@ -27,25 +25,21 @@ const FieldOfficerDashboard = () => {
   const [nearbySites, setNearbySites] = useState([]);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   
-  // Separation of Truth
   const [proximateSite, setProximateSite] = useState(null); 
   const [checkedInSite, setCheckedInSite] = useState(null); 
   const [checkedIn, setCheckedIn] = useState(false);
   const [hasSubmittedReport, setHasSubmittedReport] = useState(false);
   
-  // Metrics & Forms
   const [dutyHours, setDutyHours] = useState(0);
   const [travelHours, setTravelHours] = useState(0);
   const [purpose, setPurpose] = useState('');
   const [visitEntries, setVisitEntries] = useState([{ photo: null, details: '' }]);
   
-  // UI States
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [alertMsg, setAlertMsg] = useState(null);
   const [pendingOfflineActions, setPendingOfflineActions] = useState(0);
   const [isSyncing, setIsSyncing] = useState(false);
 
-  // Synchronization Locks
   const isFetchingRef = useRef(false);
   const isProcessingRef = useRef(false);
   const checkedInRef = useRef(false);
@@ -233,8 +227,14 @@ const FieldOfficerDashboard = () => {
     isProcessingRef.current = true;
     setIsSubmitting(true);
 
+    let exactTime = new Date().toISOString();
+    if (type === 'CHECK_IN' && targetSite) {
+        const savedGeofenceEntryTime = localStorage.getItem(`entry_time_${targetSite.id}`);
+        if (savedGeofenceEntryTime) exactTime = savedGeofenceEntryTime;
+    }
+
     const payload = { 
-        email: userEmail, lat: loc.lat, lon: loc.lon, timestamp: new Date().toISOString(), actionType: type,
+        email: userEmail, lat: loc.lat, lon: loc.lon, timestamp: exactTime, actionType: type,
         location_id: targetSite?.id || null 
     };
 
@@ -246,6 +246,7 @@ const FieldOfficerDashboard = () => {
         setCheckedIn(type === 'CHECK_IN');
         setCheckedInSite(type === 'CHECK_IN' ? targetSite : null);
         if (type === 'CHECK_IN') setHasSubmittedReport(false);
+        if (type === 'CHECK_OUT' && targetSite) localStorage.removeItem(`entry_time_${targetSite.id}`);
         updateQueueCounts();
         
         isProcessingRef.current = false; 
@@ -256,6 +257,7 @@ const FieldOfficerDashboard = () => {
         if (res && res.ok) {
             setAlertMsg({ type: 'success', text: `Successfully ${type === 'CHECK_IN' ? 'Checked In' : 'Checked Out'}` });
             if (type === 'CHECK_IN') setHasSubmittedReport(false);
+            if (type === 'CHECK_OUT' && targetSite) localStorage.removeItem(`entry_time_${targetSite.id}`);
             await fetchData();
         }
         setIsSubmitting(false);
@@ -283,7 +285,7 @@ const FieldOfficerDashboard = () => {
     const lastPing = localStorage.getItem('last_ping_time');
     if (!lastPing || (Date.now() - parseInt(lastPing)) >= 30000) {
         localStorage.setItem('last_ping_time', Date.now().toString());
-        resetIdleWarningTimer(); // Set 30 Min idle warning limit
+        resetIdleWarningTimer(); 
         
         const payload = { 
             email: userEmail, lat, lon, accuracy, timestamp, 
@@ -314,17 +316,33 @@ const FieldOfficerDashboard = () => {
     setNearbySites(sitesWithDistance);
 
     const insideSite = sitesWithDistance[0] && sitesWithDistance[0].distance <= (sitesWithDistance[0].radius || 200) ? sitesWithDistance[0] : null;
+    
+    if (insideSite) {
+        if (!localStorage.getItem(`entry_time_${insideSite.id}`)) {
+            localStorage.setItem(`entry_time_${insideSite.id}`, timestamp);
+        }
+    }
+
     setProximateSite(insideSite);
 
     if (dutyStatusRef.current === 'ON_DUTY' && !isProcessingRef.current) {
         if (insideSite && !checkedInRef.current) {
             handleAttendance('CHECK_IN', insideSite, { lat, lon });
         } 
-        else if (!insideSite && checkedInRef.current && checkedInSiteRef.current) {
-            const distToActive = calculateDistance(lat, lon, checkedInSiteRef.current.lat, checkedInSiteRef.current.lon);
-            // Auto Checkout forcefully logs you out if you drift > 300m away
-            if (distToActive > 300) {
-                handleAttendance('CHECK_OUT', checkedInSiteRef.current, { lat, lon });
+        else if (checkedInRef.current && checkedInSiteRef.current) {
+            // --- THE CROSS-SITE AUTO SWAP LOGIC ---
+            // If inside a new site but checked into an old site
+            if (insideSite && insideSite.id !== checkedInSiteRef.current.id) {
+                handleAttendance('CHECK_OUT', checkedInSiteRef.current, { lat, lon }).then(() => {
+                    // The next GPS tick will cleanly check them into the new site.
+                });
+            } 
+            // If they just left the old site and are in empty space (>300m away)
+            else if (!insideSite) {
+                const distToActive = calculateDistance(lat, lon, checkedInSiteRef.current.lat, checkedInSiteRef.current.lon);
+                if (distToActive > 300) {
+                    handleAttendance('CHECK_OUT', checkedInSiteRef.current, { lat, lon });
+                }
             }
         }
     }
@@ -424,7 +442,7 @@ const FieldOfficerDashboard = () => {
         localStorage.setItem('offlineVisitQueue', JSON.stringify(q));
         setAlertMsg({ type: 'warning', text: 'No internet. Visit report safely queued.' });
         setPurpose(''); setVisitEntries([{ photo: null, details: '' }]);
-        setHasSubmittedReport(true); // Unlock checkout button in offline state
+        setHasSubmittedReport(true); 
         updateQueueCounts();
     } else {
         const formData = new FormData();
@@ -437,7 +455,7 @@ const FieldOfficerDashboard = () => {
         if (res && res.ok) {
             setAlertMsg({ type: 'success', text: 'Visit logged successfully!' });
             setPurpose(''); setVisitEntries([{ photo: null, details: '' }]);
-            setHasSubmittedReport(true); // Unlock checkout button
+            setHasSubmittedReport(true);
             fetchData(); 
         } else {
             const errData = await res.json();
@@ -463,7 +481,6 @@ const FieldOfficerDashboard = () => {
         </Alert>
       )}
 
-      {/* SHIFT CONTROL CARD */}
       <Card className="border-0 shadow-sm mb-4 bg-light border-start border-5 border-primary">
           <Card.Body className="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3">
               <div>
@@ -528,7 +545,6 @@ const FieldOfficerDashboard = () => {
                             </Button>
                           )}
                           
-                          {/* CHECKOUT GATING LOGIC */}
                           {checkedIn && hasSubmittedReport && (
                             <Button variant="danger" size="lg" className="w-100 fw-bold shadow-sm" disabled={isSubmitting} onClick={() => handleAttendance('CHECK_OUT', checkedInSite || proximateSite, myLoc)}>
                                 <LogOut className="me-2" size={20}/> Check Out
@@ -541,7 +557,6 @@ const FieldOfficerDashboard = () => {
                           )}
                         </div>
 
-                        {/* REPORT FORM ONLY SHOWS WHILE CHECKED IN */}
                         {checkedIn && (
                           <Form onSubmit={handleVisitSubmit} className="mt-4 border-top pt-3">
                             <h6 className="fw-bold mb-3 text-primary"><FileText className="me-2" size={18}/>Submit Site Report</h6>

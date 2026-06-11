@@ -1,64 +1,42 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom'; 
 import { Container, Row, Col, Card, Spinner, Button, Alert, Badge, Modal, Form } from 'react-bootstrap';
 import { ShieldCheck, MapPin, MapIcon, AlertTriangle, KeyRound, EyeOff, WifiOff } from 'lucide-react';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { useUser } from './UserContext'; 
-import { LocalNotifications } from '@capacitor/local-notifications';
-import { AppLauncher } from '@capacitor/app-launcher';
 
 const API_BASE_URL = 'https://lizza-facility-management.vercel.app';
 const isApp = Capacitor.isNativePlatform();
-const LizzaTracker = registerPlugin('LizzaTracker');
+
+const calculateDistance = (lat1, lon1, lat2, lon2) => { const R = 6371000; const toRad = (deg) => (deg * Math.PI) / 180; const dLat = toRad(lat2 - lat1); const dLon = toRad(lon2 - lon1); const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2; return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)); };
 
 const UserDashboard = () => {
   const navigate = useNavigate(); 
   const { user: contextUser, loading: contextLoading } = useUser();
 
   const [dbUser, setDbUser] = useState(null);
+  const [locations, setLocations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState({ type: 'info', msg: 'Initializing...', code: 'off_duty' });
   const [showPassModal, setShowPassModal] = useState(false);
   
-  const [checkedIn, setCheckedIn] = useState(() => {
-    return localStorage.getItem('local_checked_in') === 'true';
-  });
+  const [checkedIn, setCheckedIn] = useState(() => localStorage.getItem('local_checked_in') === 'true');
   const [currentSite, setCurrentSite] = useState(() => {
-    return localStorage.getItem('local_current_site') || null;
+    const cached = localStorage.getItem('local_current_site');
+    return cached ? JSON.parse(cached) : null;
   });
 
   const [actionLoading, setActionLoading] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
-  
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
   
   const userEmail = localStorage.getItem('userEmail');
+  const checkedInRef = useRef(checkedIn);
+  const currentSiteRef = useRef(currentSite);
+  const isProcessingRef = useRef(false);
 
-  const openNotificationSettings = async () => {
-    if (isApp) {
-      await AppLauncher.openSettings();
-    }
-  };
-
-  const resetIdleWarningTimer = async () => {
-    if (!isApp) return;
-    
-    const permissionStatus = await LocalNotifications.checkPermissions();
-    if (permissionStatus.display !== 'granted') {
-        await LocalNotifications.requestPermissions();
-    }
-    
-    await LocalNotifications.cancel({ notifications: [{ id: 999 }] });
-    await LocalNotifications.schedule({
-        notifications: [{
-            title: "⚠️ Tracking Paused",
-            body: "No location update in 30 minutes. Please open Lizza.",
-            id: 999,
-            schedule: { at: new Date(Date.now() + 30 * 60 * 1000) },
-            smallIcon: "ic_stat_icon_config_sample",
-        }]
-    });
-  };
+  useEffect(() => { checkedInRef.current = checkedIn; }, [checkedIn]);
+  useEffect(() => { currentSiteRef.current = currentSite; }, [currentSite]);
 
   const updatePendingCount = useCallback(() => {
     if (!isApp) return; 
@@ -67,43 +45,37 @@ const UserDashboard = () => {
     setPendingSyncCount(pings.length + actions.length);
   }, []);
 
-  const fetchProfileState = useCallback(async () => {
+  const fetchData = useCallback(async () => {
     if (!userEmail || !navigator.onLine) return;
     
-    const res = await fetch(`${API_BASE_URL}/api/user/profile?email=${userEmail}`);
-    if (res.ok) {
-      const data = await res.json();
+    const [profRes, locRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/api/user/profile?email=${userEmail}`).catch(() => ({ok: false})),
+        fetch(`${API_BASE_URL}/api/admin/locations`).catch(() => ({ok: false}))
+    ]);
+
+    let loadedLocs = [];
+    if (locRes && locRes.ok) {
+        loadedLocs = await locRes.json();
+        setLocations(loadedLocs);
+    }
+
+    if (profRes && profRes.ok) {
+      const data = await profRes.json();
       setCheckedIn(Boolean(data.checked_in));
       
-      if (data.checked_in) {
+      if (data.checked_in && data.active_location_id) {
           localStorage.setItem('local_checked_in', 'true');
-          if (data.active_location_id) {
-              const locRes = await fetch(`${API_BASE_URL}/api/admin/locations`);
-              if (locRes.ok) {
-                  const locations = await locRes.json();
-                  const site = locations.find(l => l.id === data.active_location_id);
-                  if (site) {
-                      setCurrentSite(site.name);
-                      localStorage.setItem('local_current_site', site.name);
-                      setStatus({ type: 'success', msg: `Inside Geofence: ${site.name}`, code: 'inside' });
-                  } else {
-                      setCurrentSite(null);
-                      localStorage.removeItem('local_current_site');
-                      setStatus({ type: 'warning', msg: `Active Shift Restored`, code: 'outside' });
-                  }
-              } else {
-                  setCurrentSite(null);
-                  setStatus({ type: 'warning', msg: `Active Shift Restored`, code: 'outside' });
-              }
-          } else {
-              setCurrentSite(null);
-              setStatus({ type: 'warning', msg: `Active Shift Restored`, code: 'outside' });
+          const site = loadedLocs.find(l => l.id === data.active_location_id);
+          if (site) {
+              setCurrentSite(site);
+              localStorage.setItem('local_current_site', JSON.stringify(site));
+              setStatus({ type: 'success', msg: `Inside Geofence: ${site.name}`, code: 'inside' });
           }
       } else {
           localStorage.setItem('local_checked_in', 'false');
           localStorage.removeItem('local_current_site');
-          setStatus({ type: 'secondary', code: 'off_duty', msg: 'Ready to Check In' });
           setCurrentSite(null);
+          setStatus({ type: 'secondary', code: 'off_duty', msg: 'Ready to Check In' });
       }
     }
   }, [userEmail]);
@@ -117,8 +89,8 @@ const UserDashboard = () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: userEmail, locations: offlineLocations })
-      });
-      if (res.ok) localStorage.removeItem('offlineLocations');
+      }).catch(()=>{});
+      if (res && res.ok) localStorage.removeItem('offlineLocations');
     }
 
     let attendanceQueue = JSON.parse(localStorage.getItem('offlineAttendanceQueue') || '[]');
@@ -129,152 +101,58 @@ const UserDashboard = () => {
       const res = await fetch(`${API_BASE_URL}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: action.email, lat: action.lat, lon: action.lon, timestamp: action.timestamp })
-      });
-      if (!res.ok) failedActions.push(action);
+        body: JSON.stringify(action)
+      }).catch(()=>{});
+      if (!res || !res.ok) failedActions.push(action);
     }
     
     localStorage.setItem('offlineAttendanceQueue', JSON.stringify(failedActions));
     updatePendingCount();
-    fetchProfileState();
-  }, [isOnline, userEmail, fetchProfileState, updatePendingCount]);
+    fetchData();
+  }, [isOnline, userEmail, fetchData, updatePendingCount]);
 
   useEffect(() => {
-    const handleOnline = () => {
-      setIsOnline(true);
-      if (isApp) processOfflineQueues();
-    };
+    const handleOnline = () => { setIsOnline(true); if (isApp) processOfflineQueues(); };
     const handleOffline = () => setIsOnline(false);
 
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
     
-    fetchProfileState(); 
-    
-    if (isApp) {
-      updatePendingCount();
-      if (navigator.onLine) processOfflineQueues();
-    }
+    fetchData(); 
+    if (isApp) { updatePendingCount(); if (navigator.onLine) processOfflineQueues(); }
 
-    return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-    };
-  }, [processOfflineQueues, updatePendingCount, fetchProfileState]);
+    return () => { window.removeEventListener('online', handleOnline); window.removeEventListener('offline', handleOffline); };
+  }, [processOfflineQueues, updatePendingCount, fetchData]);
 
   useEffect(() => {
     if (!contextLoading && contextUser) {
       if (contextUser.user_type === 'field_officer') return navigate('/field-operations', { replace: true });
       if (contextUser.user_type === 'manager') return navigate('/manager', { replace: true });
       if (contextUser.user_type === 'admin') return navigate('/admin', { replace: true });
-      
       setDbUser(contextUser); 
-      
-      if (contextUser.checked_in !== undefined) {
-          setCheckedIn(Boolean(contextUser.checked_in));
-          localStorage.setItem('local_checked_in', Boolean(contextUser.checked_in));
-      }
-      
       setLoading(false); 
     } else if (!contextLoading && !contextUser) {
       navigate('/auth', { replace: true });
     }
   }, [contextUser, contextLoading, navigate]);
 
-  const syncLocation = useCallback(async (lat, lon) => {
-    resetIdleWarningTimer();
-
-    if (!navigator.onLine) {
-      if (!isApp) return; 
-      const locData = { lat, lon, timestamp: new Date().toISOString() };
-      const offlineLocations = JSON.parse(localStorage.getItem('offlineLocations') || '[]');
-      offlineLocations.push(locData);
-      localStorage.setItem('offlineLocations', JSON.stringify(offlineLocations));
-      setStatus({ type: 'warning', msg: 'Offline - Location queued locally', code: 'offline' });
-      updatePendingCount();
-      return;
-    }
-
-    const res = await fetch(`${API_BASE_URL}/api/user/update-location?email=${userEmail}&lat=${lat}&lon=${lon}`, { method: 'POST' });
-    const data = await res.json();
-    if (data.is_inside) {
-      setCurrentSite(data.site_name || null);
-      if (data.site_name) localStorage.setItem('local_current_site', data.site_name);
-      setStatus({ type: 'success', msg: data.message || 'Inside Geofence', code: 'inside' });
-    } else {
-      setCurrentSite(null);
-      localStorage.removeItem('local_current_site');
-      setStatus({ type: 'warning', msg: data.message || 'Outside Geofence', code: 'outside' });
-    }
-  }, [userEmail, updatePendingCount]);
-
-  useEffect(() => {
-    if (!dbUser || !isApp || !userEmail) return;
-
-    const startBackgroundTracking = async () => {
-        if (Capacitor.isNativePlatform()) {
-            console.log("DASHBOARD: Attempting to trigger Native Java Bridge...");
-            await LocalNotifications.requestPermissions();
-            await LizzaTracker.startTracking({ email: userEmail });
-            console.log("DASHBOARD: Native Bridge Signal Sent Successfully.");
-        } else {
-            console.log("DASHBOARD: Not a native platform, bridge skipped.");
-        }
-    };
-
-    const bootTimer = setTimeout(() => {
-      startBackgroundTracking();
-    }, 1500);
-
-    return () => clearTimeout(bootTimer);
-  }, [dbUser, userEmail]);
-
-  useEffect(() => {
-    if (!dbUser || !navigator.geolocation) return; 
-    
-    navigator.geolocation.getCurrentPosition(
-      (pos) => syncLocation(pos.coords.latitude, pos.coords.longitude),
-      (err) => {
-        setStatus({ type: 'warning', msg: 'Location permission required. Please enable location access.', code: 'outside' });
-      },
-      { enableHighAccuracy: true, timeout: 10000 }
-    );
-
-    const intervalId = setInterval(() => {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => syncLocation(pos.coords.latitude, pos.coords.longitude),
-        (err) => console.warn("Location check failed:", err),
-        { enableHighAccuracy: true, timeout: 10000 }
-      );
-    }, 60000); 
-
-    return () => {
-      clearInterval(intervalId);
-    };
-  }, [dbUser, syncLocation]);
-
-  const handleAction = async (actionType) => {
-    if (actionLoading || (actionType === 'CHECK_IN' && status.code !== 'inside' && isApp)) return;
+  const handleAction = async (actionType, targetSite, triggerLat, triggerLon) => {
+    if (isProcessingRef.current) return;
+    isProcessingRef.current = true;
     setActionLoading(true);
     
-    if (!navigator.geolocation) {
-        setActionLoading(false);
-        return;
+    let exactTime = new Date().toISOString();
+    if (actionType === 'CHECK_IN' && targetSite) {
+        const savedTime = localStorage.getItem(`normal_entry_time_${targetSite.id}`);
+        if (savedTime) exactTime = savedTime;
     }
-    
-    const coords = await new Promise((resolve) => {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => resolve(pos.coords), () => resolve(null), { enableHighAccuracy: true }
-      );
-    });
 
-    if (coords) {
-      const payload = {
-        email: userEmail, lat: coords.latitude, lon: coords.longitude, 
-        timestamp: new Date().toISOString(), actionType
-      };
+    const payload = {
+      email: userEmail, lat: triggerLat || 0, lon: triggerLon || 0, 
+      timestamp: exactTime, actionType, location_id: targetSite?.id || null
+    };
 
-      if (!isOnline) {
+    if (!isOnline) {
         if (isApp) {
             const queue = JSON.parse(localStorage.getItem('offlineAttendanceQueue') || '[]');
             queue.push(payload);
@@ -283,48 +161,131 @@ const UserDashboard = () => {
             setCheckedIn(actionType === 'CHECK_IN');
             localStorage.setItem('local_checked_in', actionType === 'CHECK_IN');
             
+            if (actionType === 'CHECK_IN') {
+                setCurrentSite(targetSite);
+                if (targetSite) localStorage.setItem('local_current_site', JSON.stringify(targetSite));
+            } else {
+                if (targetSite) localStorage.removeItem(`normal_entry_time_${targetSite.id}`);
+                setCurrentSite(null);
+                localStorage.removeItem('local_current_site');
+            }
             setStatus({ type: 'warning', msg: `Offline ${actionType === 'CHECK_IN' ? 'Check-In' : 'Check-Out'} queued`, code: 'offline' });
             updatePendingCount();
-        } else {
-            setStatus({ type: 'danger', msg: "Network error. Please connect to the internet to perform this action.", code: 'error' });
         }
-        setActionLoading(false);
-        return;
-      }
+    } else {
+        const endpoint = actionType === 'CHECK_IN' ? '/api/user/checkin' : '/api/user/checkout';
+        const res = await fetch(`${API_BASE_URL}${endpoint}`, { 
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) 
+        }).catch(() => ({ok: false}));
+        
+        if (res && res.ok) {
+          setCheckedIn(actionType === 'CHECK_IN');
+          localStorage.setItem('local_checked_in', actionType === 'CHECK_IN');
 
-      const endpoint = actionType === 'CHECK_IN' ? '/api/user/checkin' : '/api/user/checkout';
-      const res = await fetch(`${API_BASE_URL}${endpoint}`, { 
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) 
-      });
-      const data = await res.json();
-      
-      if (res.ok) {
-        setCheckedIn(actionType === 'CHECK_IN');
-        localStorage.setItem('local_checked_in', actionType === 'CHECK_IN');
-
-        if (actionType === 'CHECK_IN') {
-            setCurrentSite(data.site_name || currentSite);
-            if (data.site_name) localStorage.setItem('local_current_site', data.site_name);
-            setStatus({ type: 'success', msg: `Checked In at ${data.site_name || 'site'}`, code: 'inside' });
-        } else {
-            setCurrentSite(null);
-            localStorage.removeItem('local_current_site');
-            setStatus({ type: 'secondary', msg: 'Checked Out', code: 'off_duty' });
-            if (isApp) {
-                await LocalNotifications.cancel({ notifications: [{ id: 999 }] });
-                await LizzaTracker.stopTracking();
-            }
+          if (actionType === 'CHECK_IN') {
+              setCurrentSite(targetSite);
+              if (targetSite) localStorage.setItem('local_current_site', JSON.stringify(targetSite));
+              setStatus({ type: 'success', msg: `Checked In at ${targetSite?.name || 'site'}`, code: 'inside' });
+          } else {
+              if (targetSite) localStorage.removeItem(`normal_entry_time_${targetSite.id}`);
+              setCurrentSite(null);
+              localStorage.removeItem('local_current_site');
+              setStatus({ type: 'secondary', msg: 'Checked Out', code: 'off_duty' });
+          }
         }
-        if (data.updated_user) setDbUser(data.updated_user);
-      } else {
-        setStatus({ type: 'danger', msg: data.detail || 'Action failed', code: 'error' });
-      }
     }
     setActionLoading(false);
+    isProcessingRef.current = false;
   };
 
-  const isOnDuty = checkedIn && (status.code === 'inside' || status.code === 'offline' || status.code === 'outside');
-  const dutyLabel = isOnDuty ? 'ON DUTY' : (!checkedIn && status.code === 'inside') ? 'READY TO CHECK IN' : status.code === 'off_duty' ? 'OFF DUTY (Privacy Active)' : status.code === 'error' ? 'ERROR' : 'OFF DUTY / OUTSIDE';
+  const processLocationTick = useCallback(async (lat, lon) => {
+    // 1. Send Ping to Backend (so Admin can see them on live map)
+    if (navigator.onLine && dbUser) {
+      fetch(`${API_BASE_URL}/api/user/update-location?email=${userEmail}&lat=${lat}&lon=${lon}`, { method: 'POST' }).catch(()=>{});
+    } else if (!navigator.onLine && isApp) {
+      const q = JSON.parse(localStorage.getItem('offlineLocations') || '[]');
+      q.push({ lat, lon, timestamp: new Date().toISOString() });
+      localStorage.setItem('offlineLocations', JSON.stringify(q));
+      updatePendingCount();
+    }
+
+    // 2. Client-Side Geofence Logic for 30-min Auto Check-in/out
+    if (!locations.length) return;
+
+    const sitesWithDistance = locations.map(site => ({ ...site, distance: calculateDistance(lat, lon, site.lat, site.lon) }));
+    sitesWithDistance.sort((a, b) => a.distance - b.distance);
+    const insideSite = sitesWithDistance[0] && sitesWithDistance[0].distance <= (sitesWithDistance[0].radius || 200) ? sitesWithDistance[0] : null;
+
+    if (insideSite) {
+        if (!localStorage.getItem(`normal_entry_time_${insideSite.id}`)) {
+            localStorage.setItem(`normal_entry_time_${insideSite.id}`, new Date().toISOString());
+        }
+    }
+
+    if (!isProcessingRef.current) {
+        if (insideSite && !checkedInRef.current) {
+            handleAction('CHECK_IN', insideSite, lat, lon);
+        } 
+        else if (checkedInRef.current && currentSiteRef.current) {
+            // THE CROSS-SITE AUTO SWAP LOGIC
+            if (insideSite && insideSite.id !== currentSiteRef.current.id) {
+                handleAction('CHECK_OUT', currentSiteRef.current, lat, lon).then(() => {
+                    setTimeout(() => handleAction('CHECK_IN', insideSite, lat, lon), 2000); // 2 sec buffer to safely swap
+                });
+            } else if (!insideSite) {
+                const distToActive = calculateDistance(lat, lon, currentSiteRef.current.lat, currentSiteRef.current.lon);
+                if (distToActive > 300) {
+                    handleAction('CHECK_OUT', currentSiteRef.current, lat, lon);
+                }
+            }
+        }
+    }
+  }, [locations, userEmail, dbUser, updatePendingCount]);
+
+  useEffect(() => {
+    if (!dbUser || !navigator.geolocation) return; 
+    
+    const pingInterval = 1800000; // Exact 30 Minutes
+
+    const syncTask = () => {
+        navigator.geolocation.getCurrentPosition(
+            (pos) => processLocationTick(pos.coords.latitude, pos.coords.longitude),
+            (err) => console.warn("Location check failed:", err),
+            { enableHighAccuracy: true, timeout: 10000 }
+        );
+    };
+
+    syncTask();
+    const intervalId = setInterval(syncTask, pingInterval);
+
+    return () => clearInterval(intervalId);
+  }, [dbUser, processLocationTick]);
+
+  const handleManualAction = async (actionType) => {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+        (pos) => {
+            const lat = pos.coords.latitude;
+            const lon = pos.coords.longitude;
+            
+            let targetSite = null;
+            if (actionType === 'CHECK_IN') {
+                const sitesWithDistance = locations.map(site => ({ ...site, distance: calculateDistance(lat, lon, site.lat, site.lon) }));
+                sitesWithDistance.sort((a, b) => a.distance - b.distance);
+                targetSite = sitesWithDistance[0] && sitesWithDistance[0].distance <= (sitesWithDistance[0].radius || 200) ? sitesWithDistance[0] : null;
+            } else {
+                targetSite = currentSite;
+            }
+            
+            handleAction(actionType, targetSite, lat, lon);
+        },
+        () => alert("Unable to get high-accuracy GPS for manual action."),
+        { enableHighAccuracy: true }
+    );
+  };
+
+  const isOnDuty = checkedIn;
+  const dutyLabel = isOnDuty ? 'ON DUTY' : 'OFF DUTY (Privacy Active)';
   const dutyDotClass = isOnDuty ? 'bg-success' : 'bg-secondary';
 
   if (loading || contextLoading) return <div className="text-center py-5"><Spinner animation="border" variant="danger" /></div>;
@@ -355,16 +316,11 @@ const UserDashboard = () => {
                      <MapIcon size={18} className="me-2" />} 
                     {status.msg}
                 </div>
-                {(status.type === 'danger' || status.msg.includes('permission')) && isApp && (
-                    <Button variant="outline-danger" size="sm" onClick={openNotificationSettings} className="ms-auto">
-                        Fix Permissions
-                    </Button>
-                )}
               </Alert>
 
               <div className="p-3 bg-light rounded-3 border mb-4 text-start">
-                <p className="small text-muted mb-2">Current Site</p>
-                <div className="fw-bold">{currentSite || (status.code === 'inside' ? 'Inside geofence area' : 'Outside geofence')}</div>
+                <p className="small text-muted mb-2">Current Assigned Site</p>
+                <div className="fw-bold">{currentSite ? currentSite.name : 'Awaiting 30-min Auto Ping or Manual Entry'}</div>
               </div>
 
               <div className="p-3 bg-light rounded-3 border mb-4">
@@ -376,11 +332,11 @@ const UserDashboard = () => {
               </div>
 
               <div className="d-flex gap-2 mb-3">
-                <Button variant="success" className="fw-bold flex-fill d-flex align-items-center justify-content-center" onClick={() => handleAction('CHECK_IN')} disabled={(!isApp && !isOnline) || (isApp && status.code !== 'inside' && status.code !== 'offline') || checkedIn || actionLoading}>
-                  {actionLoading && <Spinner animation="border" size="sm" className="me-2" />}<MapPin size={16} className="me-2" />{checkedIn ? 'Checked In' : 'Check In'}
+                <Button variant="success" className="fw-bold flex-fill d-flex align-items-center justify-content-center" onClick={() => handleManualAction('CHECK_IN')} disabled={checkedIn || actionLoading}>
+                  {actionLoading && <Spinner animation="border" size="sm" className="me-2" />}<MapPin size={16} className="me-2" />{checkedIn ? 'Checked In' : 'Force Check-In'}
                 </Button>
-                <Button variant="outline-danger" className="fw-bold flex-fill d-flex align-items-center justify-content-center" onClick={() => handleAction('CHECK_OUT')} disabled={!checkedIn || actionLoading}>
-                  {actionLoading && <Spinner animation="border" size="sm" className="me-2" /> }Check Out
+                <Button variant="outline-danger" className="fw-bold flex-fill d-flex align-items-center justify-content-center" onClick={() => handleManualAction('CHECK_OUT')} disabled={!checkedIn || actionLoading}>
+                  {actionLoading && <Spinner animation="border" size="sm" className="me-2" /> }Force Check-Out
                 </Button>
               </div>
             </Card.Body>
