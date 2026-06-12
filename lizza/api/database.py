@@ -193,6 +193,19 @@ class FieldOfficerRoute(Base):
     activity_state = Column(String(50), nullable=False) 
     ping_timestamp = Column(DateTime, default=datetime.utcnow, index=True)
 
+# --- NEW: Task Management Table ---
+class TaskAssignment(Base):
+    __tablename__ = "task_assignments"
+    id = Column(Integer, primary_key=True, index=True)
+    officer_id = Column(Integer, ForeignKey("users.id"))
+    location_id = Column(Integer, ForeignKey("office_locations.id"))
+    assigned_date = Column(String, index=True) # Format: YYYY-MM-DD
+    task_list_json = Column(Text) # [{id, description}]
+    status = Column(String, default="PENDING") # PENDING or COMPLETED
+    completion_data_json = Column(Text, nullable=True) # [{id, is_done, remarks, photo_url}]
+    completed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
 def init_db():
     Base.metadata.create_all(bind=engine)
     
