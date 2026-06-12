@@ -63,7 +63,7 @@ upstash_token = os.environ.get("Redis_url_KV_REST_API_TOKEN")
 redis_client = UpstashRedis(url=upstash_url, token=upstash_token) if upstash_url else None
 r = SafeRedisClient(redis_client)
 
-PEPPER = os.environ.get("SECRET_PEPPER", "change_me_in_vercel_settings")
+PEPPER = os.environ.get("SECRET_PEPPER", "lizza_super_secret_fallback_key")
 
 # CRITICAL FIX: Database initialization moved to startup event to prevent Hugging Face boot crashes
 @app.on_event("startup")
