@@ -1,14 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Container, Card, Row, Col, Form, Button, Alert, Spinner, Table, Badge } from 'react-bootstrap';
-import { MapPin, Navigation, CheckCircle, FileText, Map as MapIcon, LogIn, LogOut, WifiOff, RefreshCw, Clock, Coffee, Activity, AlertTriangle } from 'lucide-react';
+import { MapPin, Navigation, CheckCircle, FileText, Map as MapIcon, LogIn, LogOut, WifiOff, RefreshCw, Clock, Coffee, Activity, AlertTriangle, CheckSquare } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { LocalNotifications } from '@capacitor/local-notifications';
 
-// REPLACE THIS:
-// const API_BASE_URL = process.env.REACT_APP_API_BASE_URL;
-
-// WITH THIS (Your actual Hugging Face backend URL):
 const API_BASE_URL = "https://sunil0034-lizza-facility-backend.hf.space";
 const isApp = Capacitor.isNativePlatform();
 const LizzaTracker = registerPlugin('LizzaTracker');
@@ -25,6 +21,8 @@ const FieldOfficerDashboard = () => {
   const [shiftData, setShiftData] = useState(null);
   const [locations, setLocations] = useState([]);
   const [visitHistory, setVisitHistory] = useState([]);
+  const [assignedTasks, setAssignedTasks] = useState([]); 
+  
   const [myLoc, setMyLoc] = useState(null);
   const [nearbySites, setNearbySites] = useState([]);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -36,9 +34,12 @@ const FieldOfficerDashboard = () => {
   
   const [dutyHours, setDutyHours] = useState(0);
   const [travelHours, setTravelHours] = useState(0);
+  
   const [purpose, setPurpose] = useState('');
   const [visitEntries, setVisitEntries] = useState([{ photo: null, details: '' }]);
   
+  const [activeTaskForm, setActiveTaskForm] = useState({});
+
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [alertMsg, setAlertMsg] = useState(null);
   const [pendingOfflineActions, setPendingOfflineActions] = useState(0);
@@ -76,10 +77,11 @@ const FieldOfficerDashboard = () => {
   const updateQueueCounts = useCallback(() => {
       if (!isApp) return;
       const v = JSON.parse(localStorage.getItem('offlineVisitQueue') || '[]').length;
+      const t = JSON.parse(localStorage.getItem('offlineTaskQueue') || '[]').length;
       const a = JSON.parse(localStorage.getItem('offlineAttendanceQueue') || '[]').length;
       const s = JSON.parse(localStorage.getItem('offlineShiftQueue') || '[]').length;
       const l = JSON.parse(localStorage.getItem('offlineLocationQueue') || '[]').length;
-      setPendingOfflineActions(v + a + s + l);
+      setPendingOfflineActions(v + t + a + s + l);
   }, []);
 
   const fetchData = useCallback(async (isSilent = false) => {
@@ -87,25 +89,23 @@ const FieldOfficerDashboard = () => {
     isFetchingRef.current = true;
     const t = Date.now();
     
-    const [locRes, histRes, profRes, shiftRes] = await Promise.all([
+    const [locRes, histRes, profRes, shiftRes, tasksRes] = await Promise.all([
         fetch(`${API_BASE_URL}/api/admin/locations?_t=${t}`).catch(() => ({ ok: false })),
         fetch(`${API_BASE_URL}/api/field-officer/my-visits?email=${userEmail}&_t=${t}`).catch(() => ({ ok: false })),
         fetch(`${API_BASE_URL}/api/user/profile?email=${userEmail}&_t=${t}`).catch(() => ({ ok: false })),
-        fetch(`${API_BASE_URL}/api/shift/current?email=${userEmail}&_t=${t}`).catch(() => ({ ok: false }))
+        fetch(`${API_BASE_URL}/api/shift/current?email=${userEmail}&_t=${t}`).catch(() => ({ ok: false })),
+        fetch(`${API_BASE_URL}/api/tasks?email=${userEmail}&role=field_officer&_t=${t}`).catch(() => ({ ok: false }))
     ]);
     
     let loadedLocs = [];
-    if (locRes && locRes.ok) {
-        loadedLocs = await locRes.json();
-        setLocations(loadedLocs);
-    }
+    if (locRes && locRes.ok) { loadedLocs = await locRes.json(); setLocations(loadedLocs); }
     
     let parsedVisits = [];
-    if (histRes && histRes.ok) {
-        parsedVisits = await histRes.json();
-        setVisitHistory(parsedVisits);
-    }
+    if (histRes && histRes.ok) { parsedVisits = await histRes.json(); setVisitHistory(parsedVisits); }
     
+    let loadedTasks = [];
+    if (tasksRes && tasksRes.ok) { loadedTasks = await tasksRes.json(); setAssignedTasks(loadedTasks); }
+
     if (profRes && profRes.ok) {
         const prof = await profRes.json();
         setCheckedIn(Boolean(prof.checked_in));
@@ -129,9 +129,7 @@ const FieldOfficerDashboard = () => {
             setShiftData(shift);
             if (!shift.is_on_break && isApp) LizzaTracker.startTracking({ email: userEmail });
         } else {
-            setDutyStatus('OFF_DUTY');
-            setShiftData(null);
-            setTravelHours(0);
+            setDutyStatus('OFF_DUTY'); setShiftData(null); setTravelHours(0);
             if (isApp) LizzaTracker.stopTracking();
         }
     }
@@ -139,10 +137,7 @@ const FieldOfficerDashboard = () => {
   }, [userEmail]);
 
   useEffect(() => {
-    if (dutyStatus === 'OFF_DUTY' || !shiftData || !shiftData.login_time) {
-        setDutyHours(0); setTravelHours(0); return;
-    }
-
+    if (dutyStatus === 'OFF_DUTY' || !shiftData || !shiftData.login_time) { setDutyHours(0); setTravelHours(0); return; }
     let currentTravelSec = shiftData.travel_seconds || 0;
     const loginTime = new Date(shiftData.login_time).getTime();
     const breakStartTime = shiftData.break_start_time ? new Date(shiftData.break_start_time).getTime() : null;
@@ -151,20 +146,13 @@ const FieldOfficerDashboard = () => {
         const now = Date.now();
         let elapsedMs = now - loginTime;
         let breakMs = (shiftData.total_break_seconds || 0) * 1000;
-        
-        if (dutyStatus === 'ON_BREAK' && breakStartTime) {
-            breakMs += (now - breakStartTime);
-        }
-        
+        if (dutyStatus === 'ON_BREAK' && breakStartTime) breakMs += (now - breakStartTime);
         let activeDutyMs = Math.max(0, elapsedMs - breakMs);
         setDutyHours(activeDutyMs / (1000 * 60 * 60));
 
-        if (dutyStatus === 'ON_DUTY' && !checkedInRef.current) {
-            currentTravelSec += 1;
-        }
+        if (dutyStatus === 'ON_DUTY' && !checkedInRef.current) currentTravelSec += 1;
         setTravelHours(currentTravelSec / 3600);
     }, 1000);
-    
     return () => clearInterval(interval);
   }, [dutyStatus, shiftData]); 
 
@@ -184,13 +172,9 @@ const FieldOfficerDashboard = () => {
     };
 
     await syncQueue('offlineShiftQueue', '/api/shift/day-action');
-
     let locQ = JSON.parse(localStorage.getItem('offlineLocationQueue') || '[]');
     if (locQ.length > 0) {
-        const locRes = await fetch(`${API_BASE_URL}/api/user/sync-offline-locations`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: userEmail, locations: locQ })
-        }).catch(() => ({ ok: false }));
+        const locRes = await fetch(`${API_BASE_URL}/api/user/sync-offline-locations`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: userEmail, locations: locQ }) }).catch(() => ({ ok: false }));
         if (locRes && locRes.ok) localStorage.setItem('offlineLocationQueue', '[]');
     }
     
@@ -211,9 +195,16 @@ const FieldOfficerDashboard = () => {
         return { method: 'POST', body: formData };
     });
 
+    await syncQueue('offlineTaskQueue', '/api/field-officer/submit-task', (taskObj) => {
+        const formData = new FormData();
+        formData.append('task_id', taskObj.task_id);
+        formData.append('completion_data', JSON.stringify(taskObj.completion_data));
+        return { method: 'POST', body: formData };
+    });
+
     updateQueueCounts();
     setIsSyncing(false);
-    fetchData();
+    fetchData(true);
   }, [isSyncing, fetchData, updateQueueCounts, userEmail]);
 
   useEffect(() => {
@@ -228,33 +219,23 @@ const FieldOfficerDashboard = () => {
 
   const handleAttendance = async (type, targetSite, loc) => {
     if (isProcessingRef.current) return;
-    isProcessingRef.current = true;
-    setIsSubmitting(true);
-
+    isProcessingRef.current = true; setIsSubmitting(true);
+    
     let exactTime = new Date().toISOString();
     if (type === 'CHECK_IN' && targetSite) {
         const savedGeofenceEntryTime = localStorage.getItem(`entry_time_${targetSite.id}`);
         if (savedGeofenceEntryTime) exactTime = savedGeofenceEntryTime;
     }
-
-    const payload = { 
-        email: userEmail, lat: loc.lat, lon: loc.lon, timestamp: exactTime, actionType: type,
-        location_id: targetSite?.id || null 
-    };
+    
+    const payload = { email: userEmail, lat: loc.lat, lon: loc.lon, timestamp: exactTime, actionType: type, location_id: targetSite?.id || null };
 
     if (!isOnline && isApp) {
         const q = JSON.parse(localStorage.getItem('offlineAttendanceQueue') || '[]');
-        q.push(payload);
-        localStorage.setItem('offlineAttendanceQueue', JSON.stringify(q));
-        
-        setCheckedIn(type === 'CHECK_IN');
-        setCheckedInSite(type === 'CHECK_IN' ? targetSite : null);
+        q.push(payload); localStorage.setItem('offlineAttendanceQueue', JSON.stringify(q));
+        setCheckedIn(type === 'CHECK_IN'); setCheckedInSite(type === 'CHECK_IN' ? targetSite : null);
         if (type === 'CHECK_IN') setHasSubmittedReport(false);
         if (type === 'CHECK_OUT' && targetSite) localStorage.removeItem(`entry_time_${targetSite.id}`);
-        updateQueueCounts();
-        
-        isProcessingRef.current = false; 
-        setIsSubmitting(false);
+        updateQueueCounts(); isProcessingRef.current = false; setIsSubmitting(false);
     } else {
         const ep = type === 'CHECK_IN' ? '/api/user/checkin' : '/api/user/checkout';
         const res = await fetch(`${API_BASE_URL}${ep}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }).catch(() => ({ ok: false }));
@@ -262,63 +243,60 @@ const FieldOfficerDashboard = () => {
             setAlertMsg({ type: 'success', text: `Successfully ${type === 'CHECK_IN' ? 'Checked In' : 'Checked Out'}` });
             if (type === 'CHECK_IN') setHasSubmittedReport(false);
             if (type === 'CHECK_OUT' && targetSite) localStorage.removeItem(`entry_time_${targetSite.id}`);
-            await fetchData();
+            await fetchData(true);
         }
-        setIsSubmitting(false);
-        isProcessingRef.current = false;
+        setIsSubmitting(false); isProcessingRef.current = false;
     }
   };
 
   const processNewLocation = useCallback(async (lat, lon, accuracy, timestamp, speedMetersPerSec) => {
     if (accuracy > 100) return; 
-
     let speedKmh = 0;
-    if (speedMetersPerSec !== null && speedMetersPerSec !== undefined && speedMetersPerSec >= 0) {
-        speedKmh = speedMetersPerSec * 3.6;
-    } else if (lastSentPositionRef.current && lastSentPositionRef.current.timestamp) {
+    if (speedMetersPerSec !== null && speedMetersPerSec !== undefined && speedMetersPerSec >= 0) speedKmh = speedMetersPerSec * 3.6;
+    else if (lastSentPositionRef.current && lastSentPositionRef.current.timestamp) {
         const distMeters = calculateDistance(lastSentPositionRef.current.lat, lastSentPositionRef.current.lon, lat, lon);
         const timeDiffSec = (new Date(timestamp).getTime() - new Date(lastSentPositionRef.current.timestamp).getTime()) / 1000;
         if (timeDiffSec > 0) speedKmh = (distMeters / timeDiffSec) * 3.6;
     }
-
+    
     let inferredActivity = 'STILL';
     if (speedKmh > 30) inferredActivity = 'IN_VEHICLE';
     else if (speedKmh > 12) inferredActivity = 'ON_BICYCLE';
     else if (speedKmh > 2) inferredActivity = 'WALKING';
 
     const lastPing = localStorage.getItem('last_ping_time');
+    
     if (!lastPing || (Date.now() - parseInt(lastPing)) >= 30000) {
         localStorage.setItem('last_ping_time', Date.now().toString());
-        resetIdleWarningTimer(); 
-        
-        const payload = { 
-            email: userEmail, lat, lon, accuracy, timestamp, 
-            activity_state: 'TRAVELING',
-            speed: parseFloat(speedKmh.toFixed(2)),
-            activity_type: inferredActivity
-        };
-
+        resetIdleWarningTimer();
+        const payload = { email: userEmail, lat, lon, accuracy, timestamp, activity_state: 'TRAVELING', speed: parseFloat(speedKmh.toFixed(2)), activity_type: inferredActivity };
         if (userEmail && dutyStatusRef.current === 'ON_DUTY') {
-            if (navigator.onLine) {
-                fetch(`${API_BASE_URL}/api/location/ping`, {
-                    method: "POST", headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(payload)
-                }).catch(()=>{});
-            } else if (isApp) {
+            if (navigator.onLine) fetch(`${API_BASE_URL}/api/location/ping`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }).catch(()=>{});
+            else if (isApp) {
                 const q = JSON.parse(localStorage.getItem('offlineLocationQueue') || '[]');
-                q.push(payload);
-                localStorage.setItem('offlineLocationQueue', JSON.stringify(q));
-                updateQueueCounts();
+                q.push(payload); localStorage.setItem('offlineLocationQueue', JSON.stringify(q)); updateQueueCounts();
             }
         }
     }
-    
     setMyLoc({ lat, lon });
 
-    const sitesWithDistance = locations.map(site => ({ ...site, distance: calculateDistance(lat, lon, site.lat, site.lon) }));
-    sitesWithDistance.sort((a, b) => a.distance - b.distance);
+    // SORTING SITES BY TASK PRIORITY THEN DISTANCE
+    const todayStr = new Date().toISOString().split('T')[0];
+    const pendingSitesToday = assignedTasks.filter(t => t.date === todayStr && t.status === 'PENDING').map(t => Number(t.site_id));
+    
+    const sitesWithDistance = locations.map(site => ({ 
+        ...site, 
+        distance: calculateDistance(lat, lon, site.lat, site.lon),
+        hasTaskToday: pendingSitesToday.includes(Number(site.id))
+    }));
+    
+    sitesWithDistance.sort((a, b) => {
+        if (a.hasTaskToday && !b.hasTaskToday) return -1;
+        if (!a.hasTaskToday && b.hasTaskToday) return 1;
+        return a.distance - b.distance;
+    });
+    
     setNearbySites(sitesWithDistance);
-
     const insideSite = sitesWithDistance[0] && sitesWithDistance[0].distance <= (sitesWithDistance[0].radius || 200) ? sitesWithDistance[0] : null;
     
     if (insideSite) {
@@ -326,45 +304,45 @@ const FieldOfficerDashboard = () => {
             localStorage.setItem(`entry_time_${insideSite.id}`, timestamp);
         }
     }
-
     setProximateSite(insideSite);
 
     if (dutyStatusRef.current === 'ON_DUTY' && !isProcessingRef.current) {
-        if (insideSite && !checkedInRef.current) {
-            handleAttendance('CHECK_IN', insideSite, { lat, lon });
-        } 
+        if (insideSite && !checkedInRef.current) handleAttendance('CHECK_IN', insideSite, { lat, lon });
         else if (checkedInRef.current && checkedInSiteRef.current) {
-            // --- THE CROSS-SITE AUTO SWAP LOGIC ---
-            // If inside a new site but checked into an old site
             if (insideSite && insideSite.id !== checkedInSiteRef.current.id) {
                 handleAttendance('CHECK_OUT', checkedInSiteRef.current, { lat, lon }).then(() => {
-                    // The next GPS tick will cleanly check them into the new site.
+                     // The next GPS tick will cleanly check them into the new site.
                 });
-            } 
-            // If they just left the old site and are in empty space (>300m away)
-            else if (!insideSite) {
+            } else if (!insideSite) {
                 const distToActive = calculateDistance(lat, lon, checkedInSiteRef.current.lat, checkedInSiteRef.current.lon);
-                if (distToActive > 300) {
-                    handleAttendance('CHECK_OUT', checkedInSiteRef.current, { lat, lon });
-                }
+                if (distToActive > 300) handleAttendance('CHECK_OUT', checkedInSiteRef.current, { lat, lon });
             }
         }
     }
-  }, [locations, userEmail]);
+  }, [locations, userEmail, assignedTasks, updateQueueCounts]);
 
   useEffect(() => {
     if (locations.length > 0 && myLoc) {
+      const todayStr = new Date().toISOString().split('T')[0];
+      const pendingSitesToday = assignedTasks.filter(t => t.date === todayStr && t.status === 'PENDING').map(t => Number(t.site_id));
+      
       const sitesWithDistance = locations.map(site => ({ 
         ...site, 
-        distance: calculateDistance(myLoc.lat, myLoc.lon, site.lat, site.lon) 
+        distance: calculateDistance(myLoc.lat, myLoc.lon, site.lat, site.lon),
+        hasTaskToday: pendingSitesToday.includes(Number(site.id))
       }));
       
-      sitesWithDistance.sort((a, b) => a.distance - b.distance);
+      sitesWithDistance.sort((a, b) => {
+          if (a.hasTaskToday && !b.hasTaskToday) return -1;
+          if (!a.hasTaskToday && b.hasTaskToday) return 1;
+          return a.distance - b.distance;
+      });
+      
       setNearbySites(sitesWithDistance);
       const insideSite = sitesWithDistance[0] && sitesWithDistance[0].distance <= (sitesWithDistance[0].radius || 200) ? sitesWithDistance[0] : null;
       setProximateSite(insideSite);
     }
-  }, [locations, myLoc]); 
+  }, [locations, myLoc, assignedTasks]); 
 
   useEffect(() => {
     if (!userEmail || !navigator.geolocation) return;
@@ -396,18 +374,16 @@ const FieldOfficerDashboard = () => {
   const handleDayShiftAction = async (action) => {
     setIsSubmitting(true);
     const payload = { email: userEmail, action: action, timestamp: new Date().toISOString() };
-
     if (!isOnline && isApp) {
         const q = JSON.parse(localStorage.getItem('offlineShiftQueue') || '[]');
-        q.push(payload);
-        localStorage.setItem('offlineShiftQueue', JSON.stringify(q));
+        q.push(payload); localStorage.setItem('offlineShiftQueue', JSON.stringify(q));
         if (action === 'START' || action === 'RESUME') { setDutyStatus('ON_DUTY'); LizzaTracker.startTracking({ email: userEmail }); } 
         else { setDutyStatus(action === 'BREAK' ? 'ON_BREAK' : 'OFF_DUTY'); LizzaTracker.stopTracking(); }
         updateQueueCounts();
     } else {
         const res = await fetch(`${API_BASE_URL}/api/shift/day-action`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }).catch(() => ({ ok: false }));
         if (res && res.ok) {
-            await fetchData(); 
+            await fetchData(true); 
             if (action === 'START' || action === 'RESUME') { if (isApp) LizzaTracker.startTracking({ email: userEmail }); } 
             else { if (isApp) LizzaTracker.stopTracking(); }
         } else {
@@ -418,56 +394,92 @@ const FieldOfficerDashboard = () => {
     setIsSubmitting(false);
   };
 
-  const handleVisitSubmit = async (e) => {
+  const updateTaskForm = (taskId, key, val) => {
+      setActiveTaskForm(prev => ({ ...prev, [taskId]: { ...(prev[taskId] || {}), [key]: val, id: taskId } }));
+  };
+
+  const submitTaskChecklist = async (e, targetSite, activeTask) => {
+      e.preventDefault();
+      setIsSubmitting(true);
+      
+      const completionDataArray = [];
+      for (const t of activeTask.tasks) {
+          const st = activeTaskForm[t.id];
+          if (!st || st.is_done === undefined) {
+              setIsSubmitting(false);
+              return alert(`Please select Done/Not Done for: ${t.description}`);
+          }
+          if (st.is_done && !st.photo) {
+              setIsSubmitting(false);
+              return alert(`Photo is required for completed task: ${t.description}`);
+          }
+          
+          let compressedPhotoBase64 = null;
+          if (st.is_done && st.photo) {
+              const comp = await compressImage(st.photo);
+              compressedPhotoBase64 = await fileToBase64(comp);
+          }
+          
+          completionDataArray.push({
+              id: t.id,
+              description: t.description,
+              is_done: st.is_done,
+              remarks: st.remarks || '',
+              photoBase64: compressedPhotoBase64
+          });
+      }
+
+      if (!isOnline && isApp) {
+          const q = JSON.parse(localStorage.getItem('offlineTaskQueue') || '[]');
+          q.push({ task_id: activeTask.task_id, completion_data: completionDataArray });
+          localStorage.setItem('offlineTaskQueue', JSON.stringify(q));
+          setAlertMsg({ type: 'warning', text: 'Offline. Checklist safely queued.' });
+          setHasSubmittedReport(true); updateQueueCounts();
+      } else {
+          const formData = new FormData();
+          formData.append('task_id', activeTask.task_id);
+          formData.append('completion_data', JSON.stringify(completionDataArray));
+          
+          const res = await fetch(`${API_BASE_URL}/api/field-officer/submit-task`, { method: 'POST', body: formData }).catch(() => ({ ok: false }));
+          if (res && res.ok) {
+              setAlertMsg({ type: 'success', text: 'Task Checklist Logged!' });
+              setHasSubmittedReport(true); fetchData(true);
+          } else { alert("Failed to log task list. Try again."); }
+      }
+      setIsSubmitting(false);
+  };
+
+  const handleGenericSubmit = async (e, targetSite) => {
     e.preventDefault();
     if (!checkedIn) return alert("Wait! The system has not confirmed your check-in yet.");
-    
-    const targetSiteForVisit = checkedInSite || proximateSite || (nearbySites.length > 0 ? nearbySites[0] : null);
-    if (!targetSiteForVisit || !myLoc) return alert("You must be officially checked into a site to log a visit.");
+    if (!targetSite || !myLoc) return alert("You must be officially checked into a site to log a visit.");
     
     const validEntries = visitEntries.filter(entry => entry.photo !== null);
-    if (validEntries.length === 0) return alert("At least one photo with details is required.");
-
+    if (validEntries.length === 0) return alert("Photo required.");
     setIsSubmitting(true);
-    const detailsArray = [];
-    const compressedPhotos = [];
+    const detailsArray = []; const compressedPhotos = [];
+    for (let i = 0; i < validEntries.length; i++) { compressedPhotos.push(await compressImage(validEntries[i].photo)); detailsArray.push(validEntries[i].details); }
     
-    for (let i = 0; i < validEntries.length; i++) {
-        compressedPhotos.push(await compressImage(validEntries[i].photo));
-        detailsArray.push(validEntries[i].details);
-    }
-    
-    const timestamp = new Date().toISOString();
-
     if (!isOnline && isApp) {
         const base64Strings = await Promise.all(compressedPhotos.map(p => fileToBase64(p)));
         const q = JSON.parse(localStorage.getItem('offlineVisitQueue') || '[]');
-        q.push({ email: userEmail, location_id: targetSiteForVisit.id, purpose, photo_details: JSON.stringify(detailsArray), lat: myLoc.lat, lon: myLoc.lon, timestamp, photosBase64: base64Strings });
+        q.push({ email: userEmail, location_id: targetSite.id, purpose, photo_details: JSON.stringify(detailsArray), lat: myLoc.lat, lon: myLoc.lon, timestamp: new Date().toISOString(), photosBase64: base64Strings });
         localStorage.setItem('offlineVisitQueue', JSON.stringify(q));
-        setAlertMsg({ type: 'warning', text: 'No internet. Visit report safely queued.' });
-        setPurpose(''); setVisitEntries([{ photo: null, details: '' }]);
-        setHasSubmittedReport(true); 
-        updateQueueCounts();
+        setAlertMsg({ type: 'warning', text: 'Offline. Visit queued.' });
+        setPurpose(''); setVisitEntries([{ photo: null, details: '' }]); setHasSubmittedReport(true); updateQueueCounts();
     } else {
         const formData = new FormData();
-        formData.append('email', userEmail); formData.append('location_id', targetSiteForVisit.id);
-        formData.append('purpose', purpose); formData.append('photo_details', JSON.stringify(detailsArray));
-        formData.append('lat', myLoc.lat); formData.append('lon', myLoc.lon); formData.append('timestamp', timestamp); 
+        formData.append('email', userEmail); formData.append('location_id', targetSite.id); formData.append('purpose', purpose); formData.append('photo_details', JSON.stringify(detailsArray)); formData.append('lat', myLoc.lat); formData.append('lon', myLoc.lon); formData.append('timestamp', new Date().toISOString()); 
         compressedPhotos.forEach((p) => { formData.append('photos', p); });
-
-        const res = await fetch(`${API_BASE_URL}/api/field-officer/log-visit`, { method: 'POST', body: formData }).catch(() => ({ ok: false, json: async () => ({ detail: "Network error" }) }));
-        if (res && res.ok) {
-            setAlertMsg({ type: 'success', text: 'Visit logged successfully!' });
-            setPurpose(''); setVisitEntries([{ photo: null, details: '' }]);
-            setHasSubmittedReport(true);
-            fetchData(); 
-        } else {
-            const errData = await res.json();
-            alert(errData.detail || "Failed to log visit. Make sure you are inside the site geofence.");
-        }
+        const res = await fetch(`${API_BASE_URL}/api/field-officer/log-visit`, { method: 'POST', body: formData }).catch(() => ({ ok: false }));
+        if (res && res.ok) { setAlertMsg({ type: 'success', text: 'Visit logged successfully!' }); setPurpose(''); setVisitEntries([{ photo: null, details: '' }]); setHasSubmittedReport(true); fetchData(true); } 
+        else { alert("Failed to log visit."); }
     }
     setIsSubmitting(false);
   };
+
+  const todayStr = new Date().toISOString().split('T')[0];
+  const activeTaskObj = (checkedInSite || proximateSite) ? assignedTasks.find(t => Number(t.site_id) === Number((checkedInSite || proximateSite).id) && t.date === todayStr && t.status === 'PENDING') : null;
 
   return (
     <Container fluid="md" className="py-3 py-md-4">
@@ -479,8 +491,7 @@ const FieldOfficerDashboard = () => {
         <Alert variant="warning" className="d-flex justify-content-between align-items-center mb-3 py-2 shadow-sm border-warning small">
             <span>
                 {isOnline ? <RefreshCw size={16} className="me-2 text-primary" /> : <WifiOff size={16} className="me-2 text-danger" />}
-                <strong className="me-1">{isOnline ? 'Syncing...' : 'Offline Mode'}</strong> 
-                {pendingOfflineActions} pending action{pendingOfflineActions === 1 ? '' : 's'}.
+                <strong className="me-1">{isOnline ? 'Syncing...' : 'Offline Mode'}</strong> {pendingOfflineActions} pending action{pendingOfflineActions === 1 ? '' : 's'}.
             </span>
         </Alert>
       )}
@@ -508,24 +519,15 @@ const FieldOfficerDashboard = () => {
       </Card>
 
       <Row className="g-3 mb-4">
-        <Col lg={4} className="order-1 order-lg-2">
+        <Col lg={5} className="order-1 order-lg-2">
           <div className="d-flex flex-column gap-3 h-100">
             <Card className="border-0 shadow-sm">
               <Card.Body>
                 <h5 className="fw-bold mb-3 d-flex align-items-center"><MapPin className="me-2 text-danger"/> Site Attendance</h5>
-                
                 {alertMsg && <Alert variant={alertMsg.type} className="mb-3 small fw-bold">{alertMsg.text}</Alert>}
                 
-                {dutyStatus === 'OFF_DUTY' ? (
-                    <Alert variant="secondary" className="text-center mb-0">
-                        <span className="d-block mb-1 fw-bold">Shift Inactive</span>
-                        <small className="text-muted">You must be On-Duty to check into a site.</small>
-                    </Alert>
-                ) : dutyStatus === 'ON_BREAK' ? (
-                     <Alert variant="warning" className="text-center mb-0">
-                        <span className="d-block mb-1 fw-bold">On Break</span>
-                        <small className="text-muted">Resume duty to access site actions.</small>
-                    </Alert>
+                {dutyStatus === 'OFF_DUTY' ? ( <Alert variant="secondary" className="text-center mb-0"><span className="d-block mb-1 fw-bold">Shift Inactive</span><small className="text-muted">You must be On-Duty to check into a site.</small></Alert>
+                ) : dutyStatus === 'ON_BREAK' ? ( <Alert variant="warning" className="text-center mb-0"><span className="d-block mb-1 fw-bold">On Break</span><small className="text-muted">Resume duty to access site actions.</small></Alert>
                 ) : (
                     <>
                         {checkedIn ? (
@@ -535,65 +537,59 @@ const FieldOfficerDashboard = () => {
                               <div className="text-dark fs-5 fw-bolder mt-2">{checkedInSite?.name || proximateSite?.name || 'Verifying Site...'}</div>
                           </div>
                         ) : proximateSite ? (
-                          <Alert variant="info" className="mb-3 text-center border-info border-2">
-                              You are currently near <br/><strong className="fs-6">{proximateSite.name}</strong>
-                          </Alert>
-                        ) : (
-                          <Alert variant="secondary" className="mb-3 text-center">Drive to a geofence to check in.</Alert>
-                        )}
+                          <Alert variant="info" className="mb-3 text-center border-info border-2">You are currently near <br/><strong className="fs-6">{proximateSite.name}</strong></Alert>
+                        ) : ( <Alert variant="secondary" className="mb-3 text-center">Drive to a geofence to check in.</Alert> )}
 
                         <div className="d-flex flex-column gap-2 mb-3">
-                          {!checkedIn && proximateSite && (
-                            <Button variant="success" size="lg" className="w-100 fw-bold shadow-sm" disabled={isSubmitting} onClick={() => handleAttendance('CHECK_IN', proximateSite, myLoc)}>
-                                <LogIn className="me-2" size={20}/> Check In Here
-                            </Button>
-                          )}
-                          
-                          {checkedIn && hasSubmittedReport && (
-                            <Button variant="danger" size="lg" className="w-100 fw-bold shadow-sm" disabled={isSubmitting} onClick={() => handleAttendance('CHECK_OUT', checkedInSite || proximateSite, myLoc)}>
-                                <LogOut className="me-2" size={20}/> Check Out
-                            </Button>
-                          )}
-                          {checkedIn && !hasSubmittedReport && (
-                            <Alert variant="warning" className="text-center small fw-bold mb-0">
-                                <AlertTriangle size={16} className="me-1 mb-1"/> Evidence Upload Required to Check Out
-                            </Alert>
-                          )}
+                          {!checkedIn && proximateSite && <Button variant="success" size="lg" className="w-100 fw-bold shadow-sm" disabled={isSubmitting} onClick={() => handleAttendance('CHECK_IN', proximateSite, myLoc)}><LogIn className="me-2" size={20}/> Check In Here</Button>}
+                          {checkedIn && hasSubmittedReport && <Button variant="danger" size="lg" className="w-100 fw-bold shadow-sm" disabled={isSubmitting} onClick={() => handleAttendance('CHECK_OUT', checkedInSite || proximateSite, myLoc)}><LogOut className="me-2" size={20}/> Check Out</Button>}
+                          {checkedIn && !hasSubmittedReport && <Alert variant="warning" className="text-center small fw-bold mb-0"><AlertTriangle size={16} className="me-1 mb-1"/> Evidence Upload Required to Check Out</Alert>}
                         </div>
 
-                        {checkedIn && (
-                          <Form onSubmit={handleVisitSubmit} className="mt-4 border-top pt-3">
-                            <h6 className="fw-bold mb-3 text-primary"><FileText className="me-2" size={18}/>Submit Site Report</h6>
-                            
-                            <Form.Select className="mb-3 py-2" value={purpose} onChange={e => setPurpose(e.target.value)} required>
-                                <option value="">Select Purpose of Visit...</option>
-                                <option value="Routine Inspection">Routine Inspection</option>
-                                <option value="Client Meeting">Client Meeting</option>
-                                <option value="Issue Resolution">Issue Resolution</option>
-                                <option value="Training">Training</option>
-                                <option value="Bill Submission">Bill Submission</option>
-                            </Form.Select>
-
-                            <div className="bg-light p-2 rounded mb-3" style={{maxHeight: '350px', overflowY: 'auto'}}>
-                                {visitEntries.map((entry, idx) => (
-                                    <div key={idx} className="mb-3 p-3 bg-white border rounded shadow-sm">
-                                        <div className="d-flex justify-content-between align-items-center mb-3">
-                                            <small className="fw-bold text-primary">Evidence #{idx + 1}</small>
-                                            {visitEntries.length > 1 && (
-                                                <Badge bg="danger" style={{cursor: 'pointer', padding: '6px 10px'}} onClick={() => { const n = [...visitEntries]; n.splice(idx, 1); setVisitEntries(n); }}>Remove</Badge>
-                                            )}
-                                        </div>
-                                        <Form.Control type="file" accept="image/*" capture="environment" className="mb-3" onChange={(e) => { const n = [...visitEntries]; n[idx].photo = e.target.files[0]; setVisitEntries(n); }} required />
-                                        <Form.Control as="textarea" rows={3} placeholder="Add detailed remarks or observations here..." value={entry.details} onChange={(e) => { const n = [...visitEntries]; n[idx].details = e.target.value; setVisitEntries(n); }} required />
+                        {checkedIn && !hasSubmittedReport && (
+                          <div className="mt-4 border-top pt-3">
+                              {activeTaskObj ? (
+                                  <Form onSubmit={(e) => submitTaskChecklist(e, checkedInSite || proximateSite, activeTaskObj)}>
+                                      <h6 className="fw-bold mb-3 text-primary"><CheckSquare className="me-2" size={18}/> Assigned Task Checklist</h6>
+                                      {activeTaskObj.tasks.map((t, idx) => (
+                                          <div key={t.id} className="mb-3 p-3 bg-light border rounded shadow-sm">
+                                              <div className="fw-bold text-dark mb-2">{idx+1}. {t.description}</div>
+                                              <Form.Group className="mb-3 d-flex gap-3">
+                                                 <Form.Check type="radio" label={<span className="text-success fw-bold">Done</span>} name={`status_${t.id}`} onChange={() => updateTaskForm(t.id, 'is_done', true)} required/>
+                                                 <Form.Check type="radio" label={<span className="text-danger fw-bold">Not Done</span>} name={`status_${t.id}`} onChange={() => updateTaskForm(t.id, 'is_done', false)} required/>
+                                              </Form.Group>
+                                              {activeTaskForm[t.id]?.is_done && (
+                                                  <Form.Group className="mb-2">
+                                                      <Form.Label className="small fw-bold">Evidence Photo <span className="text-danger">*</span></Form.Label>
+                                                      <Form.Control size="sm" type="file" accept="image/*" capture="environment" onChange={e => updateTaskForm(t.id, 'photo', e.target.files[0])} required />
+                                                  </Form.Group>
+                                              )}
+                                              <Form.Group>
+                                                  <Form.Control size="sm" as="textarea" rows={2} placeholder="Optional remarks..." onChange={e => updateTaskForm(t.id, 'remarks', e.target.value)} />
+                                              </Form.Group>
+                                          </div>
+                                      ))}
+                                      <Button type="submit" variant="primary" size="lg" className="w-100 fw-bold shadow-sm" disabled={isSubmitting}>{isSubmitting ? <Spinner size="sm"/> : "Submit Checklist & Complete"}</Button>
+                                  </Form>
+                              ) : (
+                                  <Form onSubmit={(e) => handleGenericSubmit(e, checkedInSite || proximateSite)}>
+                                    <h6 className="fw-bold mb-3 text-primary"><FileText className="me-2" size={18}/>Standard Site Report</h6>
+                                    <Form.Select className="mb-3 py-2" value={purpose} onChange={e => setPurpose(e.target.value)} required>
+                                        <option value="">Select Purpose of Visit...</option><option value="Routine Inspection">Routine Inspection</option><option value="Client Meeting">Client Meeting</option><option value="Issue Resolution">Issue Resolution</option><option value="Training">Training</option><option value="Bill Submission">Bill Submission</option>
+                                    </Form.Select>
+                                    <div className="bg-light p-2 rounded mb-3" style={{maxHeight: '350px', overflowY: 'auto'}}>
+                                        {visitEntries.map((entry, idx) => (
+                                            <div key={idx} className="mb-3 p-3 bg-white border rounded shadow-sm">
+                                                <div className="d-flex justify-content-between align-items-center mb-2"><small className="fw-bold text-primary">Evidence #{idx + 1}</small></div>
+                                                <Form.Control type="file" accept="image/*" capture="environment" className="mb-3" onChange={(e) => { const n = [...visitEntries]; n[idx].photo = e.target.files[0]; setVisitEntries(n); }} required />
+                                                <Form.Control as="textarea" rows={2} placeholder="Add detailed remarks..." value={entry.details} onChange={(e) => { const n = [...visitEntries]; n[idx].details = e.target.value; setVisitEntries(n); }} required />
+                                            </div>
+                                        ))}
                                     </div>
-                                ))}
-                                <Button variant="outline-primary" className="w-100 fw-bold py-2 border-dashed" onClick={() => setVisitEntries([...visitEntries, { photo: null, details: '' }])}>+ Add Another Photo</Button>
-                            </div>
-
-                            <Button type="submit" variant="primary" size="lg" className="w-100 fw-bold shadow-sm mt-2" disabled={isSubmitting}>
-                              {isSubmitting ? <Spinner size="sm" /> : "SUBMIT FULL REPORT"}
-                            </Button>
-                          </Form>
+                                    <Button type="submit" variant="primary" size="lg" className="w-100 fw-bold shadow-sm" disabled={isSubmitting}>{isSubmitting ? <Spinner size="sm" /> : "Submit General Report"}</Button>
+                                  </Form>
+                              )}
+                          </div>
                         )}
                     </>
                 )}
@@ -602,7 +598,7 @@ const FieldOfficerDashboard = () => {
           </div>
         </Col>
 
-        <Col lg={8} className="order-2 order-lg-1">
+        <Col lg={7} className="order-2 order-lg-1">
           <Card className="border-0 shadow-sm overflow-hidden h-100" style={{ minHeight: '350px' }}>
             {dutyStatus === 'OFF_DUTY' ? (
                 <div className="h-100 d-flex flex-column align-items-center justify-content-center bg-light text-muted p-4 text-center">
@@ -632,14 +628,17 @@ const FieldOfficerDashboard = () => {
       <Row className="g-3 mb-4">
         <Col lg={4}>
             <Card className="border-0 shadow-sm h-100">
-              <Card.Header className="bg-white py-3 border-bottom-0"><h6 className="fw-bold m-0"><MapIcon className="me-2 text-primary" size={18} /> Nearby Sites Directory</h6></Card.Header>
+              <Card.Header className="bg-white py-3 border-bottom-0"><h6 className="fw-bold m-0"><MapIcon className="me-2 text-primary" size={18} /> Priority Sites Directory</h6></Card.Header>
               <Card.Body className="p-0 overflow-auto" style={{ maxHeight: '300px' }}>
                 <Table hover responsive className="mb-0 align-middle small">
                   <tbody>
                     {nearbySites.map(site => (
-                        <tr key={site.id}>
+                        <tr key={site.id} className={site.hasTaskToday ? "bg-warning bg-opacity-10" : ""}>
                           <td className="ps-4 border-0 border-bottom py-3">
-                            <div className="fw-bold text-dark">{site.name}</div>
+                            <div className="fw-bold text-dark d-flex align-items-center">
+                                {site.name} 
+                                {site.hasTaskToday && <Badge bg="danger" className="ms-2"><CheckSquare size={10} className="me-1"/>Task Due</Badge>}
+                            </div>
                             <div className="text-muted mt-1">{site.distance < 1000 ? `${Math.round(site.distance)}m away` : `${(site.distance / 1000).toFixed(1)}km away`}</div>
                           </td>
                         </tr>
@@ -659,35 +658,16 @@ const FieldOfficerDashboard = () => {
             </Card.Header>
             <Card.Body className="p-0 overflow-auto" style={{ maxHeight: '300px' }}>
                <Table hover responsive className="mb-0 align-middle small text-nowrap">
-                   <thead className="table-light">
-                       <tr>
-                           <th className="ps-4 py-3">Date & Time</th>
-                           <th className="py-3">Site Name</th>
-                           <th className="py-3">Purpose</th>
-                           <th className="py-3">Remarks</th>
-                           <th className="py-3 pe-4">Evidence</th>
-                       </tr>
-                   </thead>
+                   <thead className="table-light"><tr><th className="ps-4 py-3">Date & Time</th><th className="py-3">Site Name</th><th className="py-3">Purpose</th><th className="py-3 pe-4">Evidence</th></tr></thead>
                    <tbody>
-                       {visitHistory.length === 0 ? (
-                           <tr>
-                               <td colSpan="5" className="text-center text-muted py-5">No recent site visits recorded.</td>
-                           </tr>
-                       ) : (
+                       {visitHistory.length === 0 ? <tr><td colSpan="4" className="text-center text-muted py-5">No recent site visits recorded.</td></tr> : (
                            visitHistory.map((v, i) => (
                                <tr key={i}>
                                    <td className="ps-4 fw-bold">{v.visit_time}</td>
                                    <td><MapPin size={14} className="text-danger me-1"/> {v.site_name}</td>
                                    <td><Badge bg="dark" className="px-2 py-1">{v.purpose}</Badge></td>
-                                   <td style={{ maxWidth: '200px' }} className="text-truncate" title={v.remarks}>{v.remarks}</td>
                                    <td className="pe-4">
-                                       {v.photo_url ? (
-                                           <a href={v.photo_url.split(',')[0]} target="_blank" rel="noreferrer">
-                                              <Badge bg="info" className="px-2 py-1 text-decoration-none">View Photo</Badge>
-                                           </a>
-                                       ) : (
-                                           <span className="text-muted">None</span>
-                                       )}
+                                       {v.photo_url ? ( <a href={v.photo_url.split(',')[0]} target="_blank" rel="noreferrer"><Badge bg="info" className="px-2 py-1 text-decoration-none">View Photo</Badge></a> ) : ( <span className="text-muted">None</span> )}
                                    </td>
                                </tr>
                            ))
@@ -701,4 +681,5 @@ const FieldOfficerDashboard = () => {
     </Container>
   );
 };
+
 export default FieldOfficerDashboard;

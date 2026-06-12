@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Table, Form, Container, Card, Spinner, Button, Row, Col, Modal, Badge, Tabs, Tab, Alert } from 'react-bootstrap';
-import { UserCog, Building2, MapPin, Trash2, Users, UserCheck, Save, Search, Plus, Bell, Edit2, Calendar, Download, Image as ImageIcon, FileText, Briefcase, Filter, Eye, CheckCircle, Phone, Crosshair, ShieldAlert, Navigation, Map as MapIcon } from 'lucide-react';
+import { UserCog, Building2, MapPin, Trash2, Users, UserCheck, Save, Search, Plus, Bell, Edit2, Calendar, Download, Image as ImageIcon, FileText, Briefcase, Filter, Eye, CheckCircle, Phone, Crosshair, ShieldAlert, Navigation, Map as MapIcon, CheckSquare } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from 'react-leaflet';
 import EmployeeOnboardForm from './EmployeeOnboardForm';
 import ShiftRouteMap from './ShiftRouteMap';
@@ -109,11 +109,18 @@ const AdminDashboard = () => {
   const [routeViewerName, setRouteViewerName] = useState("");
   
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
+
+  // --- NEW: Task Management State ---
+  const [allTasks, setAllTasks] = useState([]);
+  const [newTaskForm, setNewTaskForm] = useState({ officer_id: '', location_id: '', assigned_date: '', tasks: [{ id: Date.now(), description: '' }] });
+  const [viewingTask, setViewingTask] = useState(null);
+  const [taskSubmitting, setTaskSubmitting] = useState(false);
   
   const adminEmail = localStorage.getItem('userEmail');
 
   const pending = employees.filter(e => !e?.is_verified && e?.user_type !== 'admin');
   const verified = employees.filter(e => e?.is_verified);
+  const fieldOfficers = verified.filter(e => e?.user_type === 'field_officer');
   
   const groupedReports = fieldReports.reduce((acc, visit) => {
     if (!visit?.date) return acc;
@@ -128,16 +135,17 @@ const AdminDashboard = () => {
   });
 
   const fetchBaseData = useCallback(async () => {
-      const [empRes, locRes, liveRes] = await Promise.all([
+      const [empRes, locRes, liveRes, tasksRes] = await Promise.all([
         fetch(`${API_BASE_URL}/api/admin/employees?admin_email=${adminEmail}`),
         fetch(`${API_BASE_URL}/api/admin/locations`),
-        fetch(`${API_BASE_URL}/api/admin/live-tracking?admin_email=${adminEmail}`)
+        fetch(`${API_BASE_URL}/api/admin/live-tracking?admin_email=${adminEmail}`),
+        fetch(`${API_BASE_URL}/api/tasks?email=${adminEmail}&role=admin`)
       ]);
       
-      // Independent checks to prevent the && trap
       if (empRes.ok) setEmployees(await empRes.json());
       if (locRes.ok) setLocations(await locRes.json());
       if (liveRes.ok) setLiveLocations(await liveRes.json());
+      if (tasksRes.ok) setAllTasks(await tasksRes.json());
       
       setLoading(false);
   }, [adminEmail]);
@@ -337,6 +345,25 @@ const AdminDashboard = () => {
         setMapZoom(18);
       }
     }
+  };
+
+  // --- NEW: Handle Task Assignment ---
+  const handleAssignTask = async (e) => {
+      e.preventDefault();
+      const validTasks = newTaskForm.tasks.filter(t => t.description.trim() !== '');
+      if(validTasks.length === 0) return alert("Add at least one sub-task instruction.");
+      
+      setTaskSubmitting(true);
+      const res = await fetch(`${API_BASE_URL}/api/admin/assign-task`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...newTaskForm, tasks: validTasks })
+      });
+      if(res.ok) {
+          alert("Task Assigned Successfully!");
+          setNewTaskForm({ officer_id: '', location_id: '', assigned_date: '', tasks: [{ id: Date.now(), description: '' }] });
+          fetchBaseData();
+      }
+      setTaskSubmitting(false);
   };
 
   const downloadExcel = (withPhotos = false) => {
@@ -673,7 +700,7 @@ const AdminDashboard = () => {
         
         <Tab eventKey="overview" title={<span className="fw-bold px-3">System Overview</span>}>
           
-          <Row className="mb-4 text-center">
+          <Row className="mb-4 text-center mt-3">
             <Col md={4}><Card className="p-3 shadow-sm border-0"><div className="text-muted small">TOTAL STAFF</div><h4 className="fw-bold"><Users size={20} className="me-2"/>{employees.length}</h4></Card></Col>
             <Col md={4}><Card className="p-3 shadow-sm border-0"><div className="text-muted small text-primary">VERIFIED EMPLOYEES</div><h4 className="fw-bold text-primary"><UserCheck size={20} className="me-2"/>{verified.length}</h4></Card></Col>
             <Col md={4}><Card className="p-3 shadow-sm border-0"><div className="text-muted small text-success">ASSIGNED SITES</div><h4 className="fw-bold text-success"><MapPin size={20} className="me-2"/>{locations.length}</h4></Card></Col>
@@ -843,9 +870,93 @@ const AdminDashboard = () => {
           </Card>
         </Tab>
 
+        {/* --- NEW: TASK MANAGEMENT TAB --- */}
+        <Tab eventKey="tasks" title={<span className="fw-bold px-3">Task Management</span>}>
+            <Row className="mt-3">
+                <Col lg={4}>
+                    <Card className="border-0 shadow-sm mb-4 bg-light">
+                        <Card.Header className="bg-dark text-white fw-bold"><CheckSquare className="me-2" size={18}/> Assign Site Checklist</Card.Header>
+                        <Card.Body>
+                            <Form onSubmit={handleAssignTask}>
+                                <Form.Group className="mb-3">
+                                    <Form.Label className="small fw-bold">Select Field Officer</Form.Label>
+                                    <Form.Select size="sm" value={newTaskForm.officer_id} onChange={e => setNewTaskForm({...newTaskForm, officer_id: e.target.value})} required>
+                                        <option value="">Choose an Officer...</option>
+                                        {fieldOfficers.map(o => <option key={o.id} value={o.id}>{o.full_name} ({o.blockchain_id})</option>)}
+                                    </Form.Select>
+                                </Form.Group>
+                                <Form.Group className="mb-3">
+                                    <Form.Label className="small fw-bold">Select Destination Site</Form.Label>
+                                    <Form.Select size="sm" value={newTaskForm.location_id} onChange={e => setNewTaskForm({...newTaskForm, location_id: e.target.value})} required>
+                                        <option value="">Choose a Location...</option>
+                                        {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                                    </Form.Select>
+                                </Form.Group>
+                                <Form.Group className="mb-3">
+                                    <Form.Label className="small fw-bold">Execution Date</Form.Label>
+                                    <Form.Control size="sm" type="date" value={newTaskForm.assigned_date} onChange={e => setNewTaskForm({...newTaskForm, assigned_date: e.target.value})} required />
+                                </Form.Group>
+                                
+                                <div className="p-2 border rounded bg-white mb-3">
+                                    <Form.Label className="small fw-bold text-primary mb-2">Checklist Instructions</Form.Label>
+                                    {newTaskForm.tasks.map((t, idx) => (
+                                        <div key={t.id} className="d-flex mb-2 gap-2">
+                                            <Form.Control size="sm" placeholder={`Task ${idx+1} instruction...`} value={t.description} onChange={e => {
+                                                const newT = [...newTaskForm.tasks]; newT[idx].description = e.target.value; setNewTaskForm({...newTaskForm, tasks: newT});
+                                            }} required />
+                                            {newTaskForm.tasks.length > 1 && (
+                                                <Button variant="outline-danger" size="sm" onClick={() => {
+                                                    const newT = [...newTaskForm.tasks]; newT.splice(idx, 1); setNewTaskForm({...newTaskForm, tasks: newT});
+                                                }}><Trash2 size={14}/></Button>
+                                            )}
+                                        </div>
+                                    ))}
+                                    <Button variant="light" size="sm" className="w-100 fw-bold border text-primary mt-2" onClick={() => setNewTaskForm({...newTaskForm, tasks: [...newTaskForm.tasks, { id: Date.now(), description: '' }]})}>+ Add Sub-Task</Button>
+                                </div>
+                                <Button type="submit" variant="success" className="w-100 fw-bold shadow-sm" disabled={taskSubmitting}>
+                                    {taskSubmitting ? <Spinner size="sm"/> : "Deploy Task to Officer"}
+                                </Button>
+                            </Form>
+                        </Card.Body>
+                    </Card>
+                </Col>
+                
+                <Col lg={8}>
+                    <Card className="border-0 shadow-sm">
+                        <Card.Header className="bg-white py-3 fw-bold">Task Deployment Ledger</Card.Header>
+                        <Table responsive hover className="align-middle mb-0 small">
+                            <thead className="table-light"><tr><th>Date</th><th>Officer</th><th>Site</th><th>Sub-Tasks</th><th>Status</th><th>Report</th></tr></thead>
+                            <tbody>
+                                {allTasks.length === 0 ? <tr><td colSpan="6" className="text-center text-muted py-5">No tasks assigned yet.</td></tr> :
+                                 allTasks.map(task => (
+                                     <tr key={task.task_id}>
+                                         <td className="fw-bold">{task.date}</td>
+                                         <td>{task.officer_name}</td>
+                                         <td><MapPin size={12} className="text-danger me-1"/>{task.site_name}</td>
+                                         <td><Badge bg="secondary">{task.tasks?.length || 0} items</Badge></td>
+                                         <td>
+                                             <Badge bg={task.status === 'COMPLETED' ? 'success' : 'warning'} className={task.status === 'PENDING' ? 'text-dark' : ''}>
+                                                 {task.status}
+                                             </Badge>
+                                         </td>
+                                         <td>
+                                             <Button variant="outline-primary" size="sm" disabled={task.status === 'PENDING'} onClick={() => setViewingTask(task)}>
+                                                 <Eye size={14}/> View Log
+                                             </Button>
+                                         </td>
+                                     </tr>
+                                 ))
+                                }
+                            </tbody>
+                        </Table>
+                    </Card>
+                </Col>
+            </Row>
+        </Tab>
+
         <Tab eventKey="reports" title={<span className="fw-bold px-3">Reports & Field Operations</span>}>
             
-          <div className="p-3 bg-light border-bottom d-flex flex-wrap gap-4 align-items-center">
+          <div className="p-3 bg-light border-bottom d-flex flex-wrap gap-4 align-items-center mt-3">
             <h5 className="mb-0 fw-bold d-flex align-items-center text-primary"><Filter className="me-2" /> Report Filters</h5>
             
             <div className="d-flex gap-2 align-items-center border-start ps-4">
@@ -968,7 +1079,7 @@ const AdminDashboard = () => {
                 <Card className="border-0 shadow-sm mb-4">
                   <Card.Header className="bg-dark text-white p-3 d-flex justify-content-between align-items-center">
                     <div className="d-flex gap-2 align-items-center">
-                        <h6 className="mb-0 fw-bold d-flex align-items-center"><MapPin className="me-2 text-danger" size={18}/> Field Officer Site Visits</h6>
+                        <h6 className="mb-0 fw-bold d-flex align-items-center"><MapPin className="me-2 text-danger" size={18}/> Field Officer Site Visits (Standard & Tasks)</h6>
                         {autoRefreshEnabled && (
                           <Badge bg="success" className="ms-2 d-flex align-items-center">
                             <span className="spinner-border spinner-border-sm me-1" style={{width: '10px', height: '10px'}}></span>
@@ -1051,7 +1162,7 @@ const AdminDashboard = () => {
                             }} 
                         />
                     </a>
-                    <div style={{ fontSize: '9px', textAlign: 'center', marginTop: '2px' }}>
+                    <div style={{ fontSize: '9px', textAlign: 'center', marginTop: '2px', maxWidth: '120px', whiteSpace: 'normal' }}>
                         {item.details || 'View'}
                     </div>
                 </div>
@@ -1179,6 +1290,37 @@ const AdminDashboard = () => {
           </div>
         </Tab>
       </Tabs>
+
+      {/* Task Completion Viewer Modal */}
+      <Modal show={!!viewingTask} onHide={() => setViewingTask(null)} size="lg" centered>
+          <Modal.Header closeButton className="bg-dark text-white"><Modal.Title className="h6 fw-bold">Task Checklist Evidence Report</Modal.Title></Modal.Header>
+          <Modal.Body className="bg-light p-4">
+              {viewingTask && (
+                  <>
+                      <div className="d-flex justify-content-between mb-4 border-bottom pb-3">
+                          <div><strong className="d-block text-muted small">Assigned Officer</strong> {viewingTask.officer_name}</div>
+                          <div><strong className="d-block text-muted small">Target Site</strong> {viewingTask.site_name}</div>
+                          <div><strong className="d-block text-muted small">Date</strong> {viewingTask.date}</div>
+                      </div>
+                      {viewingTask.completion_data?.map((item, i) => (
+                          <div key={i} className="mb-3 p-3 bg-white border rounded shadow-sm">
+                              <h6 className="fw-bold text-primary mb-2">{i+1}. {item.description}</h6>
+                              <div className="d-flex align-items-center mb-2">
+                                  <strong className="me-2 small text-muted">Status:</strong>
+                                  {item.is_done ? <Badge bg="success"><CheckCircle size={12} className="me-1"/> Done</Badge> : <Badge bg="danger">Not Done</Badge>}
+                              </div>
+                              <div className="mb-2"><strong className="small text-muted d-block">Officer Remarks:</strong> <span className="small">{item.remarks || 'No remarks provided.'}</span></div>
+                              {item.photo_url && (
+                                  <div className="mt-2 text-center border p-2 bg-light rounded">
+                                      <a href={item.photo_url} target="_blank" rel="noreferrer"><img src={item.photo_url} alt="Proof" style={{maxHeight: '150px'}} className="rounded shadow-sm"/></a>
+                                  </div>
+                              )}
+                          </div>
+                      ))}
+                  </>
+              )}
+          </Modal.Body>
+      </Modal>
 
       <Modal show={showNotif} onHide={() => setShowNotif(false)} size="lg" centered>
         <Modal.Header closeButton className="bg-light"><Modal.Title className="h5 fw-bold">Pending Approval</Modal.Title></Modal.Header>
