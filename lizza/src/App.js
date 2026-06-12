@@ -11,9 +11,6 @@ import { CapacitorUpdater } from '@capgo/capacitor-updater';
 
 // Component Imports
 import Header from './assets/components/Header';
-import Hero from './assets/components/Hero';
-import About from './assets/components/About';
-import Services from './assets/components/Services';
 import Auth from './assets/components/Auth'; 
 import AdminDashboard from './assets/components/AdminDashboard'; 
 import UserDashboard from './assets/components/UserDashboard'; 
@@ -103,7 +100,8 @@ function AppContent() {
       <Header />
       <div className="flex-grow-1">
         <Routes>
-          <Route path="/" element={<><Hero /><About /><Services /></>} />
+          {/* Automatically redirect the root path to the dashboard/login */}
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/auth" element={<Auth />} />
           <Route path="/dashboard" element={<PrivateRoute><UserDashboard /></PrivateRoute>} />
           <Route path="/manager" element={<RoleRoute allowedRoles={['manager']}><ManagerDashboard /></RoleRoute>} />
