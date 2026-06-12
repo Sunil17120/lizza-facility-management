@@ -9,13 +9,11 @@ const API_BASE_URL = "https://sunil0034-lizza-facility-backend.hf.space";
 const isApp = Capacitor.isNativePlatform();
 const LizzaTracker = registerPlugin('LizzaTracker');
 
-// Helpers for image compression and offline support
 const fileToBase64 = (file) => new Promise((resolve) => { const reader = new FileReader(); reader.readAsDataURL(file); reader.onload = () => resolve(reader.result); });
 const base64ToFile = (base64String, filename) => { const arr = base64String.split(','); const mime = arr[0].match(/:(.*?);/)[1]; const bstr = atob(arr[1]); let n = bstr.length; const u8arr = new Uint8Array(n); while(n--){ u8arr[n] = bstr.charCodeAt(n); } return new File([u8arr], filename, {type:mime}); };
 const compressImage = async (file, maxWidth = 1000, quality = 0.7) => { return new Promise((resolve) => { const reader = new FileReader(); reader.readAsDataURL(file); reader.onload = (event) => { const img = new Image(); img.src = event.target.result; img.onload = () => { const canvas = document.createElement('canvas'); let width = img.width; let height = img.height; if (width > maxWidth) { height = Math.round((height * maxWidth) / width); width = maxWidth; } canvas.width = width; canvas.height = height; const ctx = canvas.getContext('2d'); ctx.drawImage(img, 0, 0, width, height); canvas.toBlob((blob) => { resolve(new File([blob], file.name, { type: 'image/jpeg', lastModified: Date.now() })); }, 'image/jpeg', quality); }; }; }); };
 const calculateDistance = (lat1, lon1, lat2, lon2) => { const R = 6371000; const toRad = (deg) => (deg * Math.PI) / 180; const dLat = toRad(lat2 - lat1); const dLon = toRad(lon2 - lon1); const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2; return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)); };
 
-// Perfect backend-matching date formatter (e.g. 12-Jun-2026)
 const getFormattedDateStr = (date = new Date()) => {
     const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
     const d = date.getDate().toString().padStart(2, '0');
@@ -54,6 +52,7 @@ const FieldOfficerDashboard = () => {
   const [pendingOfflineActions, setPendingOfflineActions] = useState(0);
   const [isSyncing, setIsSyncing] = useState(false);
 
+  // Performance & Logic Memory Refs (Prevents Android Freezing & GPS Loops)
   const isFetchingRef = useRef(false);
   const isProcessingRef = useRef(false);
   const checkedInRef = useRef(false);
@@ -61,7 +60,12 @@ const FieldOfficerDashboard = () => {
   const dutyStatusRef = useRef('OFF_DUTY');
   const lastSentPositionRef = useRef(null);
   const recentlyCheckedOutSiteRef = useRef(null);
+  
+  const locationsRef = useRef([]);
+  const assignedTasksRef = useRef([]);
 
+  useEffect(() => { locationsRef.current = locations; }, [locations]);
+  useEffect(() => { assignedTasksRef.current = assignedTasks; }, [assignedTasks]);
   useEffect(() => { checkedInRef.current = checkedIn; }, [checkedIn]);
   useEffect(() => { checkedInSiteRef.current = checkedInSite; }, [checkedInSite]);
   useEffect(() => { dutyStatusRef.current = dutyStatus; localStorage.setItem('lastStatus', dutyStatus); }, [dutyStatus]);
@@ -229,6 +233,19 @@ const FieldOfficerDashboard = () => {
     if (isProcessingRef.current) return;
     isProcessingRef.current = true; setIsSubmitting(true);
     
+    // INSTANT STATE UPDATE (Prevents GPS Jitter/Loops)
+    if (type === 'CHECK_IN') {
+        checkedInRef.current = true;
+        checkedInSiteRef.current = targetSite;
+        setCheckedIn(true);
+        setCheckedInSite(targetSite);
+    } else {
+        checkedInRef.current = false;
+        checkedInSiteRef.current = null;
+        setCheckedIn(false);
+        setCheckedInSite(null);
+    }
+
     let exactTime = new Date().toISOString();
     if (type === 'CHECK_IN' && targetSite) {
         const savedGeofenceEntryTime = localStorage.getItem(`entry_time_${targetSite.id}`);
@@ -244,7 +261,6 @@ const FieldOfficerDashboard = () => {
     if (!isOnline && isApp) {
         const q = JSON.parse(localStorage.getItem('offlineAttendanceQueue') || '[]');
         q.push(payload); localStorage.setItem('offlineAttendanceQueue', JSON.stringify(q));
-        setCheckedIn(type === 'CHECK_IN'); setCheckedInSite(type === 'CHECK_IN' ? targetSite : null);
         if (type === 'CHECK_IN') setHasSubmittedReport(false);
         if (type === 'CHECK_OUT' && targetSite) localStorage.removeItem(`entry_time_${targetSite.id}`);
         updateQueueCounts(); isProcessingRef.current = false; setIsSubmitting(false);
@@ -262,12 +278,13 @@ const FieldOfficerDashboard = () => {
   };
 
   const hasCompletedSiteToday = (siteId) => {
-      const site = locations.find(l => l.id === siteId);
+      const site = locationsRef.current.find(l => l.id === siteId);
       if (!site) return false;
       const todayStr = getFormattedDateStr();
       return visitHistory.some(v => v.site_name === site.name && v.visit_time.includes(todayStr));
   };
 
+  // DEPENDENCY OPTIMIZED: Uses Refs to prevent continuous Android GPS destroying/rebuilding
   const processNewLocation = useCallback(async (lat, lon, accuracy, timestamp, speedMetersPerSec) => {
     if (accuracy > 100) return; 
     let speedKmh = 0;
@@ -300,9 +317,9 @@ const FieldOfficerDashboard = () => {
     setMyLoc({ lat, lon });
 
     const todayStr = new Date().toISOString().split('T')[0];
-    const pendingSitesToday = assignedTasks.filter(t => t.date === todayStr && t.status === 'PENDING').map(t => Number(t.site_id));
+    const pendingSitesToday = assignedTasksRef.current.filter(t => t.date === todayStr && t.status === 'PENDING').map(t => Number(t.site_id));
     
-    const sitesWithDistance = locations.map(site => ({ 
+    const sitesWithDistance = locationsRef.current.map(site => ({ 
         ...site, 
         distance: calculateDistance(lat, lon, site.lat, site.lon),
         hasTaskToday: pendingSitesToday.includes(Number(site.id))
@@ -327,64 +344,36 @@ const FieldOfficerDashboard = () => {
     if (dutyStatusRef.current === 'ON_DUTY' && !isProcessingRef.current) {
         // 1. Loop-Proof Check-In Logic
         if (insideSite && !checkedInRef.current) {
-            // ONLY check in if they didn't just check out, AND they haven't already finished this site today
+            // Check in if they didn't just check out, AND they haven't finished this site today
             if (recentlyCheckedOutSiteRef.current !== insideSite.id && !hasCompletedSiteToday(insideSite.id)) {
                 handleAttendance('CHECK_IN', insideSite, { lat, lon });
             }
         }
         
-        // 2. Loop-Proof Checkout/Distance Memory Clear (CHANGED TO 50m)
+        // 2. Anti-Bounce Loop Prevention
         if (!insideSite && recentlyCheckedOutSiteRef.current) {
-            const rSite = locations.find(l => l.id === recentlyCheckedOutSiteRef.current);
+            const rSite = locationsRef.current.find(l => l.id === recentlyCheckedOutSiteRef.current);
             if (rSite) {
-                if (calculateDistance(lat, lon, rSite.lat, rSite.lon) > 50) {
-                    recentlyCheckedOutSiteRef.current = null; // Clear memory once they move 50m away
+                // Must drive 150m away before memory clears (stops 50m checkout -> 49m checkin loops)
+                if (calculateDistance(lat, lon, rSite.lat, rSite.lon) > 150) {
+                    recentlyCheckedOutSiteRef.current = null;
                 }
             } else {
                 recentlyCheckedOutSiteRef.current = null;
             }
         }
 
-        // 3. Auto Check-Out (CHANGED TO 50m)
+        // 3. Strict 50-Meter Auto Check-Out
         if (checkedInRef.current && checkedInSiteRef.current) {
-            if (insideSite && insideSite.id !== checkedInSiteRef.current.id) {
+            const distToActive = calculateDistance(lat, lon, checkedInSiteRef.current.lat, checkedInSiteRef.current.lon);
+            if (distToActive > 50) {
                 handleAttendance('CHECK_OUT', checkedInSiteRef.current, { lat, lon }).then(() => {
-                     setAlertMsg({ type: 'warning', text: 'Geofence changed. Auto-checked out of previous site.' });
+                    setAlertMsg({ type: 'warning', text: 'You exceeded the 50-meter perimeter. Checked out automatically.' });
                 });
-            } else if (!insideSite) {
-                const distToActive = calculateDistance(lat, lon, checkedInSiteRef.current.lat, checkedInSiteRef.current.lon);
-                if (distToActive > 50) {
-                    handleAttendance('CHECK_OUT', checkedInSiteRef.current, { lat, lon }).then(() => {
-                        setAlertMsg({ type: 'warning', text: 'You left the site perimeter. Checked out automatically.' });
-                    });
-                }
             }
         }
     }
-  }, [locations, userEmail, assignedTasks, updateQueueCounts]);
-
-  useEffect(() => {
-    if (locations.length > 0 && myLoc) {
-      const todayStr = new Date().toISOString().split('T')[0];
-      const pendingSitesToday = assignedTasks.filter(t => t.date === todayStr && t.status === 'PENDING').map(t => Number(t.site_id));
-      
-      const sitesWithDistance = locations.map(site => ({ 
-        ...site, 
-        distance: calculateDistance(myLoc.lat, myLoc.lon, site.lat, site.lon),
-        hasTaskToday: pendingSitesToday.includes(Number(site.id))
-      }));
-      
-      sitesWithDistance.sort((a, b) => {
-          if (a.hasTaskToday && !b.hasTaskToday) return -1;
-          if (!a.hasTaskToday && b.hasTaskToday) return 1;
-          return a.distance - b.distance;
-      });
-      
-      setNearbySites(sitesWithDistance);
-      const insideSite = sitesWithDistance[0] && sitesWithDistance[0].distance <= (sitesWithDistance[0].radius || 200) ? sitesWithDistance[0] : null;
-      setProximateSite(insideSite);
-    }
-  }, [locations, myLoc, assignedTasks]); 
+  }, [userEmail]); // Minimal dependencies prevents Android Location Service freezing
 
   useEffect(() => {
     if (!userEmail || !navigator.geolocation) return;
@@ -540,7 +529,6 @@ const FieldOfficerDashboard = () => {
         {`
           .mobile-ui-container { background-color: #f4f6f9; min-height: 100vh; padding-bottom: 80px; }
           .android-card { border-radius: 16px; border: none; box-shadow: 0 4px 20px rgba(0,0,0,0.06); overflow: hidden; background: #fff; }
-          .android-gradient { background: linear-gradient(135deg, #0d6efd 0%, #0a58ca 100%); color: white; border: none; }
           .pulse-btn { animation: pulseAnim 2s infinite; }
           @keyframes pulseAnim {
               0% { box-shadow: 0 0 0 0 rgba(40, 167, 69, 0.4); }
@@ -684,7 +672,7 @@ const FieldOfficerDashboard = () => {
                                       </div>
                                   ))}
                                   <Button type="submit" variant="primary" size="lg" className="w-100 fw-bold shadow-sm rounded-pill mt-3" disabled={isSubmitting}>
-                                      {isSubmitting ? <Spinner size="sm"/> : "Submit & Mark Completed"}
+                                      {isSubmitting ? <Spinner size="sm"/> : "Submit Checklist & Complete"}
                                   </Button>
                               </Form>
                           ) : (
@@ -700,13 +688,19 @@ const FieldOfficerDashboard = () => {
                                 <div className="bg-light p-2 rounded-4 mb-3">
                                     {visitEntries.map((entry, idx) => (
                                         <div key={idx} className="mb-2 p-3 bg-white border rounded-4 shadow-sm">
-                                            <div className="fw-bold text-dark small mb-2 d-flex justify-content-between">
+                                            <div className="fw-bold text-dark small mb-2 d-flex justify-content-between align-items-center">
                                                 <span><Camera size={14} className="me-1"/> Photo {idx + 1}</span>
+                                                {visitEntries.length > 1 && (
+                                                    <Badge bg="danger" style={{cursor: 'pointer'}} onClick={() => { const n = [...visitEntries]; n.splice(idx, 1); setVisitEntries(n); }}>Remove</Badge>
+                                                )}
                                             </div>
                                             <Form.Control type="file" accept="image/*" capture="environment" className="mb-3 bg-light border-0 rounded" onChange={(e) => { const n = [...visitEntries]; n[idx].photo = e.target.files[0]; setVisitEntries(n); }} required />
                                             <Form.Control as="textarea" rows={2} className="rounded-3 border-light bg-light" placeholder="Detailed observations..." value={entry.details} onChange={(e) => { const n = [...visitEntries]; n[idx].details = e.target.value; setVisitEntries(n); }} required />
                                         </div>
                                     ))}
+                                    <Button variant="outline-primary" size="sm" className="w-100 fw-bold border-dashed mb-3 rounded-pill" onClick={() => setVisitEntries([...visitEntries, { photo: null, details: '' }])}>
+                                        + Add Another Photo
+                                    </Button>
                                 </div>
                                 <Button type="submit" variant="dark" size="lg" className="w-100 fw-bold shadow rounded-pill" disabled={isSubmitting}>
                                     {isSubmitting ? <Spinner size="sm" /> : "Upload Report"}
