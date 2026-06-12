@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Container, Card, Row, Col, Form, Button, Alert, Spinner, Table, Badge } from 'react-bootstrap';
+import { Container, Card, Row, Col, Form, Button, Alert, Spinner, Table, Badge, Tabs, Tab } from 'react-bootstrap';
 import { MapPin, Navigation, CheckCircle, FileText, Map as MapIcon, LogIn, LogOut, WifiOff, RefreshCw, Clock, Coffee, Activity, AlertTriangle, CheckSquare } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 import { Capacitor, registerPlugin } from '@capacitor/core';
@@ -51,6 +51,7 @@ const FieldOfficerDashboard = () => {
   const checkedInSiteRef = useRef(null);
   const dutyStatusRef = useRef('OFF_DUTY');
   const lastSentPositionRef = useRef(null);
+  const recentlyCheckedOutSiteRef = useRef(null); // Memory tracker to prevent infinite loops
 
   useEffect(() => { checkedInRef.current = checkedIn; }, [checkedIn]);
   useEffect(() => { checkedInSiteRef.current = checkedInSite; }, [checkedInSite]);
@@ -109,12 +110,14 @@ const FieldOfficerDashboard = () => {
     if (profRes && profRes.ok) {
         const prof = await profRes.json();
         setCheckedIn(Boolean(prof.checked_in));
+        
         if (prof.checked_in && prof.active_location_id) {
             const site = loadedLocs.find(l => Number(l.id) === Number(prof.active_location_id));
             setCheckedInSite(site || null);
             
-            const todayStr = new Date().toISOString().split('T')[0];
-            const hasReport = parsedVisits.some(v => v.site_name === (site?.name) && v.visit_time.includes(todayStr));
+            // Format today's date to match the Python backend format "DD-MMM-YYYY"
+            const todayFormatted = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).replace(/ /g, '-');
+            const hasReport = parsedVisits.some(v => v.site_name === (site?.name) && v.visit_time.includes(todayFormatted));
             setHasSubmittedReport(hasReport);
         } else {
             setCheckedInSite(null);
@@ -226,6 +229,11 @@ const FieldOfficerDashboard = () => {
         const savedGeofenceEntryTime = localStorage.getItem(`entry_time_${targetSite.id}`);
         if (savedGeofenceEntryTime) exactTime = savedGeofenceEntryTime;
     }
+
+    // Set memory tracker to prevent infinite loops when checking out
+    if (type === 'CHECK_OUT' && targetSite) {
+        recentlyCheckedOutSiteRef.current = targetSite.id;
+    }
     
     const payload = { email: userEmail, lat: loc.lat, lon: loc.lon, timestamp: exactTime, actionType: type, location_id: targetSite?.id || null };
 
@@ -306,16 +314,34 @@ const FieldOfficerDashboard = () => {
     }
     setProximateSite(insideSite);
 
+    // LOOP PREVENTION & AUTO CHECKOUT LOGIC
     if (dutyStatusRef.current === 'ON_DUTY' && !isProcessingRef.current) {
-        if (insideSite && !checkedInRef.current) handleAttendance('CHECK_IN', insideSite, { lat, lon });
-        else if (checkedInRef.current && checkedInSiteRef.current) {
+        // 1. Check-In Logic
+        if (insideSite && !checkedInRef.current) {
+            // ONLY auto-check-in if they didn't just check out of this exact site
+            if (recentlyCheckedOutSiteRef.current !== insideSite.id) {
+                handleAttendance('CHECK_IN', insideSite, { lat, lon });
+            }
+        }
+        
+        // Reset the memory block once they drive away from the geofence
+        if (!insideSite && recentlyCheckedOutSiteRef.current) {
+            recentlyCheckedOutSiteRef.current = null;
+        }
+
+        // 2. Auto Check-Out Logic (With Alerts)
+        if (checkedInRef.current && checkedInSiteRef.current) {
             if (insideSite && insideSite.id !== checkedInSiteRef.current.id) {
                 handleAttendance('CHECK_OUT', checkedInSiteRef.current, { lat, lon }).then(() => {
-                     // The next GPS tick will cleanly check them into the new site.
+                     setAlertMsg({ type: 'warning', text: 'Geofence changed. Auto-checked out of previous site.' });
                 });
             } else if (!insideSite) {
                 const distToActive = calculateDistance(lat, lon, checkedInSiteRef.current.lat, checkedInSiteRef.current.lon);
-                if (distToActive > 300) handleAttendance('CHECK_OUT', checkedInSiteRef.current, { lat, lon });
+                if (distToActive > 300) {
+                    handleAttendance('CHECK_OUT', checkedInSiteRef.current, { lat, lon }).then(() => {
+                        setAlertMsg({ type: 'warning', text: 'You left the site perimeter. Checked out automatically.' });
+                    });
+                }
             }
         }
     }
@@ -480,6 +506,10 @@ const FieldOfficerDashboard = () => {
 
   const todayStr = new Date().toISOString().split('T')[0];
   const activeTaskObj = (checkedInSite || proximateSite) ? assignedTasks.find(t => Number(t.site_id) === Number((checkedInSite || proximateSite).id) && t.date === todayStr && t.status === 'PENDING') : null;
+
+  // Filter tasks for the Task Center
+  const pendingTasks = assignedTasks.filter(t => t.status === 'PENDING');
+  const completedTasks = assignedTasks.filter(t => t.status === 'COMPLETED');
 
   return (
     <Container fluid="md" className="py-3 py-md-4">
@@ -678,6 +708,61 @@ const FieldOfficerDashboard = () => {
           </Card>
         </Col>
       </Row>
+      
+      {/* NEW: DEDICATED TASK CENTER */}
+      <Row className="g-3 mb-4">
+          <Col lg={12}>
+              <Card className="border-0 shadow-sm">
+                  <Card.Header className="bg-white py-3 border-bottom-0 d-flex justify-content-between align-items-center">
+                      <h6 className="fw-bold m-0 text-primary"><CheckSquare className="me-2" size={18} /> My Task Center</h6>
+                  </Card.Header>
+                  <Card.Body className="p-0">
+                      <Tabs defaultActiveKey="pending" className="px-3 pt-2">
+                          <Tab eventKey="pending" title={<>Pending Tasks <Badge bg="danger">{pendingTasks.length}</Badge></>}>
+                              <Table hover responsive className="mb-0 align-middle small text-nowrap mt-3">
+                                  <thead className="table-light">
+                                      <tr><th className="ps-4 py-3">Date</th><th className="py-3">Site Name</th><th className="py-3">Tasks Due</th><th className="py-3">Status</th></tr>
+                                  </thead>
+                                  <tbody>
+                                      {pendingTasks.length === 0 ? <tr><td colSpan="4" className="text-center text-muted py-4">No pending tasks.</td></tr> : (
+                                          pendingTasks.map((t, i) => (
+                                              <tr key={i}>
+                                                  <td className="ps-4 fw-bold text-danger">{t.date}</td>
+                                                  <td><MapPin size={14} className="text-primary me-1"/> {t.site_name}</td>
+                                                  <td><Badge bg="secondary">{t.tasks?.length || 0} items</Badge></td>
+                                                  <td><Badge bg="warning" className="text-dark">Awaiting Check-in</Badge></td>
+                                              </tr>
+                                          ))
+                                      )}
+                                  </tbody>
+                              </Table>
+                          </Tab>
+                          
+                          <Tab eventKey="cleared" title={<>Cleared Tasks <Badge bg="success">{completedTasks.length}</Badge></>}>
+                              <Table hover responsive className="mb-0 align-middle small text-nowrap mt-3">
+                                  <thead className="table-light">
+                                      <tr><th className="ps-4 py-3">Date Completed</th><th className="py-3">Site Name</th><th className="py-3">Tasks Completed</th><th className="py-3">Status</th></tr>
+                                  </thead>
+                                  <tbody>
+                                      {completedTasks.length === 0 ? <tr><td colSpan="4" className="text-center text-muted py-4">No tasks cleared yet.</td></tr> : (
+                                          completedTasks.map((t, i) => (
+                                              <tr key={i}>
+                                                  <td className="ps-4 fw-bold">{t.date}</td>
+                                                  <td><MapPin size={14} className="text-success me-1"/> {t.site_name}</td>
+                                                  <td><Badge bg="secondary">{t.tasks?.length || 0} items</Badge></td>
+                                                  <td><Badge bg="success">Done</Badge></td>
+                                              </tr>
+                                          ))
+                                      )}
+                                  </tbody>
+                              </Table>
+                          </Tab>
+                      </Tabs>
+                  </Card.Body>
+              </Card>
+          </Col>
+      </Row>
+
     </Container>
   );
 };
