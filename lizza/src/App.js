@@ -1,15 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { Alert, ProgressBar } from 'react-bootstrap';
+import { Alert } from 'react-bootstrap'; // Removed ProgressBar
 import 'bootstrap/dist/css/bootstrap.min.css';
 import './App.css';
 import AOS from 'aos';
 import 'aos/dist/aos.css';
 
-// FIX: Updated import to match the current Capgo library
-import { CapacitorUpdater } from '@capgo/capacitor-updater';
+import { Capacitor } from '@capacitor/core';
+// 1. IMPORT THE APP PLUGIN
+import { App as CapacitorApp } from '@capacitor/app';
 
-// Component Imports
 import Header from './assets/components/Header';
 import Auth from './assets/components/Auth'; 
 import AdminDashboard from './assets/components/AdminDashboard'; 
@@ -19,7 +19,6 @@ import FieldOfficerDashboard from './assets/components/FieldOfficerDashboard';
 import Footer from './assets/components/Footer'; 
 import { UserProvider, useUser } from './assets/components/UserContext';
 
-// --- ROUTING COMPONENTS ---
 const RoleRoute = ({ children, allowedRoles }) => {
   const { user, loading } = useUser();
   if (loading) return <div className="text-center py-5">Loading...</div>;
@@ -33,42 +32,34 @@ const PrivateRoute = ({ children }) => {
   return user ? children : <Navigate to="/auth" replace />;
 };
 
-// --- APP CONTENT ---
 function AppContent() {
-  const [updateStatus, setUpdateStatus] = useState('');
-  const [updateProgress, setUpdateProgress] = useState(0);
   const { pushMessage, pushMessageType } = useUser();
 
   useEffect(() => {
     AOS.init({ duration: 1200 });
 
-    // AUTOMATIC LIVE UPDATE LOGIC
     const checkLiveUpdates = async () => {
-      try {
-        // 1. Check for updates
-        const update = await CapacitorUpdater.check();
-        
-        if (update && update.url) {
-          setUpdateStatus('Downloading update...');
-          setUpdateProgress(20);
+      if (Capacitor.isNativePlatform()) {
+        try {
+          // 2. FETCH WITH NO-STORE TO PREVENT CACHING
+          const response = await fetch('https://lizza-facility-management.vercel.app/updates/version.json', { cache: 'no-store' });
+          const latestUpdate = await response.json();
           
-          // 2. Download the bundle
-          const download = await CapacitorUpdater.download({ 
-            version: update.version, 
-            url: update.url 
-          });
+          // 3. READ THE REAL VERSION FROM ANDROID
+          const appInfo = await CapacitorApp.getInfo();
+          const currentVersion = appInfo.version;
 
-          if (download) {
-            setUpdateStatus('Applying update...');
-            setUpdateProgress(80);
-            // 3. Apply and reload
-            await CapacitorUpdater.set({ version: update.version });
-            setUpdateProgress(100);
-            await CapacitorUpdater.reload();
+          // 4. COMPARE AND PROMPT
+          if (latestUpdate.version !== currentVersion) {
+            const shouldUpdate = window.confirm(`A new version (${latestUpdate.version}) is available! Click OK to download the update.`);
+            if (shouldUpdate) {
+              // Ensure this matches the key in your version.json (using .url here)
+              window.open(latestUpdate.url, '_system'); 
+            }
           }
+        } catch (error) {
+          console.error("Update check failed:", error);
         }
-      } catch (e) { 
-        console.log("No update available or network error"); 
       }
     };
 
@@ -77,21 +68,6 @@ function AppContent() {
 
   return (
     <div className="App d-flex flex-column min-vh-100">
-      {updateStatus && (
-        <div className="alert alert-info text-center m-0 fixed-top" style={{ zIndex: 9999 }}>
-          {updateStatus}
-          {updateProgress > 0 && updateProgress < 100 && (
-            <ProgressBar
-              now={updateProgress}
-              animated
-              striped
-              variant="info"
-              className="mt-2"
-              style={{ height: '6px' }}
-            />
-          )}
-        </div>
-      )}
       {pushMessage && (
         <Alert variant={pushMessageType} className="text-center m-0 w-100" style={{ zIndex: 9998 }}>
           {pushMessage}
@@ -100,7 +76,6 @@ function AppContent() {
       <Header />
       <div className="flex-grow-1">
         <Routes>
-          {/* Automatically redirect the root path to the dashboard/login */}
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/auth" element={<Auth />} />
           <Route path="/dashboard" element={<PrivateRoute><UserDashboard /></PrivateRoute>} />
@@ -114,7 +89,6 @@ function AppContent() {
   );
 }
 
-// --- MAIN APP ENTRY ---
 function App() {
   return (
     <UserProvider>
