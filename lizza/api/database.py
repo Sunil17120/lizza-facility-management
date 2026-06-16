@@ -8,7 +8,6 @@ from cryptography.fernet import Fernet
 import base64
 import hashlib
 
-# --- SECURITY CONFIG ---
 PEPPER = os.environ.get("SECRET_PEPPER", "lizza_super_secret_fallback_key")
 FERNET_KEY = base64.urlsafe_b64encode(hashlib.sha256(PEPPER.encode()).digest())
 cipher = Fernet(FERNET_KEY)
@@ -18,10 +17,12 @@ connect_args = {}
 if DATABASE_URL and DATABASE_URL.startswith("postgres"):
     connect_args = {"sslmode": "require"}
 
-# Using NullPool to prevent serverless database connection drops on Vercel
 engine = create_engine(
     DATABASE_URL,
-    poolclass=NullPool,
+    pool_size=20,          
+    max_overflow=10,       
+    pool_timeout=30,       
+    pool_recycle=1800,     
     connect_args=connect_args
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -31,7 +32,6 @@ class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
     
-    # 1. Professional Identity 
     full_name = Column(String) 
     first_name = Column(String, nullable=True)
     last_name = Column(String, nullable=True)
@@ -39,7 +39,6 @@ class User(Base):
     personal_email = Column(String, nullable=True) 
     phone_number = Column(String, nullable=True)
     
-    # 2. Personal & Medical Details
     dob = Column(String, nullable=True) 
     gender = Column(String, nullable=True)
     marital_status = Column(String, nullable=True)
@@ -54,7 +53,6 @@ class User(Base):
     nationality = Column(String, nullable=True)
     medical_remarks = Column(Text, nullable=True)
     
-    # 3. Address Details
     perm_address = Column(Text, nullable=True)
     perm_state = Column(String, nullable=True)
     perm_pin = Column(String, nullable=True)
@@ -64,30 +62,28 @@ class User(Base):
     temp_pin = Column(String, nullable=True)
     temp_mobile = Column(String, nullable=True)
 
-    # 4. JSON Array Data (Stores the dynamic tables)
     languages_json = Column(Text, nullable=True)
     education_json = Column(Text, nullable=True)
     experience_json = Column(Text, nullable=True)
     family_json = Column(Text, nullable=True)
     references_json = Column(Text, nullable=True)
     
-    # 5. Security & Verification
     password = Column(String) 
     salt = Column(String)
     is_password_changed = Column(Boolean, default=False) 
     is_verified = Column(Boolean, default=False) 
     kyc_mode = Column(String, default="aadhaar_xml") 
     
-    # 6. Hierarchy & Role
     user_type = Column(String, default="employee") 
     manager_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     location_id = Column(Integer, ForeignKey("office_locations.id"), nullable=True)
-    blockchain_id = Column(String, unique=True, nullable=True) # LFM ID
+    blockchain_id = Column(String, unique=True, nullable=True) 
     unit_name = Column(String, nullable=True)
     designation = Column(String, nullable=True)
     department = Column(String, nullable=True)
+    uniform_details = Column(String, nullable=True)
+    onboarded_by_email = Column(String, nullable=True)
     
-    # 7. Sensitive Data (ENCRYPTED)
     aadhar_enc = Column(String, nullable=True) 
     pan_enc = Column(String, nullable=True)
     bank_name = Column(String, nullable=True)
@@ -97,7 +93,6 @@ class User(Base):
     driving_licence_enc = Column(String, nullable=True)
     passport_no_enc = Column(String, nullable=True)
     
-    # 8. Document Paths (UPLOADS)
     profile_photo_path = Column(Text, nullable=True)
     aadhar_photo_path = Column(Text, nullable=True)
     pan_photo_path = Column(Text, nullable=True)
@@ -109,7 +104,6 @@ class User(Base):
     bank_passbook_path = Column(Text, nullable=True) 
     filled_form_path = Column(Text, nullable=True)
     
-    # 9. Status & Background Config
     is_present = Column(Boolean, default=False)
     shift_start = Column(String, nullable=True) 
     shift_end = Column(String, nullable=True)   
@@ -120,7 +114,6 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     extra_documents_json = Column(Text, nullable=True)
     
-    # --- ADDED: PUSH NOTIFICATION TOKEN ---
     fcm_token = Column(String, nullable=True)
     checked_in = Column(Boolean, default=False)
     active_location_id = Column(Integer, ForeignKey("office_locations.id"), nullable=True)
@@ -182,6 +175,7 @@ class ShiftLog(Base):
     total_break_seconds = Column(Integer, default=0)
     break_start_time = Column(DateTime, nullable=True)
     is_on_break = Column(Boolean, default=False)
+    path_image_url = Column(Text, nullable=True)
 
 class FieldOfficerRoute(Base):
     __tablename__ = "field_officer_routes"
@@ -193,24 +187,48 @@ class FieldOfficerRoute(Base):
     activity_state = Column(String(50), nullable=False) 
     ping_timestamp = Column(DateTime, default=datetime.utcnow, index=True)
 
-# --- NEW: Task Management Table ---
 class TaskAssignment(Base):
     __tablename__ = "task_assignments"
     id = Column(Integer, primary_key=True, index=True)
     officer_id = Column(Integer, ForeignKey("users.id"))
     location_id = Column(Integer, ForeignKey("office_locations.id"))
-    assigned_date = Column(String, index=True) # Format: YYYY-MM-DD
-    task_list_json = Column(Text) # [{id, description}]
-    status = Column(String, default="PENDING") # PENDING or COMPLETED
-    completion_data_json = Column(Text, nullable=True) # [{id, is_done, remarks, photo_url}]
+    assigned_date = Column(String, index=True) 
+    task_list_json = Column(Text) 
+    status = Column(String, default="PENDING") 
+    completion_data_json = Column(Text, nullable=True) 
     completed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class UniformInventory(Base):
+    __tablename__ = "uniform_inventory"
+    id = Column(Integer, primary_key=True, index=True)
+    item_category = Column(String) 
+    size = Column(String)          
+    quantity = Column(Integer, default=0)
+
+class UniformIssueLog(Base):
+    __tablename__ = "uniform_issue_logs"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    item_category = Column(String)
+    size_issued = Column(String)
+    issued_at = Column(DateTime, default=datetime.utcnow)
+    issued_by = Column(String)
+
+class UniformRequest(Base):
+    __tablename__ = "uniform_requests"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    requested_by_email = Column(String) 
+    request_type = Column(String) 
+    item_details = Column(String) 
+    status = Column(String, default="PENDING_ADMIN") 
+    assigned_fo_email = Column(String, nullable=True) 
     created_at = Column(DateTime, default=datetime.utcnow)
 
 def init_db():
     Base.metadata.create_all(bind=engine)
-    
     with engine.connect() as conn:
-        # Helper to add columns strictly via logical checks
         def add_col(table, col, ctype):
             conn.execute(text(f"""
                 DO $$ 
@@ -223,14 +241,19 @@ def init_db():
             """))
             conn.commit()
 
-        # Update Users Table
         add_col("users", "checked_in", "BOOLEAN DEFAULT FALSE")
         add_col("users", "active_location_id", "INTEGER")
-        
-        # Update Shift Logs Table
+        add_col("users", "uniform_details", "VARCHAR")
+        add_col("users", "onboarded_by_email", "VARCHAR")
         add_col("shift_logs", "total_break_seconds", "INTEGER DEFAULT 0")
         add_col("shift_logs", "break_start_time", "TIMESTAMP")
-        
-        # Admin setup logic execution
+        add_col("shift_logs", "is_on_break", "BOOLEAN DEFAULT FALSE")
+        add_col("shift_logs", "path_image_url", "TEXT")
+
         conn.execute(text("UPDATE users SET is_verified = True WHERE email = 'admin@lizza.com'"))
+        
+        conn.execute(text("""
+            INSERT INTO uniform_inventory (item_category, size, quantity) 
+            SELECT 'Shirt', 'M', 50 WHERE NOT EXISTS (SELECT 1 FROM uniform_inventory WHERE item_category='Shirt' AND size='M');
+        """))
         conn.commit()
