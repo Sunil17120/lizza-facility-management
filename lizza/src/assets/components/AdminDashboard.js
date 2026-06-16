@@ -153,11 +153,8 @@ const AdminDashboard = () => {
     if (mainTab !== 'overview' || !autoRefreshEnabled) return;
     const interval = setInterval(async () => {
         const res = await fetch(`${API_BASE_URL}/api/admin/live-tracking?admin_email=${adminEmail}`);
-        if (res.ok) {
-            setLiveLocations(await res.json());
-        } else {
-            setLiveLocations([]);
-        }
+        if (res.ok) setLiveLocations(await res.json());
+        else setLiveLocations([]);
     }, 15000); 
     return () => clearInterval(interval);
   }, [mainTab, autoRefreshEnabled, adminEmail]);
@@ -490,7 +487,7 @@ const AdminDashboard = () => {
           if (url) docsHtml += `<div class="doc-section"><h3 class="doc-title">${title}</h3><img src="${url}" class="doc-img" alt="${title}" /></div>`;
       };
       
-      addDoc('Gov ID Copy', emp?.aadhar_photo_path);
+      addDoc('Aadhaar / Gov ID', emp?.aadhar_photo_path);
       addDoc('PAN Card', emp?.pan_photo_path);
       addDoc('Voter ID', emp?.voter_photo_path);
       addDoc('Driving Licence', emp?.dl_photo_path);
@@ -531,22 +528,22 @@ const AdminDashboard = () => {
       printWindow.document.write(`
           <html><head><title>Dossier_${emp?.full_name || 'Employee'}</title>
             <style>
-              body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; padding: 30px; color: #1e293b; max-width: 900px; margin: auto; font-size: 14px; }
-              .logo-header { text-align: center; margin-bottom: 20px; border-bottom: 3px solid #3b82f6; padding-bottom: 15px; }
+              body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; padding: 30px; color: #333; max-width: 900px; margin: auto; font-size: 14px; }
+              .logo-header { text-align: center; margin-bottom: 20px; border-bottom: 3px solid #e31e24; padding-bottom: 15px; }
               .logo-header img { height: 50px; vertical-align: middle; margin-right: 15px; }
-              .logo-header .company-name { font-size: 18px; font-weight: bold; color: #3b82f6; vertical-align: middle; display: inline-block; }
-              h2 { text-align: center; color: #0f172a; text-transform: uppercase; margin-bottom: 5px; }
+              .logo-header .company-name { font-size: 18px; font-weight: bold; color: #e31e24; vertical-align: middle; display: inline-block; }
+              h2 { text-align: center; color: #0d6efd; text-transform: uppercase; margin-bottom: 5px; }
               .flex-row { display: flex; justify-content: space-between; align-items: flex-start; }
-              .photo { width: 140px; height: 140px; border-radius: 12px; object-fit: cover; border: 3px solid #e2e8f0; }
+              .photo { width: 140px; height: 140px; border-radius: 8px; object-fit: cover; border: 2px solid #0d6efd; }
               .details { flex-grow: 1; padding-left: 25px; }
-              table { width: 100%; border-collapse: collapse; margin-top: 5px; margin-bottom: 15px; border-radius: 8px; overflow: hidden; border: 1px solid #e2e8f0; }
-              td, th { padding: 10px 12px; border: 1px solid #e2e8f0; text-align: left; }
-              th { background-color: #f8fafc; color: #475569; font-weight: 600; width: 25%; text-transform: uppercase; font-size: 12px;}
-              .section-header { margin-top: 35px; border-bottom: 2px solid #cbd5e1; padding-bottom: 8px; color: #3b82f6; font-size: 15px; text-transform: uppercase; font-weight: 700; }
+              table { width: 100%; border-collapse: collapse; margin-top: 5px; margin-bottom: 15px; }
+              td, th { padding: 8px 12px; border: 1px solid #dee2e6; text-align: left; }
+              th { background-color: #f8f9fa; color: #495057; font-weight: bold; width: 25%; }
+              .section-header { margin-top: 30px; border-bottom: 2px solid #ccc; padding-bottom: 5px; color: #333; font-size: 16px; text-transform: uppercase; }
               .doc-section { margin-top: 30px; text-align: center; page-break-inside: avoid; }
-              .doc-title { font-size: 14px; color: #475569; margin-bottom: 10px; text-transform: uppercase; border-bottom: 1px dashed #cbd5e1; padding-bottom: 5px; font-weight: 600; }
-              .doc-img { max-width: 100%; max-height: 450px; border: 1px solid #cbd5e1; border-radius: 8px; padding: 5px; object-fit: contain; }
-              .text-muted { color: #64748b; font-style: italic; }
+              .doc-title { font-size: 14px; color: #555; margin-bottom: 10px; text-transform: uppercase; border-bottom: 1px dashed #eee; padding-bottom: 5px; }
+              .doc-img { max-width: 100%; max-height: 450px; border: 1px solid #ccc; border-radius: 4px; padding: 5px; object-fit: contain; }
+              .text-muted { color: #6c757d; font-style: italic; }
               @media print {
                   .doc-section, table { page-break-inside: avoid; }
                   body { padding: 0; }
@@ -560,7 +557,7 @@ const AdminDashboard = () => {
             </div>
             
             <h2>Master Executive Dossier</h2>
-            <div style="text-align: center; font-size: 11px; color: #64748b; letter-spacing: 1.5px; border-bottom: 1px solid #e2e8f0; padding-bottom: 15px; margin-bottom: 25px; text-transform: uppercase;">
+            <div style="text-align: center; font-size: 11px; color: #64748b; letter-spacing: 1.5px; border-bottom: 1px solid #eee; padding-bottom: 15px; margin-bottom: 25px; text-transform: uppercase;">
               Privileged & Confidential • Admin/HR Use Only
             </div>
             
@@ -570,7 +567,7 @@ const AdminDashboard = () => {
               <div class="details">
                 <table>
                   <tr><th>Full Name</th><td style="font-weight: bold; font-size: 16px;">${emp?.full_name || 'N/A'}</td></tr>
-                  <tr><th>System Role</th><td style="text-transform: uppercase; font-weight:bold; color: #3b82f6;">${emp?.user_type || 'N/A'}</td></tr>
+                  <tr><th>System Role</th><td style="text-transform: uppercase; font-weight:bold; color: #0d6efd;">${emp?.user_type || 'N/A'}</td></tr>
                   <tr><th>Assigned Dept/Site</th><td>${emp?.department || 'N/A'} - ${emp?.unit_name || 'Dynamic'}</td></tr>
                   <tr><th>Onboarded By</th><td style="font-weight:bold;">${emp?.onboarded_by_name || 'Admin / Direct Hire'}</td></tr>
                   <tr><th>Designation</th><td>${emp?.designation || 'N/A'}</td></tr>
@@ -582,18 +579,18 @@ const AdminDashboard = () => {
 
             <h3 class="section-header">2. Demographics, Medical & Uniform</h3>
             <table>
-              <tr><th>Date of Birth</th><td>${emp?.dob || 'N/A'}</td><th>Blood Group</th><td style="color:#ef4444; font-weight:bold;">${emp?.blood_group || 'N/A'}</td></tr>
+              <tr><th>Date of Birth</th><td>${emp?.dob || 'N/A'}</td><th>Blood Group</th><td style="color:#e31e24; font-weight:bold;">${emp?.blood_group || 'N/A'}</td></tr>
               <tr><th>Gender</th><td>${emp?.gender || 'N/A'}</td><th>Height (cm)</th><td>${emp?.height || 'N/A'}</td></tr>
               <tr><th>Marital Status</th><td>${emp?.marital_status || 'N/A'}</td><th>Nationality</th><td>${emp?.nationality || 'N/A'}</td></tr>
               <tr><th>Father's Name</th><td>${emp?.father_name || 'N/A'}</td><th>Religion</th><td>${emp?.religion || 'N/A'}</td></tr>
               <tr><th>Mother's Name</th><td>${emp?.mother_name || 'N/A'}</td><th>Category/Caste</th><td>${emp?.category || '-'} / ${emp?.caste || '-'}</td></tr>
               <tr><th>Identity Mark</th><td colspan="3">${emp?.identity_mark || 'None'}</td></tr>
-              <tr><th>Medical Remarks</th><td>${emp?.medical_remarks || 'None'}</td><th>Uniform Sizes</th><td style="font-weight:bold; color:#3b82f6;">${emp?.uniform_details || 'Not Specified'}</td></tr>
+              <tr><th>Medical Remarks</th><td>${emp?.medical_remarks || 'None'}</td><th>Uniform Sizes</th><td style="font-weight:bold; color:#0d6efd;">${emp?.uniform_details || 'Not Specified'}</td></tr>
             </table>
 
             <h3 class="section-header">3. Address Information</h3>
             <table>
-              <tr><th colspan="2" style="text-align:center; background-color:#e2e8f0; color:#0f172a;">Permanent Address</th><th colspan="2" style="text-align:center; background-color:#e2e8f0; color:#0f172a;">Temporary Address</th></tr>
+              <tr><th colspan="2" style="text-align:center; background-color:#e9ecef;">Permanent Address</th><th colspan="2" style="text-align:center; background-color:#e9ecef;">Temporary Address</th></tr>
               <tr>
                   <th style="width:15%;">Address</th><td style="width:35%;">${emp?.perm_address || 'N/A'}</td>
                   <th style="width:15%;">Address</th><td style="width:35%;">${emp?.temp_address || 'N/A'}</td>
@@ -634,7 +631,7 @@ const AdminDashboard = () => {
             ${refHtml}
 
             <div style="page-break-before: always;"></div>
-            <h3 class="section-header" style="text-align:center; background-color:#0f172a; color:white; padding:12px; border-radius: 8px;">APPENDIX: OFFICIAL DOCUMENTS & EVIDENCE</h3>
+            <h3 class="section-header" style="text-align:center; background-color:#333; color:white; padding:12px; border-radius: 8px;">APPENDIX: OFFICIAL DOCUMENTS & EVIDENCE</h3>
             ${docsHtml || '<p style="text-align: center; color: #94a3b8; margin-top: 30px;">No documents uploaded to this profile.</p>'}
             
             <script>
@@ -1243,7 +1240,7 @@ const AdminDashboard = () => {
             </Modal.Body>
           </Modal>
 
-          <Modal show={editEmpModal} onHide={() => setEditEmpModal(false)} size="lg" centered backdrop="static">
+          <Modal show={editEmpModal} onHide={() => setEditEmpModal(false)} size="xl" centered backdrop="static">
             <Modal.Header closeButton className="border-0 bg-primary text-white pt-4 px-4">
               <Modal.Title className="fw-bold d-flex align-items-center"><Edit2 className="me-3" size={24}/>Master Employee Editor</Modal.Title>
             </Modal.Header>
@@ -1256,7 +1253,7 @@ const AdminDashboard = () => {
                     <Form.Control type="text" placeholder="Search by name, email, phone, or ID..." value={empSearchQuery} onChange={e => setEmpSearchQuery(e.target.value)} className="custom-input shadow-sm border-0" style={{paddingLeft: '48px', paddingTop: '14px', paddingBottom: '14px'}} />
                   </div>
                   
-                  <div style={{maxHeight: '40vh', overflowY: 'auto'}} className="pe-2">
+                  <div style={{maxHeight: '50vh', overflowY: 'auto'}} className="pe-2">
                     {filteredEmployeesForSearch.length === 0 ? (
                       <div className="text-center text-muted py-5 bg-white rounded-4 shadow-sm">No profiles found matching search.</div>
                     ) : (
@@ -1271,10 +1268,10 @@ const AdminDashboard = () => {
                               setEditEmpTab('profile');
                           }}>
                             <div className="d-flex align-items-center">
-                              <img src={emp.profile_photo_path || "https://via.placeholder.com/150"} alt="Avatar" className="rounded-circle me-3 border" style={{width:'40px', height:'40px', objectFit:'cover'}}/>
+                              <img src={emp.profile_photo_path || "https://via.placeholder.com/150"} alt="Avatar" className="rounded-circle me-3 border" style={{width:'50px', height:'50px', objectFit:'cover'}}/>
                               <div>
                                 <h6 className="mb-0 fw-bold text-dark">{emp.full_name}</h6>
-                                <div className="text-muted small"><Phone size={10} className="me-1"/>{emp.phone_number || 'N/A'} • {emp.email}</div>
+                                <div className="text-muted small"><Phone size={12} className="me-1"/>{emp.phone_number || 'N/A'} • {emp.email}</div>
                               </div>
                             </div>
                             <Badge bg="primary" className="rounded-pill px-3 py-2 shadow-sm text-uppercase">{emp.user_type?.replace('_', ' ')}</Badge>
@@ -1295,13 +1292,31 @@ const AdminDashboard = () => {
                   </div>
 
                   <Tabs activeKey={editEmpTab} onSelect={(k) => setEditEmpTab(k)} className="custom-pill-tabs mb-4">
-                    <Tab eventKey="profile" title="Profile Access Control">
+                    
+                    <Tab eventKey="profile" title="Identity & Role">
                       <Card className="glass-card mt-2">
                         <Card.Body className="p-4">
-                            <Row className="g-4">
+                            <h6 className="fw-bold border-bottom pb-2 mb-3 text-primary mt-2">Core Identity</h6>
+                            <Row className="g-4 mb-4">
                                 <Col xs={12} md={6}>
                                 <Form.Group><Form.Label className="small fw-bold text-muted ps-1">Full Legal Name</Form.Label><Form.Control className="custom-input border-0 bg-light shadow-sm" value={editingEmp.full_name || ''} onChange={e => setEditingEmp({...editingEmp, full_name: e.target.value})} /></Form.Group>
                                 </Col>
+                                <Col xs={12} md={6}>
+                                <Form.Group><Form.Label className="small fw-bold text-muted ps-1">Date of Birth</Form.Label><Form.Control type="date" className="custom-input border-0 bg-light shadow-sm" value={editingEmp.dob || ''} onChange={e => setEditingEmp({...editingEmp, dob: e.target.value})} /></Form.Group>
+                                </Col>
+                                <Col xs={12} md={6}>
+                                <Form.Group><Form.Label className="small fw-bold text-muted ps-1">Official Email</Form.Label><Form.Control className="custom-input border-0 bg-light shadow-sm" type="email" value={editingEmp.email || ''} onChange={e => setEditingEmp({...editingEmp, email: e.target.value})} /></Form.Group>
+                                </Col>
+                                <Col xs={12} md={6}>
+                                <Form.Group><Form.Label className="small fw-bold text-muted ps-1">Primary Phone</Form.Label><Form.Control className="custom-input border-0 bg-light shadow-sm" value={editingEmp.phone_number || ''} onChange={e => setEditingEmp({...editingEmp, phone_number: e.target.value})} /></Form.Group>
+                                </Col>
+                                <Col xs={12} md={6}>
+                                <Form.Group><Form.Label className="small fw-bold text-muted ps-1">Personal Email</Form.Label><Form.Control className="custom-input border-0 bg-light shadow-sm" type="email" value={editingEmp.personal_email || ''} onChange={e => setEditingEmp({...editingEmp, personal_email: e.target.value})} /></Form.Group>
+                                </Col>
+                            </Row>
+
+                            <h6 className="fw-bold border-bottom pb-2 mb-3 text-primary mt-4">System Role & Deployment</h6>
+                            <Row className="g-4">
                                 <Col xs={12} md={6}>
                                 <Form.Group><Form.Label className="small fw-bold text-muted ps-1">System Role (Privilege Level)</Form.Label>
                                     <Form.Select className="custom-input border-primary border-2 bg-primary bg-opacity-10 text-primary fw-bold shadow-sm" value={editingEmp.user_type || 'employee'} onChange={e => setEditingEmp({...editingEmp, user_type: e.target.value})}>
@@ -1312,6 +1327,102 @@ const AdminDashboard = () => {
                                     </Form.Select>
                                 </Form.Group>
                                 </Col>
+                                <Col xs={12} md={6}>
+                                <Form.Group><Form.Label className="small fw-bold text-muted ps-1">Department</Form.Label><Form.Control className="custom-input border-0 bg-light shadow-sm" value={editingEmp.department || ''} onChange={e => setEditingEmp({...editingEmp, department: e.target.value})} /></Form.Group>
+                                </Col>
+                                <Col xs={12} md={6}>
+                                <Form.Group><Form.Label className="small fw-bold text-muted ps-1">Designation</Form.Label><Form.Control className="custom-input border-0 bg-light shadow-sm" value={editingEmp.designation || ''} onChange={e => setEditingEmp({...editingEmp, designation: e.target.value})} /></Form.Group>
+                                </Col>
+                                <Col xs={12} md={6}>
+                                <Form.Group><Form.Label className="small fw-bold text-muted ps-1">Assigned Site / Geofence</Form.Label>
+                                    <Form.Select className="custom-input border-0 bg-light shadow-sm" value={editingEmp.location_id || ''} onChange={e => setEditingEmp({...editingEmp, location_id: e.target.value ? parseInt(e.target.value) : null})}>
+                                        <option value="">No Base Site</option>
+                                        {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                                    </Form.Select>
+                                </Form.Group>
+                                </Col>
+                                <Col xs={12} md={6}>
+                                <Form.Group><Form.Label className="small fw-bold text-muted ps-1">Reporting Manager</Form.Label>
+                                    <Form.Select className="custom-input border-0 bg-light shadow-sm" value={editingEmp.manager_id || ''} onChange={e => setEditingEmp({...editingEmp, manager_id: e.target.value ? parseInt(e.target.value) : null})}>
+                                        <option value="">No Manager Assigned</option>
+                                        {employees.filter(m => m?.user_type === 'manager').map(mgr => (
+                                        <option key={mgr.id} value={mgr.id}>{mgr.full_name}</option>
+                                        ))}
+                                    </Form.Select>
+                                </Form.Group>
+                                </Col>
+                                <Col xs={6}>
+                                <Form.Group><Form.Label className="small fw-bold text-muted ps-1">Shift Start</Form.Label><Form.Control type="time" className="custom-input border-0 bg-light shadow-sm text-center" value={editingEmp.shift_start || ''} onChange={e => setEditingEmp({...editingEmp, shift_start: e.target.value})} disabled={editingEmp.user_type === 'field_officer'}/></Form.Group>
+                                </Col>
+                                <Col xs={6}>
+                                <Form.Group><Form.Label className="small fw-bold text-muted ps-1">Shift End</Form.Label><Form.Control type="time" className="custom-input border-0 bg-light shadow-sm text-center" value={editingEmp.shift_end || ''} onChange={e => setEditingEmp({...editingEmp, shift_end: e.target.value})} disabled={editingEmp.user_type === 'field_officer'}/></Form.Group>
+                                </Col>
+                            </Row>
+                        </Card.Body>
+                      </Card>
+                    </Tab>
+
+                    <Tab eventKey="demo" title="Demographics">
+                      <Card className="glass-card mt-2">
+                        <Card.Body className="p-4">
+                            <h6 className="fw-bold mb-3 text-primary border-bottom pb-2">Medical & Profile Data</h6>
+                            <Row className="g-3 mb-4">
+                                <Col xs={6} md={4}><Form.Group><Form.Label className="small fw-bold text-muted ps-1">Gender</Form.Label><Form.Select className="custom-input border-0 bg-light shadow-sm" value={editingEmp.gender || ''} onChange={e => setEditingEmp({...editingEmp, gender: e.target.value})}><option value="">Select</option><option value="Male">Male</option><option value="Female">Female</option><option value="Other">Other</option></Form.Select></Form.Group></Col>
+                                <Col xs={6} md={4}><Form.Group><Form.Label className="small fw-bold text-muted ps-1">Marital Status</Form.Label><Form.Select className="custom-input border-0 bg-light shadow-sm" value={editingEmp.marital_status || ''} onChange={e => setEditingEmp({...editingEmp, marital_status: e.target.value})}><option value="">Select</option><option value="Single">Single</option><option value="Married">Married</option></Form.Select></Form.Group></Col>
+                                <Col xs={12} md={4}><Form.Group><Form.Label className="small fw-bold text-muted ps-1">Blood Group</Form.Label><Form.Control className="custom-input border-0 bg-light shadow-sm text-danger fw-bold" value={editingEmp.blood_group || ''} onChange={e => setEditingEmp({...editingEmp, blood_group: e.target.value})} /></Form.Group></Col>
+                                <Col xs={6} md={4}><Form.Group><Form.Label className="small fw-bold text-muted ps-1">Height (cm)</Form.Label><Form.Control className="custom-input border-0 bg-light shadow-sm" value={editingEmp.height || ''} onChange={e => setEditingEmp({...editingEmp, height: e.target.value})} /></Form.Group></Col>
+                                <Col xs={6} md={4}><Form.Group><Form.Label className="small fw-bold text-muted ps-1">Religion</Form.Label><Form.Control className="custom-input border-0 bg-light shadow-sm" value={editingEmp.religion || ''} onChange={e => setEditingEmp({...editingEmp, religion: e.target.value})} /></Form.Group></Col>
+                                <Col xs={12} md={4}><Form.Group><Form.Label className="small fw-bold text-muted ps-1">Nationality</Form.Label><Form.Control className="custom-input border-0 bg-light shadow-sm" value={editingEmp.nationality || ''} onChange={e => setEditingEmp({...editingEmp, nationality: e.target.value})} /></Form.Group></Col>
+                                <Col xs={6} md={6}><Form.Group><Form.Label className="small fw-bold text-muted ps-1">Category</Form.Label><Form.Control className="custom-input border-0 bg-light shadow-sm" value={editingEmp.category || ''} onChange={e => setEditingEmp({...editingEmp, category: e.target.value})} /></Form.Group></Col>
+                                <Col xs={6} md={6}><Form.Group><Form.Label className="small fw-bold text-muted ps-1">Caste</Form.Label><Form.Control className="custom-input border-0 bg-light shadow-sm" value={editingEmp.caste || ''} onChange={e => setEditingEmp({...editingEmp, caste: e.target.value})} /></Form.Group></Col>
+                                <Col xs={12} md={6}><Form.Group><Form.Label className="small fw-bold text-muted ps-1">Father's Name</Form.Label><Form.Control className="custom-input border-0 bg-light shadow-sm" value={editingEmp.father_name || ''} onChange={e => setEditingEmp({...editingEmp, father_name: e.target.value})} /></Form.Group></Col>
+                                <Col xs={12} md={6}><Form.Group><Form.Label className="small fw-bold text-muted ps-1">Mother's Name</Form.Label><Form.Control className="custom-input border-0 bg-light shadow-sm" value={editingEmp.mother_name || ''} onChange={e => setEditingEmp({...editingEmp, mother_name: e.target.value})} /></Form.Group></Col>
+                                <Col xs={12}><Form.Group><Form.Label className="small fw-bold text-muted ps-1">Identity Mark</Form.Label><Form.Control className="custom-input border-0 bg-light shadow-sm" value={editingEmp.identity_mark || ''} onChange={e => setEditingEmp({...editingEmp, identity_mark: e.target.value})} /></Form.Group></Col>
+                                <Col xs={12}><Form.Group><Form.Label className="small fw-bold text-muted ps-1">Medical Remarks</Form.Label><Form.Control as="textarea" rows={2} className="custom-input border-0 bg-light shadow-sm" value={editingEmp.medical_remarks || ''} onChange={e => setEditingEmp({...editingEmp, medical_remarks: e.target.value})} /></Form.Group></Col>
+                            </Row>
+                        </Card.Body>
+                      </Card>
+                    </Tab>
+
+                    <Tab eventKey="addresses" title="Addresses">
+                      <Card className="glass-card mt-2">
+                        <Card.Body className="p-4">
+                            <h6 className="fw-bold mb-3 text-primary border-bottom pb-2">Permanent Address</h6>
+                            <Row className="g-3 mb-4">
+                                <Col xs={12}><Form.Group><Form.Label className="small fw-bold text-muted ps-1">Full Address</Form.Label><Form.Control as="textarea" rows={2} className="custom-input border-0 bg-light shadow-sm" value={editingEmp.perm_address || ''} onChange={e => setEditingEmp({...editingEmp, perm_address: e.target.value})} /></Form.Group></Col>
+                                <Col xs={12} md={4}><Form.Group><Form.Label className="small fw-bold text-muted ps-1">State</Form.Label><Form.Control className="custom-input border-0 bg-light shadow-sm" value={editingEmp.perm_state || ''} onChange={e => setEditingEmp({...editingEmp, perm_state: e.target.value})} /></Form.Group></Col>
+                                <Col xs={12} md={4}><Form.Group><Form.Label className="small fw-bold text-muted ps-1">PIN Code</Form.Label><Form.Control className="custom-input border-0 bg-light shadow-sm" value={editingEmp.perm_pin || ''} onChange={e => setEditingEmp({...editingEmp, perm_pin: e.target.value})} /></Form.Group></Col>
+                                <Col xs={12} md={4}><Form.Group><Form.Label className="small fw-bold text-muted ps-1">Alt Mobile</Form.Label><Form.Control className="custom-input border-0 bg-light shadow-sm" value={editingEmp.perm_mobile || ''} onChange={e => setEditingEmp({...editingEmp, perm_mobile: e.target.value})} /></Form.Group></Col>
+                            </Row>
+                            <h6 className="fw-bold mb-3 mt-4 text-primary border-bottom pb-2">Temporary / Local Address</h6>
+                            <Row className="g-3">
+                                <Col xs={12}><Form.Group><Form.Label className="small fw-bold text-muted ps-1">Full Address</Form.Label><Form.Control as="textarea" rows={2} className="custom-input border-0 bg-light shadow-sm" value={editingEmp.temp_address || ''} onChange={e => setEditingEmp({...editingEmp, temp_address: e.target.value})} /></Form.Group></Col>
+                                <Col xs={12} md={4}><Form.Group><Form.Label className="small fw-bold text-muted ps-1">State</Form.Label><Form.Control className="custom-input border-0 bg-light shadow-sm" value={editingEmp.temp_state || ''} onChange={e => setEditingEmp({...editingEmp, temp_state: e.target.value})} /></Form.Group></Col>
+                                <Col xs={12} md={4}><Form.Group><Form.Label className="small fw-bold text-muted ps-1">PIN Code</Form.Label><Form.Control className="custom-input border-0 bg-light shadow-sm" value={editingEmp.temp_pin || ''} onChange={e => setEditingEmp({...editingEmp, temp_pin: e.target.value})} /></Form.Group></Col>
+                                <Col xs={12} md={4}><Form.Group><Form.Label className="small fw-bold text-muted ps-1">Local Mobile</Form.Label><Form.Control className="custom-input border-0 bg-light shadow-sm" value={editingEmp.temp_mobile || ''} onChange={e => setEditingEmp({...editingEmp, temp_mobile: e.target.value})} /></Form.Group></Col>
+                            </Row>
+                        </Card.Body>
+                      </Card>
+                    </Tab>
+                    <Tab eventKey="secure" title={<><ShieldAlert size={16} className="me-1 mb-1"/> Bank & KYC Settings</>}>
+                      <Card className="glass-card mt-2 border-warning">
+                        <Card.Body className="p-4">
+                            <Alert variant="warning" className="small fw-bold mb-4 rounded-4 shadow-sm border-0 d-flex">
+                                <AlertTriangle size={24} className="me-3 text-warning flex-shrink-0"/>
+                                <span><strong>Security Notice:</strong> The fields below accept plain text, but will be <strong>permanently encrypted</strong> into the database immediately upon saving. To preserve existing data, leave the fields blank.</span>
+                            </Alert>
+                            <h6 className="fw-bold mb-3 text-primary border-bottom pb-2">Banking Details</h6>
+                            <Row className="g-3 mb-4">
+                                <Col xs={12} md={4}><Form.Group><Form.Label className="small fw-bold text-muted ps-1">Bank Name</Form.Label><Form.Control className="custom-input border-0 bg-light shadow-sm" value={editingEmp.bank_name || ''} onChange={e => setEditingEmp({...editingEmp, bank_name: e.target.value})} /></Form.Group></Col>
+                                <Col xs={12} md={4}><Form.Group><Form.Label className="small fw-bold text-muted ps-1">IFSC Code</Form.Label><Form.Control className="custom-input border-0 bg-light shadow-sm" value={editingEmp.ifsc_code || ''} onChange={e => setEditingEmp({...editingEmp, ifsc_code: e.target.value})} /></Form.Group></Col>
+                                <Col xs={12} md={4}><Form.Group><Form.Label className="small fw-bold text-danger ps-1">Override Account Number</Form.Label><Form.Control className="custom-input border-danger border-opacity-50 bg-danger bg-opacity-10 shadow-sm" placeholder="Leave blank to keep current" value={editingEmp.account_number_raw || ''} onChange={e => setEditingEmp({...editingEmp, account_number_raw: e.target.value})} /></Form.Group></Col>
+                            </Row>
+                            <h6 className="fw-bold mb-3 mt-4 text-primary border-bottom pb-2">Secure KYC Override</h6>
+                            <Row className="g-3">
+                                <Col xs={12} md={6}><Form.Group><Form.Label className="small fw-bold text-danger ps-1">Override Aadhaar Number</Form.Label><Form.Control className="custom-input border-danger border-opacity-50 bg-danger bg-opacity-10 shadow-sm" placeholder="Leave blank to keep current" value={editingEmp.aadhar_raw || ''} onChange={e => setEditingEmp({...editingEmp, aadhar_raw: e.target.value})} /></Form.Group></Col>
+                                <Col xs={12} md={6}><Form.Group><Form.Label className="small fw-bold text-danger ps-1">Override PAN Number</Form.Label><Form.Control className="custom-input border-danger border-opacity-50 bg-danger bg-opacity-10 shadow-sm" placeholder="Leave blank to keep current" value={editingEmp.pan_raw || ''} onChange={e => setEditingEmp({...editingEmp, pan_raw: e.target.value})} /></Form.Group></Col>
+                                <Col xs={12} md={6}><Form.Group><Form.Label className="small fw-bold text-danger ps-1">Override Voter ID</Form.Label><Form.Control className="custom-input border-danger border-opacity-50 bg-danger bg-opacity-10 shadow-sm" placeholder="Leave blank to keep current" value={editingEmp.voter_id_raw || ''} onChange={e => setEditingEmp({...editingEmp, voter_id_raw: e.target.value})} /></Form.Group></Col>
+                                <Col xs={12} md={6}><Form.Group><Form.Label className="small fw-bold text-danger ps-1">Override Driving Licence</Form.Label><Form.Control className="custom-input border-danger border-opacity-50 bg-danger bg-opacity-10 shadow-sm" placeholder="Leave blank to keep current" value={editingEmp.dl_raw || ''} onChange={e => setEditingEmp({...editingEmp, dl_raw: e.target.value})} /></Form.Group></Col>
                             </Row>
                         </Card.Body>
                       </Card>
@@ -1319,7 +1430,7 @@ const AdminDashboard = () => {
                   </Tabs>
 
                   <div className="d-flex flex-column flex-md-row gap-3 pt-3 mt-4 border-top">
-                    <Button variant="light" onClick={() => { setEditingEmp(null); setEmpSearchQuery(''); setEditEmpTab('profile'); }} className="fw-bold rounded-pill px-5 btn-premium active-scale order-2 order-md-1">Discard</Button>
+                    <Button variant="light" onClick={() => { setEditingEmp(null); setEmpSearchQuery(''); setEditEmpTab('profile'); }} className="fw-bold rounded-pill px-5 btn-premium active-scale order-2 order-md-1 shadow-sm border">Discard</Button>
                     <Button type="submit" variant="success" className="fw-bold shadow-sm rounded-pill flex-grow-1 btn-premium d-flex align-items-center justify-content-center active-scale order-1 order-md-2"><Save size={18} className="me-2"/> Save Profile to Database</Button>
                   </div>
                 </Form>
