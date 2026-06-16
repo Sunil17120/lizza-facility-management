@@ -26,4 +26,4 @@ COPY --chown=user . /app
 EXPOSE 7860
 
 # Command to run the FastAPI application
-CMD ["gunicorn", "index:app", "-w", "5", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:7860"]
+CMD ["gunicorn", "index:app", "-w", "5", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:7860", "--access-logfile", "-"]

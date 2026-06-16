@@ -1,0 +1,14 @@
+{
+  "appId": "com.lizza.facility.management.v2",
+  "appName": "Lizza App",
+  "webDir": "build",
+  "plugins": {
+    "CapacitorUpdater": {
+      "autoUpdate": false,
+      "publicKey": "-----BEGIN RSA PUBLIC KEY-----\nMIIBCgKCAQEAvwGpv5osIBxYK6XHSCU+ohPWA3TUMzzp5HTvQDqYBwZT9xsdrR2c\nhxk4Uq20Pw9q1mLTj6SfstBAPhTljDQnLyDLODNVkvrUxMJdcqqlsGZ25acmWbYl\nlcWefUF/jNnwVWLeSfCQC+8C80S7HVgQKgM0tZd8sAXOYBzL+HcJocxQ7F4rOtUh\nJNwbmPAogjsD/WUydvoa2LFiR6VVLNT+OQV08cHEQm49PXZoG6uoxe6tloo5WOOc\nbwAGZvP+VAbTl0ExgB2KtHYq7vfz64xs6vr1oPk8fV9eqGpvr+Fl6HLk+EN4UoRt\nanrennvXIs7pfsePSKxqUeBJLBQNfZ40SwIDAQAB\n-----END RSA PUBLIC KEY-----\n"
+    },
+    "LizzaTracker": {
+      "class": "com.lizza.facility.management.v2.LizzaTrackerPlugin"
+    }
+  }
+}
