@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Container, Card, Row, Col, Form, Button, Alert, Spinner, Table, Badge, Tabs, Tab } from 'react-bootstrap';
-import { MapPin, Navigation, CheckCircle, FileText, Map as MapIcon, LogIn, LogOut, WifiOff, RefreshCw, Clock, Coffee, Activity, AlertTriangle, CheckSquare, Camera, XCircle } from 'lucide-react';
+import { Container, Card, Row, Col, Form, Button, Alert, Spinner, Table, Badge, Tabs, Tab, Modal } from 'react-bootstrap';
+import { MapPin, Navigation, CheckCircle, FileText, Map as MapIcon, LogIn, LogOut, WifiOff, RefreshCw, Clock, Coffee, Activity, AlertTriangle, CheckSquare, Camera, XCircle, Users, ChevronRight, Plus, Shirt } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { LocalNotifications } from '@capacitor/local-notifications';
+import EmployeeOnboardForm from './EmployeeOnboardForm';
 
 const API_BASE_URL = "https://sunil0034-lizza-facility-backend.hf.space";
 const isApp = Capacitor.isNativePlatform();
@@ -11,7 +12,7 @@ const LizzaTracker = registerPlugin('LizzaTracker');
 
 const fileToBase64 = (file) => new Promise((resolve) => { const reader = new FileReader(); reader.readAsDataURL(file); reader.onload = () => resolve(reader.result); });
 const base64ToFile = (base64String, filename) => { const arr = base64String.split(','); const mime = arr[0].match(/:(.*?);/)[1]; const bstr = atob(arr[1]); let n = bstr.length; const u8arr = new Uint8Array(n); while(n--){ u8arr[n] = bstr.charCodeAt(n); } return new File([u8arr], filename, {type:mime}); };
-const compressImage = async (file, maxWidth = 1000, quality = 0.7) => { return new Promise((resolve) => { const reader = new FileReader(); reader.readAsDataURL(file); reader.onload = (event) => { const img = new Image(); img.src = event.target.result; img.onload = () => { const canvas = document.createElement('canvas'); let width = img.width; let height = img.height; if (width > maxWidth) { height = Math.round((height * maxWidth) / width); width = maxWidth; } canvas.width = width; canvas.height = height; const ctx = canvas.getContext('2d'); ctx.drawImage(img, 0, 0, width, height); canvas.toBlob((blob) => { resolve(new File([blob], file.name, { type: 'image/jpeg', lastModified: Date.now() })); }, 'image/jpeg', quality); }; }; }); };
+const compressImage = async (file, maxWidth = 1000, quality = 0.7) => { return new Promise((resolve) => { const reader = new FileReader(); reader.readAsDataURL(file); reader.onload = (event) => { const img = new Image(); img.src = event.target.result; img.onload = () => { const canvas = document.createElement('canvas'); let width = img.width; let height = img.height; if (width > maxWidth) { height = Math.round((height * maxWidth) / width); width = maxWidth; } canvas.width = width; canvas.height = height; const ctx = canvas.getContext('2d'); ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; ctx.drawImage(img, 0, 0, width, height); canvas.toBlob((blob) => { resolve(new File([blob], file.name, { type: 'image/jpeg', lastModified: Date.now() })); }, 'image/jpeg', quality); }; }; }); };
 const calculateDistance = (lat1, lon1, lat2, lon2) => { const R = 6371000; const toRad = (deg) => (deg * Math.PI) / 180; const dLat = toRad(lat2 - lat1); const dLon = toRad(lon2 - lon1); const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2; return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)); };
 
 const getFormattedDateStr = (date = new Date()) => {
@@ -23,10 +24,10 @@ const getFormattedDateStr = (date = new Date()) => {
 };
 
 const OfficerMap = React.memo(({ locations, myLoc }) => (
-    <MapContainer center={[12.9716, 77.5946]} zoom={13} style={{ height: '300px', width: '100%', borderRadius: '16px' }} zoomControl={false}>
+    <MapContainer center={[12.9716, 77.5946]} zoom={13} style={{ height: '100%', minHeight: '350px', width: '100%', borderRadius: '24px' }} zoomControl={false}>
       <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
       {locations.map(site => (
-        <Circle key={site.id} center={[site.lat, site.lon]} radius={site.radius || 200} pathOptions={{ color: '#0d6efd', fillOpacity: 0.15, weight: 2 }}>
+        <Circle key={site.id} center={[site.lat, site.lon]} radius={site.radius || 200} pathOptions={{ color: '#3b82f6', fillOpacity: 0.15, weight: 2 }}>
           <Popup>{site.name}</Popup>
         </Circle>
       ))}
@@ -45,11 +46,13 @@ const OfficerMap = React.memo(({ locations, myLoc }) => (
 const FieldOfficerDashboard = () => {
   const userEmail = localStorage.getItem('userEmail');
 
+  const [dbUser, setDbUser] = useState(null);
   const [dutyStatus, setDutyStatus] = useState(() => localStorage.getItem('lastStatus') || 'OFF_DUTY');
   const [shiftData, setShiftData] = useState(null);
   const [locations, setLocations] = useState([]);
   const [visitHistory, setVisitHistory] = useState([]);
   const [assignedTasks, setAssignedTasks] = useState([]); 
+  const [onboardedCount, setOnboardedCount] = useState(0);
   
   const [myLoc, setMyLoc] = useState(null);
   const [nearbySites, setNearbySites] = useState([]);
@@ -72,6 +75,12 @@ const FieldOfficerDashboard = () => {
   const [alertMsg, setAlertMsg] = useState(null);
   const [pendingOfflineActions, setPendingOfflineActions] = useState(0);
 
+  // --- New Modals State ---
+  const [showAddEmp, setShowAddEmp] = useState(false);
+  const [showUniformModal, setShowUniformModal] = useState(false);
+  const [uniformReqForm, setUniformReqForm] = useState({ target_user_id: '', target_user_name: '', item_details: '' });
+  const [teamMembers, setTeamMembers] = useState([]);
+
   const isFetchingRef = useRef(false);
   const isProcessingRef = useRef(false);
   const checkedInRef = useRef(false);
@@ -90,34 +99,23 @@ const FieldOfficerDashboard = () => {
   useEffect(() => { checkedInSiteRef.current = checkedInSite; }, [checkedInSite]);
   useEffect(() => { dutyStatusRef.current = dutyStatus; localStorage.setItem('lastStatus', dutyStatus); }, [dutyStatus]);
 
-  // --- Local Notification Helper Function ---
   const triggerLocalNotification = async (title, body) => {
-    if (!isApp) return; // Only run on mobile device
+    if (!isApp) return; 
     try {
       const perms = await LocalNotifications.checkPermissions();
       if (perms.display !== 'granted') {
         await LocalNotifications.requestPermissions();
       }
       await LocalNotifications.schedule({
-        notifications: [
-          {
-            title: title,
-            body: body,
-            // Reduced to a 32-bit Java integer to prevent crashes
-            id: Math.floor(Date.now() / 10000), 
-            schedule: { at: new Date(Date.now() + 100) }, 
-            sound: null,
-            attachments: null,
-            actionTypeId: "",
-            extra: null
-          }
-        ]
+        notifications: [{
+          title: title, body: body, id: Math.floor(Date.now() / 10000), 
+          schedule: { at: new Date(Date.now() + 100) }, sound: null, attachments: null, actionTypeId: "", extra: null
+        }]
       });
     } catch (error) {
       console.error("Local Notification Failed:", error);
     }
   };
-  // ------------------------------------------------
 
   const updateQueueCounts = useCallback(() => {
       if (!isApp) return;
@@ -135,12 +133,14 @@ const FieldOfficerDashboard = () => {
     setIsSyncing(true);
     const t = Date.now();
     
-    const [locRes, histRes, profRes, shiftRes, tasksRes] = await Promise.all([
+    const [locRes, histRes, profRes, shiftRes, tasksRes, statsRes, adminEmpRes] = await Promise.all([
         fetch(`${API_BASE_URL}/api/admin/locations?_t=${t}`).catch(() => ({ ok: false })),
         fetch(`${API_BASE_URL}/api/field-officer/my-visits?email=${userEmail}&_t=${t}`).catch(() => ({ ok: false })),
         fetch(`${API_BASE_URL}/api/user/profile?email=${userEmail}&_t=${t}`).catch(() => ({ ok: false })),
         fetch(`${API_BASE_URL}/api/shift/current?email=${userEmail}&_t=${t}`).catch(() => ({ ok: false })),
-        fetch(`${API_BASE_URL}/api/tasks?email=${userEmail}&role=field_officer&_t=${t}`).catch(() => ({ ok: false }))
+        fetch(`${API_BASE_URL}/api/tasks?email=${userEmail}&role=field_officer&_t=${t}`).catch(() => ({ ok: false })),
+        fetch(`${API_BASE_URL}/api/field-officer/onboard-stats?email=${userEmail}&_t=${t}`).catch(() => ({ ok: false })),
+        fetch(`${API_BASE_URL}/api/admin/employees?admin_email=null`).catch(() => ({ ok: false })) // Open route to fetch all users for drop down
     ]);
     
     let loadedLocs = [];
@@ -152,11 +152,16 @@ const FieldOfficerDashboard = () => {
     
     let parsedVisits = [];
     if (histRes && histRes.ok) { parsedVisits = await histRes.json(); setVisitHistory(parsedVisits); }
-    
     if (tasksRes && tasksRes.ok) setAssignedTasks(await tasksRes.json());
+    if (statsRes && statsRes.ok) { const stats = await statsRes.json(); setOnboardedCount(stats.onboarded_count); }
+    if (adminEmpRes && adminEmpRes.ok) { 
+        const allEmps = await adminEmpRes.json();
+        setTeamMembers(allEmps.filter(e => e.user_type === 'employee')); 
+    }
 
     if (profRes && profRes.ok) {
         const prof = await profRes.json();
+        setDbUser(prof);
         setCheckedIn(Boolean(prof.checked_in));
         
         if (prof.checked_in && prof.active_location_id) {
@@ -373,9 +378,12 @@ const FieldOfficerDashboard = () => {
 
         if (checkedInRef.current && checkedInSiteRef.current) {
             const distToActive = calculateDistance(lat, lon, checkedInSiteRef.current.lat, checkedInSiteRef.current.lon);
-            if (distToActive > 50) {
+            const activeRadius = checkedInSiteRef.current.radius || 200;
+            const checkoutThreshold = activeRadius + 30; // 30 meter buffer outside the perimeter
+            
+            if (distToActive > checkoutThreshold) {
                 handleAttendance('CHECK_OUT', checkedInSiteRef.current, { lat, lon });
-                setAlertMsg({ type: 'warning', text: 'You exceeded the 50-meter perimeter. Checked out automatically.' });
+                setAlertMsg({ type: 'warning', text: `You exceeded the ${checkoutThreshold}-meter perimeter. Checked out automatically.` });
             }
         }
     }
@@ -496,6 +504,33 @@ const FieldOfficerDashboard = () => {
       });
   };
 
+  // --- Handle Uniform Request ---
+  const handleUniformRequestSubmit = async (e) => {
+    e.preventDefault();
+    if (!uniformReqForm.target_user_id || !uniformReqForm.item_details.trim()) {
+        return alert("Please select an employee and provide item details.");
+    }
+    
+    const res = await fetch(`${API_BASE_URL}/api/uniform/request-adhoc`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            target_user_id: uniformReqForm.target_user_id,
+            requester_email: userEmail,
+            item_details: uniformReqForm.item_details,
+            fo_email: userEmail
+        })
+    });
+    
+    if (res.ok) {
+        alert("Uniform request successfully submitted to Admin/HR!");
+        setShowUniformModal(false);
+        setUniformReqForm({ target_user_id: '', target_user_name: '', item_details: '' });
+    } else {
+        alert("Failed to submit uniform request.");
+    }
+  };
+
   const todayStr = new Date().toISOString().split('T')[0];
   const activeTaskObj = (checkedInSite || proximateSite) ? assignedTasks.find(t => Number(t.site_id) === Number((checkedInSite || proximateSite).id) && t.date === todayStr && t.status === 'PENDING') : null;
 
@@ -509,40 +544,84 @@ const FieldOfficerDashboard = () => {
     }
   }, [alertMsg]);
 
+  const rawName = dbUser?.full_name || userEmail;
+  const displayName = rawName ? rawName.split('@')[0].split('.')[0].charAt(0).toUpperCase() + rawName.split('@')[0].split('.')[0].slice(1) : "Officer";
+
   return (
     <>
       <style>
         {`
-          .mobile-ui-container { background-color: #f4f6f9; min-height: 100vh; padding-bottom: 80px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
-          .android-card { border-radius: 20px; border: none; box-shadow: 0 6px 24px rgba(0,0,0,0.05); overflow: hidden; background: #fff; margin-bottom: 20px; }
-          .active-scale:active { transform: scale(0.97); transition: transform 0.1s; }
-          .pulse-btn { animation: pulseAnim 2s infinite; }
+          .mobile-ui-container { background-color: #f8fafc; min-height: 100vh; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; overflow-x: hidden; padding-bottom: 40px; }
+          .glass-card { background: #ffffff; border-radius: 24px; border: none; box-shadow: 0 8px 24px rgba(149, 157, 165, 0.08); overflow: hidden; margin-bottom: 24px; transition: transform 0.2s, box-shadow 0.2s; }
+          .glass-card:hover { transform: translateY(-2px); box-shadow: 0 12px 28px rgba(149, 157, 165, 0.12); }
+          .active-scale:active { transform: scale(0.96); transition: transform 0.1s; }
+          
+          .pulse-dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; animation: pulseAnim 2s infinite; }
+          .pulse-dot.duty-on { background-color: #10b981; }
+          .pulse-dot.duty-off { background-color: #ef4444; animation: none; }
+          .pulse-dot.duty-break { background-color: #f59e0b; animation: none; }
+
           @keyframes pulseAnim {
-              0% { box-shadow: 0 0 0 0 rgba(40, 167, 69, 0.4); }
-              70% { box-shadow: 0 0 0 15px rgba(40, 167, 69, 0); }
-              100% { box-shadow: 0 0 0 0 rgba(40, 167, 69, 0); }
+              0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.5); }
+              70% { box-shadow: 0 0 0 10px rgba(16, 185, 129, 0); }
+              100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
           }
-          .slide-up { animation: slideUpAnim 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+          
+          .fade-in { animation: fadeInAnim 0.6s ease-in-out forwards; }
+          @keyframes fadeInAnim { from { opacity: 0; } to { opacity: 1; } }
+          
+          .slide-up { animation: slideUpAnim 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards; opacity: 0; }
           @keyframes slideUpAnim {
-              from { transform: translateY(25px); opacity: 0; }
+              from { transform: translateY(20px); opacity: 0; }
               to { transform: translateY(0); opacity: 1; }
           }
-          .custom-pill-tabs .nav-link { border-radius: 24px; color: #6c757d; font-weight: 600; padding: 12px 24px; margin: 0 4px; background: #f0f2f5; border: 1px solid transparent; transition: all 0.2s; }
-          .custom-pill-tabs .nav-link.active { background: #0d6efd; color: white; box-shadow: 0 6px 12px rgba(13,110,253,0.3); }
-          .custom-input { border-radius: 12px; background-color: #f8f9fa; border: 1px solid #e9ecef; padding: 12px; }
-          .custom-input:focus { background-color: #fff; border-color: #86b7fe; box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.15); }
+          
+          .custom-pill-tabs { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 10px; border-bottom: none; gap: 8px; }
+          .custom-pill-tabs::-webkit-scrollbar { display: none; }
+          .custom-pill-tabs .nav-link { border-radius: 20px; color: #64748b; font-weight: 600; padding: 12px 24px; background: #f1f5f9; border: none; white-space: nowrap; transition: all 0.2s ease; }
+          .custom-pill-tabs .nav-link.active { background: #3b82f6; color: white; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3); }
+          .custom-input { border-radius: 12px; background-color: #f8fafc; border: 1.5px solid #e2e8f0; padding: 12px 16px; font-size: 14px; transition: all 0.2s; }
+          .custom-input:focus { background-color: #fff; border-color: #3b82f6; box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1); outline: none; }
+          
+          .stat-widget { background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: white; border-radius: 24px; padding: 24px; box-shadow: 0 8px 20px rgba(59, 130, 246, 0.2); }
+          .btn-premium { border-radius: 100px; padding: 14px 28px; font-weight: 600; transition: all 0.2s; }
         `}
       </style>
 
-      <div className="mobile-ui-container pt-3">
-        <Container fluid="md">
+      <div className="mobile-ui-container pt-4 fade-in">
+        <Container fluid="xl" className="px-3 px-md-4">
           
-          <div className="d-flex justify-content-between align-items-center mb-3 px-2">
-            <h4 className="fw-bold m-0 text-dark d-flex align-items-center"><Navigation className="text-primary me-2" size={24}/>Operations</h4>
+          {/* Dashboard Header */}
+          <div className="d-flex justify-content-between align-items-center mb-4 px-2">
+            <div>
+              <h4 className="fw-bold m-0 text-dark">Welcome, {displayName}</h4>
+              <p className="text-muted small mb-0">{new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
+            </div>
+            <div className="d-flex gap-2">
+              <Button variant="light" size="sm" className="rounded-circle shadow-sm p-2 active-scale" onClick={fetchData} disabled={isSyncing}>
+                 <RefreshCw size={20} className={isSyncing ? "text-muted" : "text-primary"} />
+              </Button>
+              <Button variant="primary" className="rounded-pill shadow-sm fw-bold active-scale d-none d-md-flex align-items-center px-4" onClick={() => setShowAddEmp(true)}>
+                  <Plus className="me-1" size={18}/> Onboard Staff
+              </Button>
+              <Button variant="outline-primary" className="rounded-pill shadow-sm fw-bold active-scale d-none d-md-flex align-items-center px-4" onClick={() => setShowUniformModal(true)}>
+                  <Shirt className="me-1" size={18}/> Request Uniform
+              </Button>
+            </div>
           </div>
 
+          <div className="d-md-none mb-4 px-2 d-flex gap-2">
+              <Button variant="primary" className="w-100 rounded-pill shadow-sm fw-bold active-scale d-flex align-items-center justify-content-center py-2" onClick={() => setShowAddEmp(true)}>
+                  <Plus className="me-2" size={18}/> Onboard
+              </Button>
+              <Button variant="outline-primary" className="w-100 rounded-pill shadow-sm fw-bold active-scale d-flex align-items-center justify-content-center py-2" onClick={() => setShowUniformModal(true)}>
+                  <Shirt className="me-2" size={18}/> Uniforms
+              </Button>
+          </div>
+
+          {/* Alerts / Offline Notices */}
           {(!isOnline || pendingOfflineActions > 0) && isApp && (
-            <Alert variant="warning" className="d-flex justify-content-between align-items-center mb-3 py-3 shadow-sm rounded-pill small slide-up border-0 font-weight-bold">
+            <Alert variant="warning" className="d-flex justify-content-between align-items-center mb-3 py-3 shadow-sm rounded-pill small slide-up border-0 font-weight-bold" style={{animationDelay: '0.1s'}}>
                 <span>
                     {isOnline ? <RefreshCw size={16} className="me-2 text-primary" /> : <WifiOff size={16} className="me-2 text-danger" />}
                     <strong className="me-1">{isOnline ? 'Syncing Data...' : 'Offline Mode'}</strong> {pendingOfflineActions} action(s) waiting.
@@ -557,47 +636,69 @@ const FieldOfficerDashboard = () => {
             </Alert>
           )}
 
-          <Card className="android-card slide-up">
-              <Card.Body className="p-4 d-flex flex-column gap-3">
-                  <div>
-                      <h5 className="fw-bold mb-1 d-flex align-items-center text-dark"><Clock className="me-2 text-primary" size={20}/> Day Shift Protocol</h5>
-                      <div className="text-muted small">
-                          {dutyStatus === 'OFF_DUTY' ? "Start your shift to activate live GPS tracking and tasks." : 
-                           dutyStatus === 'ON_BREAK' ? "Shift paused. Location tracking is disabled." : 
-                           <div className="d-flex align-items-center flex-wrap mt-2 bg-light p-3 rounded-4 border-0">
-                               <span className="me-3"><strong>Duty:</strong> <span className="text-primary">{dutyTimeStr}</span></span>
-                               <span><Activity size={14} className="text-success ms-1 me-1"/> <strong>Travel:</strong> {travelTimeStr}</span>
-                           </div>}
+          {/* Top Row: Duty Protocol & Stats */}
+          <Row className="g-4 mb-4">
+            <Col xs={12} lg={8} className="slide-up" style={{animationDelay: '0.1s'}}>
+              <Card className="glass-card h-100">
+                  <Card.Body className="p-4 d-flex flex-column justify-content-center">
+                      <div className="d-flex justify-content-between align-items-start mb-3 flex-wrap gap-2">
+                        <div>
+                          <h5 className="fw-bold mb-1 d-flex align-items-center text-dark">
+                            <span className={`pulse-dot me-2 ${dutyStatus === 'ON_DUTY' ? 'duty-on' : dutyStatus === 'ON_BREAK' ? 'duty-break' : 'duty-off'}`}></span>
+                            Shift Protocol
+                          </h5>
+                          <div className="text-muted small">
+                              {dutyStatus === 'OFF_DUTY' ? "Start your shift to activate live GPS tracking and tasks." : 
+                               dutyStatus === 'ON_BREAK' ? "Shift paused. Location tracking is disabled." : "Location tracking active."}
+                          </div>
+                        </div>
+                        {dutyStatus !== 'OFF_DUTY' && (
+                          <div className="d-flex gap-3 bg-light px-3 py-2 rounded-pill">
+                              <span className="small"><strong>Duty:</strong> <span className="text-primary">{dutyTimeStr}</span></span>
+                              <span className="small"><Activity size={14} className="text-success ms-1 me-1"/> <strong>Travel:</strong> {travelTimeStr}</span>
+                          </div>
+                        )}
                       </div>
-                  </div>
-                  <div className="d-flex gap-2 mt-2">
-                      {dutyStatus === 'OFF_DUTY' && <Button variant="primary" size="lg" className="fw-bold flex-grow-1 rounded-pill shadow-sm active-scale" onClick={() => handleDayShiftAction('START')}>Start Shift</Button>}
-                      {dutyStatus === 'ON_DUTY' && <Button variant="warning" size="lg" className="fw-bold text-dark flex-grow-1 rounded-pill shadow-sm active-scale" onClick={() => handleDayShiftAction('BREAK')}><Coffee size={18} className="me-1"/> Break</Button>}
-                      {dutyStatus === 'ON_BREAK' && <Button variant="success" size="lg" className="fw-bold flex-grow-1 rounded-pill shadow-sm active-scale" onClick={() => handleDayShiftAction('RESUME')}>Resume Duty</Button>}
-                      {dutyStatus !== 'OFF_DUTY' && <Button variant="danger" size="lg" className="fw-bold flex-grow-1 rounded-pill shadow-sm active-scale" onClick={() => handleDayShiftAction('END')}>End Shift</Button>}
-                  </div>
-              </Card.Body>
-          </Card>
+                      
+                      <div className="d-flex gap-2 mt-auto pt-2">
+                          {dutyStatus === 'OFF_DUTY' && <Button variant="primary" className="btn-premium flex-grow-1 shadow-sm active-scale" onClick={() => handleDayShiftAction('START')}>Start Shift</Button>}
+                          {dutyStatus === 'ON_DUTY' && <Button variant="warning" className="btn-premium text-dark flex-grow-1 shadow-sm active-scale" onClick={() => handleDayShiftAction('BREAK')}><Coffee size={18} className="me-1"/> Break</Button>}
+                          {dutyStatus === 'ON_BREAK' && <Button variant="success" className="btn-premium flex-grow-1 shadow-sm active-scale" onClick={() => handleDayShiftAction('RESUME')}>Resume Duty</Button>}
+                          {dutyStatus !== 'OFF_DUTY' && <Button variant="danger" className="btn-premium flex-grow-1 shadow-sm active-scale" onClick={() => handleDayShiftAction('END')}>End Shift</Button>}
+                      </div>
+                  </Card.Body>
+              </Card>
+            </Col>
 
-          {dutyStatus !== 'OFF_DUTY' && dutyStatus !== 'ON_BREAK' && (
-            <Row className="g-3 mb-4 slide-up" style={{animationDelay: '0.1s'}}>
-              
-              <Col lg={6}>
-                <Card className="android-card h-100 border-top border-4 border-success">
-                  <Card.Body className="p-4">
-                    <div className="d-flex justify-content-between align-items-center mb-3">
-                        <h5 className="fw-bold m-0 d-flex align-items-center text-dark">
-                            <MapPin className="me-2 text-danger"/> Geofence Protocol
-                        </h5>
-                        <Button variant="light" size="sm" className="rounded-pill shadow-sm" onClick={fetchData} disabled={isSyncing}>
-                            <RefreshCw size={14} className={isSyncing ? "text-muted" : "text-primary"} />
-                        </Button>
+            <Col xs={12} lg={4} className="slide-up" style={{animationDelay: '0.2s'}}>
+                <div className="stat-widget h-100 d-flex flex-column justify-content-between">
+                    <div className="d-flex align-items-center mb-3 opacity-75">
+                        <Users size={20} className="me-2"/>
+                        <span className="fw-bold text-uppercase small tracking-wide">Recruitment Impact</span>
                     </div>
+                    <div>
+                        <h1 className="display-4 fw-bolder mb-0">{onboardedCount}</h1>
+                        <p className="mb-0 opacity-75 small">Total staff onboarded to the network</p>
+                    </div>
+                </div>
+            </Col>
+          </Row>
+
+          {/* Middle Row: Map & Geofence (Only visible when On Duty) */}
+          {dutyStatus !== 'OFF_DUTY' && dutyStatus !== 'ON_BREAK' && (
+            <Row className="g-4 mb-4">
+              
+              <Col xs={12} lg={6} className="slide-up" style={{animationDelay: '0.3s'}}>
+                <Card className="glass-card h-100 border-top border-4 border-success">
+                  <Card.Body className="p-4 d-flex flex-column">
+                    <h5 className="fw-bold mb-3 d-flex align-items-center text-dark">
+                        <MapPin className="me-2 text-danger" size={20}/> Perimeter Protocol
+                    </h5>
                     
                     {isSyncing ? (
-                        <div className="bg-light border-0 rounded-4 p-4 mb-4 text-center">
+                        <div className="bg-light rounded-4 p-4 my-auto text-center border-0">
                             <Spinner animation="border" variant="primary" className="mb-2"/>
-                            <div className="text-muted fw-bold">Syncing Server State...</div>
+                            <div className="text-muted fw-bold">Syncing Position...</div>
                         </div>
                     ) : checkedIn ? (
                       <div className="bg-success bg-opacity-10 border border-success border-2 rounded-4 p-4 mb-4 text-center shadow-sm">
@@ -612,165 +713,194 @@ const FieldOfficerDashboard = () => {
                           <div className="text-muted small mt-1">You are inside the perimeter.</div>
                       </div>
                     ) : proximateSite && hasCompletedSiteToday(proximateSite.id) ? (
-                      <Alert variant="success" className="text-center rounded-4 border-0 shadow-sm p-4">
+                      <Alert variant="success" className="text-center rounded-4 border-0 shadow-sm p-4 mb-4">
                           <CheckCircle size={28} className="mb-2 text-success"/><br/>
                           <strong className="fs-5 text-dark">Site Completed</strong><br/>
-                          <span className="text-muted small">You have successfully finished operations here for today.</span>
+                          <span className="text-muted small">Operations concluded here for today.</span>
                       </Alert>
                     ) : (
-                      <div className="bg-light border-0 rounded-4 p-4 mb-4 text-center">
+                      <div className="bg-light rounded-4 p-4 mb-4 text-center my-auto border-0">
                           <MapIcon size={30} className="text-muted opacity-50 mb-2"/>
                           <div className="text-muted fw-bold">Searching for perimeter...</div>
                           <small className="text-secondary">Drive to an assigned site.</small>
                       </div>
                     )}
 
-                    <div className="d-flex flex-column gap-2 mb-2">
+                    <div className="d-flex flex-column gap-2 mt-auto">
                       {!checkedIn && proximateSite && !hasCompletedSiteToday(proximateSite.id) && (
-                        <Button variant="success" size="lg" className="w-100 fw-bold shadow pulse-btn rounded-pill active-scale" onClick={() => handleAttendance('CHECK_IN', proximateSite, myLoc)}>
+                        <Button variant="success" className="w-100 btn-premium shadow-sm active-scale" onClick={() => handleAttendance('CHECK_IN', proximateSite, myLoc)}>
                             <LogIn className="me-2" size={20}/> Check In Here
                         </Button>
                       )}
                       
                       {checkedIn && hasSubmittedReport && (
-                        <Button variant="danger" size="lg" className="w-100 fw-bold shadow rounded-pill active-scale" onClick={() => handleAttendance('CHECK_OUT', checkedInSite || proximateSite, myLoc)}>
+                        <Button variant="danger" className="w-100 btn-premium shadow-sm active-scale" onClick={() => handleAttendance('CHECK_OUT', checkedInSite || proximateSite, myLoc)}>
                             <LogOut className="me-2" size={20}/> Complete & Check Out
                         </Button>
                       )}
                       
                       {checkedIn && !hasSubmittedReport && (
                         <Alert variant="warning" className="text-center small fw-bold mb-0 border-0 rounded-pill bg-warning bg-opacity-25 text-dark">
-                            <AlertTriangle size={16} className="me-1 mb-1"/> Please submit report to unlock Check-Out
+                            <AlertTriangle size={16} className="me-1 mb-1"/> Submit report to unlock Check-Out
                         </Alert>
                       )}
                     </div>
-
-                    {checkedIn && !hasSubmittedReport && (
-                      <div className="mt-4 pt-3 border-top border-2 border-dashed">
-                          {activeTaskObj ? (
-                              <Form onSubmit={(e) => submitTaskChecklist(e, checkedInSite || proximateSite, activeTaskObj)}>
-                                  <div className="d-flex align-items-center mb-3 bg-primary bg-opacity-10 p-3 rounded-pill">
-                                      <CheckSquare className="me-2 text-primary ms-2" size={20}/>
-                                      <h6 className="fw-bold mb-0 text-primary">Required Task Checklist</h6>
-                                  </div>
-                                  
-                                  {activeTaskObj.tasks.map((t, idx) => (
-                                      <div key={t.id} className="mb-3 p-4 bg-light border-0 rounded-4 shadow-sm position-relative">
-                                          <Badge bg="dark" className="position-absolute top-0 start-0 translate-middle ms-4 mt-2 rounded-circle fs-6 px-2">{idx+1}</Badge>
-                                          <div className="fw-bold text-dark mb-4 mt-2 fs-5 ps-2">{t.description}</div>
-                                          
-                                          <div className="d-flex gap-3 mb-4 bg-white p-2 rounded-pill shadow-sm border justify-content-center">
-                                             <Form.Check type="radio" label={<span className="text-success fw-bold">Done</span>} name={`status_${t.id}`} onChange={() => updateTaskForm(t.id, 'is_done', true)} required/>
-                                             <Form.Check type="radio" label={<span className="text-danger fw-bold">Not Done</span>} name={`status_${t.id}`} onChange={() => updateTaskForm(t.id, 'is_done', false)} required/>
-                                          </div>
-
-                                          {activeTaskForm[t.id]?.is_done && (
-                                              <Form.Group className="mb-3 bg-white p-3 rounded-4 border shadow-sm">
-                                                  <Form.Label className="small fw-bold mb-2 d-block"><Camera size={14} className="me-1"/> Upload Evidence Photo <span className="text-danger">*</span></Form.Label>
-                                                  <Form.Control type="file" accept="image/*" capture="environment" className="border-0 bg-light rounded custom-input" onChange={e => updateTaskForm(t.id, 'photo', e.target.files[0])} required />
-                                              </Form.Group>
-                                          )}
-                                          <Form.Group>
-                                              <Form.Control as="textarea" rows={2} className="custom-input" placeholder="Add optional remarks..." onChange={e => updateTaskForm(t.id, 'remarks', e.target.value)} />
-                                          </Form.Group>
-                                      </div>
-                                  ))}
-                                  <Button type="submit" variant="primary" size="lg" className="w-100 fw-bold shadow-sm rounded-pill mt-4 py-3 active-scale">
-                                      Submit Checklist & Complete
-                                  </Button>
-                              </Form>
-                          ) : (
-                              <Form onSubmit={(e) => handleGenericSubmit(e, checkedInSite || proximateSite)}>
-                                <div className="d-flex align-items-center mb-3 bg-dark bg-opacity-10 p-3 rounded-pill">
-                                    <FileText className="me-2 text-dark ms-2" size={20}/>
-                                    <h6 className="fw-bold mb-0 text-dark">Standard Site Report</h6>
-                                </div>
-                                <Form.Select className="mb-4 py-3 rounded-pill bg-light border-0 shadow-sm fw-bold text-dark" value={purpose} onChange={e => setPurpose(e.target.value)} required>
-                                    <option value="">Select Visit Purpose...</option><option value="Routine Inspection">Routine Inspection</option><option value="Client Meeting">Client Meeting</option><option value="Issue Resolution">Issue Resolution</option><option value="Training">Training</option><option value="Bill Submission">Bill Submission</option>
-                                </Form.Select>
-                                
-                                <div className="bg-light p-3 rounded-4 mb-4">
-                                    {visitEntries.map((entry, idx) => (
-                                        <div key={idx} className="mb-3 p-3 bg-white border-0 rounded-4 shadow-sm">
-                                            <div className="fw-bold text-dark small mb-3 d-flex justify-content-between align-items-center">
-                                                <span><Camera size={14} className="me-1"/> Photo Evidence {idx + 1}</span>
-                                                {visitEntries.length > 1 && (
-                                                    <Badge bg="danger" className="rounded-pill p-2" style={{cursor: 'pointer'}} onClick={() => removePhotoEntry(idx)}>Remove</Badge>
-                                                )}
-                                            </div>
-                                            <Form.Control type="file" accept="image/*" capture="environment" className="mb-3 custom-input" onChange={(e) => updatePhotoEntry(idx, 'photo', e.target.files[0])} required />
-                                            <Form.Control as="textarea" rows={3} className="custom-input" placeholder="Detailed observations..." value={entry.details} onChange={(e) => updatePhotoEntry(idx, 'details', e.target.value)} required />
-                                        </div>
-                                    ))}
-                                    <Button variant="outline-primary" size="lg" className="w-100 fw-bold border-2 border-dashed rounded-pill mt-2 active-scale py-3" onClick={addPhotoEntry}>
-                                        + Add Another Photo
-                                    </Button>
-                                </div>
-                                <Button type="submit" variant="dark" size="lg" className="w-100 fw-bold shadow rounded-pill active-scale py-3">
-                                    Upload Report
-                                </Button>
-                              </Form>
-                          )}
-                      </div>
-                    )}
                   </Card.Body>
                 </Card>
               </Col>
 
-              <Col lg={6}>
-                <Card className="android-card h-100">
-                    <Card.Body className="p-0 position-relative">
-                        <div className="position-absolute top-0 start-0 w-100 p-3 z-1">
-                            <div className="bg-white px-4 py-2 rounded-pill shadow d-inline-block fw-bold small text-primary"><MapPin size={14} className="me-1"/>Live GPS Tracking</div>
+              <Col xs={12} lg={6} className="slide-up" style={{animationDelay: '0.4s'}}>
+                <Card className="glass-card h-100 p-2">
+                    <Card.Body className="p-0 position-relative rounded-4 overflow-hidden h-100">
+                        <div className="position-absolute top-0 start-0 w-100 p-3 z-1" style={{pointerEvents: 'none'}}>
+                            <div className="bg-white px-3 py-2 rounded-pill shadow-sm d-inline-flex align-items-center fw-bold small text-primary">
+                                <span className="pulse-dot duty-on me-2" style={{width:8, height:8}}></span> Live GPS Active
+                            </div>
                         </div>
                         <OfficerMap locations={locations} myLoc={myLoc} />
                     </Card.Body>
                 </Card>
               </Col>
+
             </Row>
           )}
 
-          <div className="slide-up" style={{animationDelay: '0.2s'}}>
+          {/* Checklist & Reporting Section (Only visible when Checked In) */}
+          {dutyStatus !== 'OFF_DUTY' && dutyStatus !== 'ON_BREAK' && checkedIn && !hasSubmittedReport && (
+            <Row className="mb-4 slide-up" style={{animationDelay: '0.5s'}}>
+                <Col xs={12}>
+                    <Card className="glass-card">
+                        <Card.Body className="p-4">
+                            {activeTaskObj ? (
+                                <Form onSubmit={(e) => submitTaskChecklist(e, checkedInSite || proximateSite, activeTaskObj)}>
+                                    <div className="d-flex align-items-center mb-4 bg-primary bg-opacity-10 p-3 rounded-4">
+                                        <CheckSquare className="me-3 text-primary" size={24}/>
+                                        <div>
+                                            <h6 className="fw-bold mb-0 text-primary">Required Task Checklist</h6>
+                                            <small className="text-muted">Complete all assigned tasks for {checkedInSite?.name}</small>
+                                        </div>
+                                    </div>
+                                    
+                                    <Row className="g-3">
+                                        {activeTaskObj.tasks.map((t, idx) => (
+                                            <Col xs={12} lg={6} key={t.id}>
+                                                <div className="p-4 bg-light border-0 rounded-4 shadow-sm position-relative h-100 d-flex flex-column">
+                                                    <Badge bg="dark" className="position-absolute top-0 end-0 m-3 rounded-circle px-2 py-1">{idx+1}</Badge>
+                                                    <div className="fw-bold text-dark mb-3 pe-4">{t.description}</div>
+                                                    
+                                                    <div className="d-flex gap-3 mb-3 bg-white p-2 rounded-pill shadow-sm border justify-content-center mt-auto">
+                                                        <Form.Check type="radio" label={<span className="text-success fw-bold small">Done</span>} name={`status_${t.id}`} onChange={() => updateTaskForm(t.id, 'is_done', true)} required/>
+                                                        <Form.Check type="radio" label={<span className="text-danger fw-bold small">Not Done</span>} name={`status_${t.id}`} onChange={() => updateTaskForm(t.id, 'is_done', false)} required/>
+                                                    </div>
+
+                                                    {activeTaskForm[t.id]?.is_done && (
+                                                        <Form.Group className="mb-3 bg-white p-3 rounded-4 border shadow-sm">
+                                                            <Form.Label className="small fw-bold mb-2 text-primary d-flex align-items-center"><Camera size={14} className="me-2"/> Evidence Photo *</Form.Label>
+                                                            <Form.Control type="file" accept="image/*" capture="environment" className="border-0 bg-light rounded custom-input" onChange={e => updateTaskForm(t.id, 'photo', e.target.files[0])} required />
+                                                        </Form.Group>
+                                                    )}
+                                                    <Form.Control as="textarea" rows={2} className="custom-input border-0 shadow-sm" placeholder="Optional remarks..." onChange={e => updateTaskForm(t.id, 'remarks', e.target.value)} />
+                                                </div>
+                                            </Col>
+                                        ))}
+                                    </Row>
+                                    <Button type="submit" variant="primary" className="w-100 btn-premium shadow-sm mt-4 active-scale">
+                                        Submit Checklist & Conclude Site Visit
+                                    </Button>
+                                </Form>
+                            ) : (
+                                <Form onSubmit={(e) => handleGenericSubmit(e, checkedInSite || proximateSite)}>
+                                  <div className="d-flex align-items-center mb-4 bg-dark bg-opacity-10 p-3 rounded-4">
+                                      <FileText className="me-3 text-dark" size={24}/>
+                                      <div>
+                                          <h6 className="fw-bold mb-0 text-dark">Standard Site Report</h6>
+                                          <small className="text-muted">Log details for {checkedInSite?.name}</small>
+                                      </div>
+                                  </div>
+
+                                  <Row>
+                                      <Col xs={12} lg={4}>
+                                          <Form.Select className="mb-4 py-3 rounded-4 bg-light border-0 shadow-sm fw-bold text-dark" value={purpose} onChange={e => setPurpose(e.target.value)} required>
+                                              <option value="">Select Visit Purpose...</option><option value="Routine Inspection">Routine Inspection</option><option value="Client Meeting">Client Meeting</option><option value="Issue Resolution">Issue Resolution</option><option value="Training">Training</option><option value="Bill Submission">Bill Submission</option>
+                                          </Form.Select>
+                                      </Col>
+                                      <Col xs={12} lg={8}>
+                                          <div className="bg-light p-3 rounded-4 mb-4">
+                                              {visitEntries.map((entry, idx) => (
+                                                  <div key={idx} className="mb-3 p-4 bg-white border-0 rounded-4 shadow-sm">
+                                                      <div className="fw-bold text-primary small mb-3 d-flex justify-content-between align-items-center">
+                                                          <span><Camera size={16} className="me-2"/> Capture Evidence {idx + 1}</span>
+                                                          {visitEntries.length > 1 && (
+                                                              <Badge bg="danger" className="rounded-pill p-2" style={{cursor: 'pointer'}} onClick={() => removePhotoEntry(idx)}>Remove</Badge>
+                                                          )}
+                                                      </div>
+                                                      <Form.Control type="file" accept="image/*" capture="environment" className="mb-3 custom-input border-0 bg-light" onChange={(e) => updatePhotoEntry(idx, 'photo', e.target.files[0])} required />
+                                                      <Form.Control as="textarea" rows={3} className="custom-input border-0 bg-light" placeholder="Detailed observations..." value={entry.details} onChange={(e) => updatePhotoEntry(idx, 'details', e.target.value)} required />
+                                                  </div>
+                                              ))}
+                                              <Button variant="outline-primary" className="w-100 fw-bold border-2 border-dashed rounded-pill mt-2 active-scale py-3 bg-white" onClick={addPhotoEntry}>
+                                                  + Add Another Photo Evidence
+                                              </Button>
+                                          </div>
+                                      </Col>
+                                  </Row>
+                                  <Button type="submit" variant="dark" className="w-100 btn-premium shadow-sm active-scale">
+                                      Upload Final Report
+                                  </Button>
+                                </Form>
+                            )}
+                        </Card.Body>
+                    </Card>
+                </Col>
+            </Row>
+          )}
+
+          {/* Bottom Tabs: Pending Tasks & Directory */}
+          <div className="slide-up" style={{animationDelay: '0.6s'}}>
               <Tabs defaultActiveKey="tasks" className="custom-pill-tabs mb-4 border-0 justify-content-center">
                   
                   <Tab eventKey="tasks" title="My Tasks">
-                      <Card className="android-card bg-transparent shadow-none">
-                          <Card.Body className="p-0">
-                              <h6 className="fw-bold mb-3 px-2 text-dark fs-5">Pending Execution ({pendingTasks.length})</h6>
-                              {pendingTasks.length === 0 ? <div className="text-center text-muted p-5 bg-white rounded-4 shadow-sm border-0">🎉 All clear! No tasks waiting.</div> : (
-                                  <div className="d-flex flex-column gap-3">
+                      <Card className="glass-card shadow-sm border-0 mt-3">
+                          <Card.Body className="p-4">
+                              <h6 className="fw-bold mb-3 text-dark fs-5">Pending Execution ({pendingTasks.length})</h6>
+                              {pendingTasks.length === 0 ? <div className="text-center text-muted p-5 bg-light rounded-4 border-0">🎉 All clear! No tasks waiting.</div> : (
+                                  <Row className="g-3">
                                       {pendingTasks.map((t, i) => (
-                                          <div key={i} className="bg-white p-4 rounded-4 shadow-sm border-start border-5 border-danger d-flex justify-content-between align-items-center">
-                                              <div>
-                                                  <div className="fw-bold text-dark fs-5">{t.site_name}</div>
-                                                  <div className="text-muted mt-1"><CheckSquare size={14} className="me-1"/>{t.tasks?.length || 0} checklist items</div>
+                                          <Col xs={12} lg={6} key={i}>
+                                              <div className="bg-light p-4 rounded-4 shadow-sm border-start border-5 border-danger d-flex justify-content-between align-items-center h-100">
+                                                  <div>
+                                                      <div className="fw-bold text-dark fs-5 mb-1">{t.site_name}</div>
+                                                      <div className="text-muted small d-flex align-items-center"><CheckSquare size={14} className="me-1"/>{t.tasks?.length || 0} items to complete</div>
+                                                  </div>
+                                                  <ChevronRight size={20} className="text-muted"/>
                                               </div>
-                                              <Badge bg="danger" className="rounded-pill px-3 py-2 shadow-sm fs-6">Drive to Site</Badge>
-                                          </div>
+                                          </Col>
                                       ))}
-                                  </div>
+                                  </Row>
                               )}
 
-                              <h6 className="fw-bold mb-3 mt-5 px-2 text-success fs-5">Cleared Today ({completedTasks.length})</h6>
-                              <div className="d-flex flex-column gap-3">
-                                  {completedTasks.length === 0 ? <div className="text-center text-muted p-4">None yet.</div> : (
+                              <h6 className="fw-bold mb-3 mt-5 text-success fs-5">Cleared Today ({completedTasks.length})</h6>
+                              <Row className="g-3">
+                                  {completedTasks.length === 0 ? <Col xs={12}><div className="text-center text-muted p-4 bg-light rounded-4">None yet.</div></Col> : (
                                       completedTasks.map((t, i) => (
-                                          <div key={i} className="bg-white p-4 rounded-4 shadow-sm border-start border-5 border-success d-flex justify-content-between align-items-center opacity-75">
-                                              <div>
-                                                  <div className="fw-bold text-dark text-decoration-line-through fs-5">{t.site_name}</div>
-                                                  <div className="text-muted mt-1">{t.date}</div>
+                                          <Col xs={12} lg={6} key={i}>
+                                              <div className="bg-light p-4 rounded-4 shadow-sm border-start border-5 border-success d-flex justify-content-between align-items-center opacity-75 h-100">
+                                                  <div>
+                                                      <div className="fw-bold text-dark text-decoration-line-through fs-5 mb-1">{t.site_name}</div>
+                                                      <div className="text-muted small">{t.date}</div>
+                                                  </div>
+                                                  <CheckCircle size={28} className="text-success"/>
                                               </div>
-                                              <CheckCircle size={28} className="text-success"/>
-                                          </div>
+                                          </Col>
                                       ))
                                   )}
-                              </div>
+                              </Row>
                           </Card.Body>
                       </Card>
                   </Tab>
                   
                   <Tab eventKey="directory" title="Sites Directory">
-                      <Card className="android-card">
+                      <Card className="glass-card shadow-sm mt-3">
                           <Card.Body className="p-0">
                             <Table hover responsive className="mb-0 align-middle border-0">
                               <tbody>
@@ -781,11 +911,14 @@ const FieldOfficerDashboard = () => {
                                             {site.name} 
                                             {site.hasTaskToday && <Badge bg="danger" className="ms-3 rounded-pill fs-6 px-3"><CheckSquare size={12} className="me-1"/>Task</Badge>}
                                         </div>
-                                        <div className="text-muted mt-2 fw-bold">
+                                        <div className="text-muted mt-2 fw-bold small">
                                             {site.distance !== null && site.distance !== undefined 
                                                 ? (site.distance < 1000 ? `${Math.round(site.distance)}m away` : `${(site.distance / 1000).toFixed(1)}km away`) 
                                                 : 'Calculating distance...'}
                                         </div>
+                                      </td>
+                                      <td className="pe-4 text-end border-0 border-bottom">
+                                        <Button variant="light" className="rounded-circle p-2 shadow-sm"><Navigation size={18} className="text-primary"/></Button>
                                       </td>
                                     </tr>
                                 ))}
@@ -797,6 +930,38 @@ const FieldOfficerDashboard = () => {
                   </Tab>
               </Tabs>
           </div>
+
+          {/* --- NEW MODALS --- */}
+          <Modal show={showAddEmp} onHide={() => setShowAddEmp(false)} size="lg" centered backdrop="static">
+              <Modal.Header closeButton className="border-0"><Modal.Title className="fw-bold fs-5 text-primary ms-2 mt-2">Onboard Direct Staff</Modal.Title></Modal.Header>
+              <Modal.Body className="p-0">
+                  <EmployeeOnboardForm 
+                      locations={locations} 
+                      onCancel={() => setShowAddEmp(false)} 
+                      onSuccess={() => { setShowAddEmp(false); fetchData(); }} 
+                  />
+              </Modal.Body>
+          </Modal>
+
+          <Modal show={showUniformModal} onHide={() => setShowUniformModal(false)} centered backdrop="static">
+              <Modal.Header closeButton className="border-0 bg-primary text-white"><Modal.Title className="fw-bold fs-5 d-flex align-items-center"><Shirt size={20} className="me-2"/> Request Uniform Kit</Modal.Title></Modal.Header>
+              <Modal.Body className="bg-light p-4 rounded-bottom">
+                  <Form onSubmit={handleUniformRequestSubmit}>
+                      <Form.Group className="mb-3">
+                          <Form.Label className="small fw-bold text-muted ps-1">Select Employee</Form.Label>
+                          <Form.Select className="custom-input border-0 shadow-sm fw-bold text-dark" value={uniformReqForm.target_user_id} onChange={(e) => setUniformReqForm({...uniformReqForm, target_user_id: e.target.value})}>
+                              <option value="">Choose your staff member...</option>
+                              {teamMembers.map(m => <option key={m.id} value={m.id}>{m.full_name} ({m.blockchain_id})</option>)}
+                          </Form.Select>
+                      </Form.Group>
+                      <Form.Group className="mb-4">
+                          <Form.Label className="small fw-bold text-muted ps-1">Required Items & Sizes</Form.Label>
+                          <Form.Control as="textarea" rows={3} className="custom-input border-0 shadow-sm" placeholder="e.g. Shirt Size L, Pant Waist 34, Shoes size 9..." value={uniformReqForm.item_details} onChange={(e) => setUniformReqForm({...uniformReqForm, item_details: e.target.value})} required/>
+                      </Form.Group>
+                      <Button type="submit" variant="primary" className="w-100 btn-premium shadow-sm active-scale">Submit Request to Admin</Button>
+                  </Form>
+              </Modal.Body>
+          </Modal>
 
         </Container>
       </div>

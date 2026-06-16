@@ -1,18 +1,19 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { Alert } from 'react-bootstrap'; // Removed ProgressBar
+import { Alert } from 'react-bootstrap';
 import 'bootstrap/dist/css/bootstrap.min.css';
 import './App.css';
 import AOS from 'aos';
 import 'aos/dist/aos.css';
 
 import { Capacitor } from '@capacitor/core';
-// 1. IMPORT THE APP PLUGIN
 import { App as CapacitorApp } from '@capacitor/app';
+import { Browser } from '@capacitor/browser';
 
 import Header from './assets/components/Header';
 import Auth from './assets/components/Auth'; 
 import AdminDashboard from './assets/components/AdminDashboard'; 
+import HrDashboard from './assets/components/HrDashboard'; 
 import UserDashboard from './assets/components/UserDashboard'; 
 import ManagerDashboard from './assets/components/ManagerDashboard'; 
 import FieldOfficerDashboard from './assets/components/FieldOfficerDashboard'; 
@@ -40,25 +41,17 @@ function AppContent() {
 
     const checkLiveUpdates = async () => {
       if (Capacitor.isNativePlatform()) {
-        try {
-          // 2. FETCH WITH NO-STORE TO PREVENT CACHING
-          const response = await fetch('https://lizza-facility-management.vercel.app/updates/version.json', { cache: 'no-store' });
-          const latestUpdate = await response.json();
-          
-          // 3. READ THE REAL VERSION FROM ANDROID
-          const appInfo = await CapacitorApp.getInfo();
-          const currentVersion = appInfo.version;
-
-          // 4. COMPARE AND PROMPT
-          if (latestUpdate.version !== currentVersion) {
-            const shouldUpdate = window.confirm(`A new version (${latestUpdate.version}) is available! Click OK to download the update.`);
-            if (shouldUpdate) {
-              // Ensure this matches the key in your version.json (using .url here)
-              window.open(latestUpdate.url, '_system'); 
+        const response = await fetch('https://lizza-facility-management.vercel.app/updates/version.json', { cache: 'no-store' });
+        if (response.ok) {
+            const latestUpdate = await response.json();
+            const appInfo = await CapacitorApp.getInfo();
+            const currentVersion = appInfo.version;
+            if (latestUpdate.version !== currentVersion) {
+              const shouldUpdate = window.confirm(`Update ${latestUpdate.version} is available! Click OK to download the new version.`);
+              if (shouldUpdate) {
+                await Browser.open({ url: latestUpdate.url });
+              }
             }
-          }
-        } catch (error) {
-          console.error("Update check failed:", error);
         }
       }
     };
@@ -79,9 +72,12 @@ function AppContent() {
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/auth" element={<Auth />} />
           <Route path="/dashboard" element={<PrivateRoute><UserDashboard /></PrivateRoute>} />
+          
           <Route path="/manager" element={<RoleRoute allowedRoles={['manager']}><ManagerDashboard /></RoleRoute>} />
           <Route path="/field-operations" element={<RoleRoute allowedRoles={['field_officer']}><FieldOfficerDashboard /></RoleRoute>} />
+          
           <Route path="/admin" element={<RoleRoute allowedRoles={['admin']}><AdminDashboard /></RoleRoute>} />
+          <Route path="/hr-panel" element={<RoleRoute allowedRoles={['hr']}><HrDashboard /></RoleRoute>} />
         </Routes>
       </div>
       <Footer />
