@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom'; 
 import { Container, Row, Col, Card, Spinner, Button, Alert, Badge } from 'react-bootstrap';
-import { ShieldCheck, MapPin, MapIcon, AlertTriangle, KeyRound, EyeOff, WifiOff, RefreshCw } from 'lucide-react';
+// Added LogIn and LogOut to the imports here
+import { ShieldCheck, MapPin, MapIcon, AlertTriangle, KeyRound, EyeOff, WifiOff, RefreshCw, LogIn, LogOut } from 'lucide-react';
 import { Capacitor } from '@capacitor/core';
 import { useUser } from './UserContext'; 
 import { LocalNotifications } from '@capacitor/local-notifications';
@@ -55,7 +56,9 @@ const UserDashboard = () => {
 
   const [actionLoading, setActionLoading] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
-  const [pendingSyncCount, setPendingSyncCount] = useState(0);
+  
+  // FIXED: Restored pendingOfflineActions state
+  const [pendingOfflineActions, setPendingOfflineActions] = useState(0);
   
   const userEmail = localStorage.getItem('userEmail');
   const checkedInRef = useRef(checkedIn);
@@ -65,11 +68,12 @@ const UserDashboard = () => {
   useEffect(() => { checkedInRef.current = checkedIn; }, [checkedIn]);
   useEffect(() => { currentSiteRef.current = currentSite; }, [currentSite]);
 
-  const updatePendingCount = useCallback(() => {
+  // FIXED: Renamed to match the variable
+  const updateQueueCounts = useCallback(() => {
     if (!isApp) return; 
     const pings = JSON.parse(localStorage.getItem('offlineLocations') || '[]');
     const actions = JSON.parse(localStorage.getItem('offlineAttendanceQueue') || '[]');
-    setPendingSyncCount(pings.length + actions.length);
+    setPendingOfflineActions(pings.length + actions.length);
   }, []);
 
   const fetchData = useCallback(async () => {
@@ -136,9 +140,9 @@ const UserDashboard = () => {
     }
     
     localStorage.setItem('offlineAttendanceQueue', JSON.stringify(failedActions));
-    updatePendingCount();
+    updateQueueCounts();
     fetchData();
-  }, [isOnline, userEmail, fetchData, updatePendingCount]);
+  }, [isOnline, userEmail, fetchData, updateQueueCounts]);
 
   useEffect(() => {
     const handleOnline = () => { setIsOnline(true); if (isApp) processOfflineQueues(); };
@@ -148,16 +152,17 @@ const UserDashboard = () => {
     window.addEventListener('offline', handleOffline);
     
     fetchData(); 
-    if (isApp) { updatePendingCount(); if (navigator.onLine) processOfflineQueues(); }
+    if (isApp) { updateQueueCounts(); if (navigator.onLine) processOfflineQueues(); }
 
     return () => { window.removeEventListener('online', handleOnline); window.removeEventListener('offline', handleOffline); };
-  }, [processOfflineQueues, updatePendingCount, fetchData]);
+  }, [processOfflineQueues, updateQueueCounts, fetchData]);
 
   useEffect(() => {
     if (!contextLoading && contextUser) {
       if (contextUser.user_type === 'field_officer') return navigate('/field-operations', { replace: true });
       if (contextUser.user_type === 'manager') return navigate('/manager', { replace: true });
       if (contextUser.user_type === 'admin') return navigate('/admin', { replace: true });
+      if (contextUser.user_type === 'hr') return navigate('/hr-panel', { replace: true });
       setDbUser(contextUser); 
       setLoading(false); 
     } else if (!contextLoading && !contextUser) {
@@ -199,7 +204,7 @@ const UserDashboard = () => {
                 localStorage.removeItem('local_current_site');
             }
             setStatus({ type: 'warning', msg: `Offline ${actionType === 'CHECK_IN' ? 'Check-In' : 'Check-Out'} queued`, code: 'offline' });
-            updatePendingCount();
+            updateQueueCounts();
         }
     } else {
         const endpoint = actionType === 'CHECK_IN' ? '/api/user/checkin' : '/api/user/checkout';
@@ -264,10 +269,12 @@ const UserDashboard = () => {
             const { latitude: lat, longitude: lon } = position.coords;
             const separationDistance = calculateDistance(lat, lon, currentSiteRef.current.lat, currentSiteRef.current.lon);
             
-            // Check if user has breached the 50-meter outer perimeter threshold
-            if (separationDistance > (currentSiteRef.current.radius || 200) + 50) {
+            const activeRadius = currentSiteRef.current.radius || 200;
+            const checkoutThreshold = activeRadius + 30; // +30 meter buffer outside the perimeter
+            
+            if (separationDistance > checkoutThreshold) {
                 handleAction('CHECK_OUT', currentSiteRef.current, lat, lon);
-                triggerNotification("Auto Checkout Activated", `Left perimeter of ${currentSiteRef.current.name}.`);
+                triggerNotification("Auto Checkout Activated", `Exceeded ${checkoutThreshold}m perimeter of ${currentSiteRef.current.name}.`);
             }
         },
         () => {},
@@ -283,76 +290,108 @@ const UserDashboard = () => {
 
   if (loading || contextLoading) return <div className="text-center py-5"><Spinner animation="border" variant="danger" /></div>;
 
+  // Extract first name for greeting
+  const rawName = dbUser?.full_name || userEmail;
+  const displayName = rawName ? rawName.split('@')[0].split('.')[0].charAt(0).toUpperCase() + rawName.split('@')[0].split('.')[0].slice(1) : "Staff";
+
   return (
-    <Container className="py-5">
-      <Row className="justify-content-center">
-        <Col md={8} lg={6}>
-          <Card className={`border-0 shadow-lg overflow-hidden ${status.code === 'warning' ? 'border-danger border-5' : ''}`}>
-            
-            {!isOnline && isApp && (
-                <div className="bg-warning text-dark text-center py-2 small fw-bold d-flex align-items-center justify-content-center">
-                    <WifiOff size={16} className="me-2" /> Offline Mode Active - {pendingSyncCount} pending syncs
-                </div>
-            )}
+    <>
+      <style>
+        {`
+          .mobile-ui-container { background-color: #f8fafc; min-height: 100vh; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; overflow-x: hidden; padding-bottom: 40px; }
+          .glass-card { background: #ffffff; border-radius: 24px; border: none; box-shadow: 0 8px 24px rgba(149, 157, 165, 0.08); overflow: hidden; margin-bottom: 24px; transition: transform 0.2s, box-shadow 0.2s; }
+          .active-scale:active { transform: scale(0.96); transition: transform 0.1s; }
+          .fade-in { animation: fadeInAnim 0.6s ease-in-out forwards; }
+          @keyframes fadeInAnim { from { opacity: 0; } to { opacity: 1; } }
+          .slide-up { animation: slideUpAnim 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards; opacity: 0; }
+          @keyframes slideUpAnim { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+          .btn-premium { border-radius: 100px; padding: 16px 28px; font-weight: 600; font-size: 16px; transition: all 0.2s; }
+        `}
+      </style>
 
-            <div className={`p-4 text-white text-center position-relative ${status.code === 'warning' ? 'bg-danger' : status.code === 'off_duty' ? 'bg-secondary' : 'bg-dark'}`}>
-              <Button variant="outline-light" size="sm" className="position-absolute top-0 end-0 m-3 d-flex align-items-center" onClick={() => setShowPassModal(true)}><KeyRound size={14} className="me-1" /> Security</Button>
-              <h2 className="fw-bold mb-1 mt-3">Shift Duty Status</h2>
-              <Badge bg="light" text="dark" className="p-2 px-3 mb-2 shadow-sm"><ShieldCheck size={14} className="me-1" /> ID: {dbUser?.blockchain_id || "PENDING"}</Badge>
+      <div className="mobile-ui-container pt-4 fade-in">
+        <Container fluid="xl" className="px-3 px-md-4">
+          
+          <div className="d-flex justify-content-between align-items-center mb-4 px-2">
+            <div>
+              <h4 className="fw-bold m-0 text-dark">Welcome, {displayName}</h4>
+              <p className="text-muted small mb-0">{new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
             </div>
-            
-            <Card.Body className="p-4 text-center">
-              <div className="d-flex justify-content-between align-items-center mb-3">
-                  <span className="small fw-bold text-muted">Sync Protocol</span>
-                  <Button variant="light" size="sm" className="rounded-pill shadow-sm" onClick={fetchData} disabled={isSyncing}>
-                      <RefreshCw size={14} className={isSyncing ? "text-muted" : "text-primary"} /> Refresh
-                  </Button>
-              </div>
+            <Button variant="light" size="sm" className="rounded-circle shadow-sm p-2 active-scale" onClick={fetchData} disabled={isSyncing}>
+               <RefreshCw size={20} className={isSyncing ? "text-muted" : "text-primary"} />
+            </Button>
+          </div>
 
-              {isSyncing ? (
-                  <div className="py-4">
-                      <Spinner animation="border" variant="primary" className="mb-2"/>
-                      <div className="text-muted fw-bold">Syncing Profile State...</div>
-                  </div>
-              ) : (
-                  <>
-                      <Alert variant={status.type} className="mb-4 small fw-bold py-3 text-start d-flex align-items-center justify-content-between flex-wrap">
-                        <div className="d-flex align-items-center mb-2 mb-md-0">
-                            {status.code === 'warning' || status.code === 'offline' ? <AlertTriangle size={18} className="me-2" /> : 
-                             status.code === 'off_duty' ? <EyeOff size={18} className="me-2 text-secondary" /> : 
-                             <MapIcon size={18} className="me-2" />} 
-                            {status.msg}
-                        </div>
-                      </Alert>
-
-                      <div className="p-3 bg-light rounded-3 border mb-4 text-start">
-                        <p className="small text-muted mb-2">Current Assigned Site</p>
-                        <div className="fw-bold">{currentSite ? currentSite.name : 'Awaiting 30-min Auto Ping or Manual Entry'}</div>
-                      </div>
-
-                      <div className="p-3 bg-light rounded-3 border mb-4">
-                        <p className="small text-muted mb-2">Duty Status</p>
-                        <div className="d-flex align-items-center justify-content-center gap-2">
-                          <div className={`rounded-circle ${dutyDotClass}`} style={{width: 10, height: 10}}></div>
-                          <span className="fw-bold">{dutyLabel}</span>
-                        </div>
-                      </div>
-
-                      <div className="d-flex gap-2 mb-3">
-                        <Button variant="success" className="fw-bold flex-fill d-flex align-items-center justify-content-center" onClick={() => handleManualAction('CHECK_IN')} disabled={checkedIn || actionLoading}>
-                          {actionLoading && <Spinner animation="border" size="sm" className="me-2" />}<MapPin size={16} className="me-2" />{checkedIn ? 'Checked In' : 'Force Check-In'}
-                        </Button>
-                        <Button variant="outline-danger" className="fw-bold flex-fill d-flex align-items-center justify-content-center" onClick={() => handleManualAction('CHECK_OUT')} disabled={!checkedIn || actionLoading}>
-                          {actionLoading && <Spinner animation="border" size="sm" className="me-2" /> }Force Check-Out
-                        </Button>
-                      </div>
-                  </>
+          <Row className="justify-content-center">
+            <Col xs={12} md={8} lg={6} className="slide-up" style={{animationDelay: '0.1s'}}>
+              
+              {(!isOnline || pendingOfflineActions > 0) && isApp && (
+                  <Alert variant="warning" className="d-flex justify-content-between align-items-center mb-3 py-3 shadow-sm rounded-4 small fw-bold border-0">
+                      <span className="d-flex align-items-center">
+                          {isOnline ? <RefreshCw size={18} className="me-2 text-warning" /> : <WifiOff size={18} className="me-2 text-danger" />}
+                          {isOnline ? 'Syncing Data...' : 'Offline Mode Active'}
+                      </span>
+                      <Badge bg="danger" className="rounded-pill px-3 py-2">{pendingOfflineActions} pending</Badge>
+                  </Alert>
               )}
-            </Card.Body>
-          </Card>
-        </Col>
-      </Row>
-    </Container>
+
+              <Card className={`glass-card ${status.code === 'warning' ? 'border border-danger border-2' : ''}`}>
+                <div className={`p-4 text-white text-center position-relative ${status.code === 'warning' ? 'bg-danger' : isOnDuty ? 'bg-success' : 'bg-dark'}`} style={{ transition: 'background-color 0.3s ease' }}>
+                  <Badge bg="light" text="dark" className="position-absolute top-0 start-0 m-3 p-2 px-3 shadow-sm rounded-pill d-flex align-items-center"><ShieldCheck size={14} className="me-1" /> ID: {dbUser?.blockchain_id || "PENDING"}</Badge>
+                  <h3 className="fw-bold mb-1 mt-4 pt-3">Field Attendance</h3>
+                  <div className="opacity-75 small">Secure Perimeter Access</div>
+                </div>
+                
+                <Card.Body className="p-4 p-md-5 text-center">
+                  
+                  {isSyncing ? (
+                      <div className="py-5">
+                          <Spinner animation="grow" variant="primary" className="mb-3"/>
+                          <div className="text-primary fw-bold">Synchronizing Perimeter...</div>
+                      </div>
+                  ) : (
+                      <>
+                          <Alert variant={status.type === 'secondary' ? 'light' : status.type} className="mb-4 small fw-bold py-3 text-start d-flex align-items-center rounded-4 border">
+                            {status.code === 'warning' || status.code === 'offline' ? <AlertTriangle size={20} className="me-2" /> : 
+                             status.code === 'off_duty' ? <EyeOff size={20} className="me-2 text-muted" /> : 
+                             <MapIcon size={20} className="me-2" />} 
+                            {status.msg}
+                          </Alert>
+
+                          <div className="bg-light p-4 rounded-4 mb-4 border text-start shadow-sm">
+                            <span className="small text-muted d-block mb-1 text-uppercase fw-bold tracking-wide" style={{fontSize: '11px'}}>Current Active Site</span>
+                            <div className="fw-bolder fs-5 text-dark">{currentSite ? currentSite.name : 'Awaiting GPS Auto-Ping'}</div>
+                          </div>
+
+                          <div className="bg-light p-4 rounded-4 mb-5 border shadow-sm">
+                            <span className="small text-muted d-block mb-2 text-uppercase fw-bold tracking-wide" style={{fontSize: '11px'}}>Tracking Status</span>
+                            <div className="d-flex align-items-center justify-content-center">
+                              <div className={`rounded-circle ${dutyDotClass} me-2`} style={{width: 10, height: 10}}></div>
+                              <span className={`fw-bolder fs-5 ${isOnDuty ? 'text-success' : 'text-secondary'}`}>{dutyLabel}</span>
+                            </div>
+                          </div>
+
+                          <div className="d-flex flex-column gap-3">
+                            <Button variant={checkedIn ? "light" : "primary"} className={`btn-premium shadow-sm w-100 d-flex align-items-center justify-content-center active-scale ${checkedIn ? 'text-muted border' : ''}`} onClick={() => handleManualAction('CHECK_IN')} disabled={checkedIn || actionLoading}>
+                              {actionLoading && !checkedIn ? <Spinner animation="border" size="sm" className="me-2" /> : <LogIn size={20} className="me-2" />}
+                              {checkedIn ? 'Check-In Confirmed' : 'Force Entry Scan'}
+                            </Button>
+                            
+                            <Button variant={!checkedIn ? "light" : "danger"} className={`btn-premium shadow-sm w-100 d-flex align-items-center justify-content-center active-scale ${!checkedIn ? 'text-muted border' : ''}`} onClick={() => handleManualAction('CHECK_OUT')} disabled={!checkedIn || actionLoading}>
+                              {actionLoading && checkedIn ? <Spinner animation="border" size="sm" className="me-2" /> : <LogOut size={20} className="me-2" />}
+                              {!checkedIn ? 'Check-Out Locked' : 'Conclude Duty & Exit'}
+                            </Button>
+                          </div>
+                      </>
+                  )}
+                </Card.Body>
+              </Card>
+            </Col>
+          </Row>
+        </Container>
+      </div>
+    </>
   );
 };
+
 export default UserDashboard;
