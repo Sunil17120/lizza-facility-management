@@ -15,13 +15,14 @@ import cv2
 import numpy as np
 import zlib
 import zxingcpp
+import hmac
 from fastapi.middleware.cors import CORSMiddleware
 from upstash_redis import Redis as UpstashRedis
 import firebase_admin
 from firebase_admin import credentials, messaging
 from staticmap import StaticMap, Line
 
-from database import engine, SessionLocal, User, EmployeeLocation, OfficeLocation, SiteVisit, SiteStay, ShiftLog, FieldOfficerRoute, Attendance, TaskAssignment, UniformInventory, UniformIssueLog, UniformRequest, init_db, cipher
+from database import engine, SessionLocal, User, EmployeeLocation, OfficeLocation, SiteVisit, SiteStay, ShiftLog, FieldOfficerRoute, Attendance, TaskAssignment, UniformInventory, UniformIssueLog, UniformRequest,FERNET_KEY, PEPPER, init_db, cipher
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
@@ -108,8 +109,45 @@ def get_site_at_location(lat, lon, r_client, db):
     return None
 
 def safe_decrypt(encrypted_data: str) -> str:
-    if not encrypted_data or str(encrypted_data).strip() == "" or encrypted_data in ["null", "undefined"]: return "N/A"
-    return cipher.decrypt(str(encrypted_data).encode()).decode()
+    if not encrypted_data: return "N/A"
+    
+    enc_str = str(encrypted_data).strip()
+    if enc_str in ["", "null", "undefined", "N/A", "None"]: return "N/A"
+    
+    if not enc_str.startswith("gAAAAA"): return enc_str
+    
+    # 1. Ensure the string is correctly padded for Base64 decoding
+    pad_len = len(enc_str) % 4
+    if pad_len > 0: enc_str += "=" * (4 - pad_len)
+    
+    # 2. Check for valid Base64 characters
+    valid_chars = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_=")
+    if not set(enc_str).issubset(valid_chars): return "[Data Locked: Invalid Format]"
+    
+    # 3. Decode the raw bytes
+    try_decode = base64.urlsafe_b64decode(enc_str.encode())
+    
+    # 4. A valid Fernet token must be at least 73 bytes
+    # (1 byte version + 8 bytes timestamp + 16 bytes IV + 16 bytes min ciphertext + 32 bytes HMAC)
+    if len(try_decode) < 73: return "[Data Locked: Invalid Length]"
+    
+    # 5. Extract the signature (last 32 bytes) and the message payload (everything else)
+    msg = try_decode[:-32]
+    provided_signature = try_decode[-32:]
+    
+    # 6. Extract the signing key from the current FERNET_KEY
+    key_bytes = base64.urlsafe_b64decode(FERNET_KEY)
+    sign_key = key_bytes[:16] # First 16 bytes are for signing
+    
+    # 7. Generate what the signature SHOULD be if the key is correct
+    expected_signature = hmac.new(sign_key, msg, hashlib.sha256).digest()
+    
+    # 8. Compare them safely. If they do not match, the key on the server changed.
+    if not hmac.compare_digest(expected_signature, provided_signature):
+        return "[Data Locked: Key Mismatch]"
+        
+    # Only if the math is perfect do we allow Fernet to run
+    return cipher.decrypt(encrypted_data.encode()).decode()
 
 def safe_encrypt(data: str) -> str:
     if not data or str(data).strip() == "" or data == "null" or data == "undefined": return None
@@ -1252,6 +1290,21 @@ def admin_approve_uniform(req_id: int, db: Session = Depends(get_db)):
 def fo_onboard_stats(email: str, db: Session = Depends(get_db)):
     count = db.query(User).filter(User.onboarded_by_email == email).count()
     return {"onboarded_count": count}
+@app.get("/api/hr/issued-uniforms")
+def get_issued_uniforms(db: Session = Depends(get_db)):
+    # Fetch all dispatch logs ordered by the newest first
+    logs = db.query(UniformIssueLog).order_by(UniformIssueLog.issued_at.desc()).all()
+    
+    return [
+        {
+            "id": log.id,
+            "user_id": log.user_id,
+            "item_category": log.item_category,
+            "size_issued": log.size_issued,
+            "issued_at": log.issued_at.isoformat() + "Z" if log.issued_at else None,
+            "issued_by": log.issued_by
+        } for log in logs
+    ]
 
 if __name__ == "__main__":
     uvicorn.run("index:app", host="0.0.0.0", port=7860)
