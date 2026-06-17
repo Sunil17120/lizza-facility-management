@@ -542,7 +542,7 @@ const AdminDashboard = () => {
               .logo-header .company-name { font-size: 18px; font-weight: bold; color: #e31e24; vertical-align: middle; display: inline-block; }
               h2 { text-align: center; color: #f50808; text-transform: uppercase; margin-bottom: 5px; }
               .flex-row { display: flex; justify-content: space-between; align-items: flex-start; }
-              .photo { width: 140px; height: 140px; border-radius: 8px; object-fit: cover; border: 2px solid #0d6efd; }
+              .photo { width: 140px; height: 140px; border-radius: 8px; object-fit: cover; border: 2px solid #fd0d0d; }
               .details { flex-grow: 1; padding-left: 25px; }
               table { width: 100%; border-collapse: collapse; margin-top: 5px; margin-bottom: 15px; }
               td, th { padding: 8px 12px; border: 1px solid #dee2e6; text-align: left; }
@@ -687,10 +687,10 @@ const AdminDashboard = () => {
           @keyframes slideUpAnim { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
           .custom-pill-tabs { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 10px; border-bottom: none; gap: 8px; }
           .custom-pill-tabs::-webkit-scrollbar { display: none; }
-          .custom-pill-tabs .nav-link { border-radius: 20px; color: #64748b; font-weight: 600; padding: 12px 24px; background: #f1f5f9; border: none; white-space: nowrap; transition: all 0.2s ease; }
-          .custom-pill-tabs .nav-link.active { background: #f31212; color: white; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3); }
+          .custom-pill-tabs .nav-link { border-radius: 20px; color: #f0f5fc; font-weight: 600; padding: 12px 24px; background: #f1f5f9; border: none; white-space: nowrap; transition: all 0.2s ease; }
+          .custom-pill-tabs .nav-link.active { background: #f31212; color: white; box-shadow: 0 4px 12px rgba(246, 59, 59, 0.3); }
           .custom-input { border-radius: 12px; background-color: #f8fafc; border: 1.5px solid #e2e8f0; padding: 12px 16px; font-size: 14px; transition: all 0.2s; }
-          .custom-input:focus { background-color: #fff; border-color: #f31010; box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1); outline: none; }
+          .custom-input:focus { background-color: #fff; border-color: #f31010; box-shadow: 0 0 0 4px rgba(249, 3, 40, 0.1); outline: none; }
           .stat-widget { background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border-radius: 20px; padding: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.03); border: 1px solid #e2e8f0; }
         `}
       </style>

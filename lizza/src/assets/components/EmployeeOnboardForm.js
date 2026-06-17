@@ -295,10 +295,10 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
           @keyframes fadeInAnim { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
           
           .custom-input { border-radius: 12px; background-color: #f8fafc; border: 1.5px solid #e2e8f0; padding: 12px 16px; font-size: 15px; color: #1e293b; transition: all 0.2s; }
-          .custom-input:focus { background-color: #fff; border-color: #3b82f6; box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1); outline: none; }
+          .custom-input:focus { background-color: #fff; border-color: #f30c0c; box-shadow: 0 0 0 4px rgba(245, 16, 16, 0.1); outline: none; }
           
           .file-upload-wrapper { position: relative; border: 2px dashed #cbd5e1; border-radius: 16px; padding: 24px 16px; text-align: center; background: #f8fafc; transition: all 0.2s; cursor: pointer; }
-          .file-upload-wrapper:hover { border-color: #3b82f6; background: #eff6ff; }
+          .file-upload-wrapper:hover { border-color: #e80c0c; background: #eff6ff; }
           .file-upload-wrapper input[type="file"] { position: absolute; top: 0; left: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
           
           .btn-premium { border-radius: 100px; padding: 14px 28px; font-weight: 600; font-size: 15px; transition: all 0.2s; }
