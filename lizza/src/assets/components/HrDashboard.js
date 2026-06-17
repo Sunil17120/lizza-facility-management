@@ -382,10 +382,10 @@ const HrDashboard = () => {
             .custom-pill-tabs { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 10px; border-bottom: none; gap: 8px; }
             .custom-pill-tabs::-webkit-scrollbar { display: none; }
             .custom-pill-tabs .nav-link { border-radius: 20px; color: #64748b; font-weight: 600; padding: 12px 24px; background: #f1f5f9; border: none; white-space: nowrap; transition: all 0.2s ease; }
-            .custom-pill-tabs .nav-link.active { background: #3b82f6; color: white; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3); }
+            .custom-pill-tabs .nav-link.active { background: #f40808; color: white; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3); }
             
             .custom-input { border-radius: 12px; background-color: #f8fafc; border: 1.5px solid #e2e8f0; padding: 12px 16px; font-size: 16px; transition: all 0.2s; }
-            .custom-input:focus { background-color: #fff; border-color: #3b82f6; box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1); outline: none; }
+            .custom-input:focus { background-color: #fff; border-color: #f31313; box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1); outline: none; }
             `}
         </style>
 
