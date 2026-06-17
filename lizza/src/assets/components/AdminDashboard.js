@@ -58,6 +58,19 @@ const parseReferencesJSON = (jsonStr) => {
     return [];
 };
 
+// Formats raw JSON remark strings into readable text for the UI
+const formatRemarks = (remarksStr) => {
+    if (!remarksStr) return 'No remarks';
+    if (remarksStr.startsWith('[')) {
+        const parsed = safeParseJSON(remarksStr);
+        if (parsed.length > 0) {
+            const combined = parsed.map(item => item?.details).filter(Boolean).join(' | ');
+            return combined || 'No remarks';
+        }
+    }
+    return remarksStr;
+};
+
 const API_BASE_URL = "https://sunil0034-lizza-facility-backend.hf.space";
 
 const AdminDashboard = () => {
@@ -205,7 +218,6 @@ const AdminDashboard = () => {
     fetchAttendanceData();
   }, [fetchAttendanceData]);
 
-  // --- REPLACED AUTO-REFRESH WITH SMART WINDOW FOCUS LISTENER ---
   useEffect(() => {
     const handleVisibilityChange = async () => {
       if (document.visibilityState === 'visible') {
@@ -222,7 +234,6 @@ const AdminDashboard = () => {
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
   }, [mainTab, adminEmail, fetchAttendanceData, fetchReportsData]);
-  // --------------------------------------------------------------
 
   const handleInlineSave = async (emp) => {
     const res = await fetch(`${API_BASE_URL}/api/admin/update-employee-inline`, {
@@ -381,7 +392,7 @@ const AdminDashboard = () => {
           <td>${r.exit_time || 'N/A'}</td>
           <td>${r.duration || 'N/A'}</td>
           <td>${r.purpose || 'N/A'}</td>
-          <td>${r.remarks || ''}</td>
+          <td>${formatRemarks(r.remarks)}</td>
           ${withPhotos ? `<td style="height: 130px; text-align: center; vertical-align: middle;">${imgTag}</td>` : ''}
         </tr>
       `;
@@ -541,13 +552,21 @@ const AdminDashboard = () => {
               .doc-title { font-size: 14px; color: #555; margin-bottom: 10px; text-transform: uppercase; border-bottom: 1px dashed #eee; padding-bottom: 5px; }
               .doc-img { max-width: 100%; max-height: 450px; border: 1px solid #ccc; border-radius: 4px; padding: 5px; object-fit: contain; }
               .text-muted { color: #6c757d; font-style: italic; }
+              .terms-box { font-size: 12px; background-color: #f8f9fa; padding: 15px; border: 1px solid #dee2e6; margin-bottom: 20px; }
+              .mobile-back-btn { background: #e31e24; color: white; border: none; padding: 16px 32px; font-size: 18px; border-radius: 50px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 12px rgba(227,30,36,0.3); margin-top: 20px; }
               @media print {
-                  .doc-section, table { page-break-inside: avoid; }
+                  .doc-section, table, .terms-box { page-break-inside: avoid; }
                   body { padding: 0; }
-                  .no-print { display: none; }
+                  .no-print { display: none !important; }
               }
             </style>
           </head><body>
+            <div class="no-print" style="text-align: center; padding: 15px; background: #fff3f3; border-bottom: 2px solid #e31e24; margin-bottom: 20px;">
+                <h4 style="color: #e31e24; margin: 0 0 10px 0;">PDF Document Generator</h4>
+                <p style="margin: 0 0 15px 0;">The print dialog should open automatically. If you are on a mobile device and this window does not close automatically, tap the button below.</p>
+                <button class="mobile-back-btn" onclick="window.close(); window.history.back();">← Close & Return to Dashboard</button>
+            </div>
+
             <div class="logo-header">
               <img src="${logoImg}" alt="Company Logo" />
               <span class="company-name">LIZZA FACILITY MANAGEMENT</span>
@@ -631,9 +650,15 @@ const AdminDashboard = () => {
             <h3 class="section-header" style="text-align:center; background-color:#0f172a; color:white; padding:12px; border-radius: 8px;">APPENDIX: OFFICIAL DOCUMENTS & EVIDENCE</h3>
             ${docsHtml || '<p style="text-align: center; color: #94a3b8; margin-top: 30px;">No documents uploaded to this profile.</p>'}
             
+            <div class="no-print" style="text-align: center; margin: 40px 0; padding: 20px;">
+                <button class="mobile-back-btn" onclick="window.close(); window.history.back();">← Return to Dashboard</button>
+            </div>
+
             <script>
               window.onload = function() {
-                  setTimeout(() => { window.print(); window.close(); }, 1500);
+                  setTimeout(() => { 
+                      window.print(); 
+                  }, 1200);
               };
             </script>
           </body></html>
@@ -1051,7 +1076,7 @@ const AdminDashboard = () => {
                                                                 <td className="border-bottom">
                                                                     <div className="fw-bold text-primary">{report.site_name}</div>
                                                                     <div className="small fw-bold text-dark mt-1">Purpose: {report.purpose}</div>
-                                                                    <div className="text-muted small mt-1">{report.remarks || 'No remarks'}</div>
+                                                                    <div className="text-muted small mt-1">{formatRemarks(report.remarks)}</div>
                                                                 </td>
                                                                 <td className="border-bottom">
                                                                     <div className="small"><strong className="text-success">In:</strong> {report.entry_time}</div>
