@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Table, Form, Container, Card, Spinner, Button, Row, Col, Modal, Badge, Tabs, Tab, Alert } from 'react-bootstrap';
-import { UserCog, Building2, MapPin, Trash2, Users, UserCheck, Save, Search, Plus, Edit2, FileText, Eye, CheckCircle, Phone, Crosshair, Navigation, Map as MapIcon, CheckSquare, Shirt, RefreshCw, Filter, Calendar, Download, Image as ImageIcon, AlertTriangle,ShieldAlert } from 'lucide-react';
+import { UserCog, Building2, MapPin, Trash2, Users, UserCheck, Save, Search, Plus, Edit2, FileText, Eye, CheckCircle, Phone, Crosshair, Navigation, Map as MapIcon, CheckSquare, Shirt, RefreshCw, Filter, Calendar, Download, Image as ImageIcon, AlertTriangle, ShieldAlert } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from 'react-leaflet';
 import EmployeeOnboardForm from './EmployeeOnboardForm';
 import ShiftRouteMap from './ShiftRouteMap';
@@ -88,16 +88,13 @@ const AdminDashboard = () => {
   const [routeViewerUserId, setRouteViewerUserId] = useState(null);
   const [routeViewerName, setRouteViewerName] = useState("");
   
-  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
-
-  // --- Task & Uniforms ---
   const [allTasks, setAllTasks] = useState([]);
   const [newTaskForm, setNewTaskForm] = useState({ officer_id: '', location_id: '', assigned_date: '', tasks: [{ id: Date.now(), description: '' }] });
   const [viewingTask, setViewingTask] = useState(null);
   const [taskSubmitting, setTaskSubmitting] = useState(false);
+  
   const [adhocReqs, setAdhocReqs] = useState([]);
 
-  // --- Reports & Analytics ---
   const [reportMonth, setReportMonth] = useState(new Date().getMonth() + 1);
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
   const [reportStartDate, setReportStartDate] = useState('');
@@ -148,16 +145,6 @@ const AdminDashboard = () => {
   }, [adminEmail]);
 
   useEffect(() => { fetchBaseData(); }, [fetchBaseData]);
-
-  useEffect(() => {
-    if (mainTab !== 'overview' || !autoRefreshEnabled) return;
-    const interval = setInterval(async () => {
-        const res = await fetch(`${API_BASE_URL}/api/admin/live-tracking?admin_email=${adminEmail}`);
-        if (res.ok) setLiveLocations(await res.json());
-        else setLiveLocations([]);
-    }, 15000); 
-    return () => clearInterval(interval);
-  }, [mainTab, autoRefreshEnabled, adminEmail]);
 
   const fetchReportsData = useCallback(async () => {
     if (mainTab !== 'reports') return;
@@ -218,14 +205,24 @@ const AdminDashboard = () => {
     fetchAttendanceData();
   }, [fetchAttendanceData]);
 
+  // --- REPLACED AUTO-REFRESH WITH SMART WINDOW FOCUS LISTENER ---
   useEffect(() => {
-    if (mainTab !== 'reports' || !autoRefreshEnabled) return;
-    const refreshInterval = setInterval(() => {
-      if (reportsSubTab === 'attendance') fetchAttendanceData();
-      if (reportsSubTab === 'site-visits') fetchReportsData();
-    }, 10000); 
-    return () => clearInterval(refreshInterval);
-  }, [fetchAttendanceData, fetchReportsData, mainTab, reportsSubTab, autoRefreshEnabled]);
+    const handleVisibilityChange = async () => {
+      if (document.visibilityState === 'visible') {
+        if (mainTab === 'overview') {
+            const res = await fetch(`${API_BASE_URL}/api/admin/live-tracking?admin_email=${adminEmail}`);
+            if (res.ok) setLiveLocations(await res.json());
+        }
+        if (mainTab === 'reports') {
+            fetchAttendanceData();
+            fetchReportsData();
+        }
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, [mainTab, adminEmail, fetchAttendanceData, fetchReportsData]);
+  // --------------------------------------------------------------
 
   const handleInlineSave = async (emp) => {
     const res = await fetch(`${API_BASE_URL}/api/admin/update-employee-inline`, {
@@ -590,7 +587,7 @@ const AdminDashboard = () => {
 
             <h3 class="section-header">3. Address Information</h3>
             <table>
-              <tr><th colspan="2" style="text-align:center; background-color:#e9ecef;">Permanent Address</th><th colspan="2" style="text-align:center; background-color:#e9ecef;">Temporary Address</th></tr>
+              <tr><th colspan="2" style="text-align:center; background-color:#e2e8f0; color:#0f172a;">Permanent Address</th><th colspan="2" style="text-align:center; background-color:#e2e8f0; color:#0f172a;">Temporary Address</th></tr>
               <tr>
                   <th style="width:15%;">Address</th><td style="width:35%;">${emp?.perm_address || 'N/A'}</td>
                   <th style="width:15%;">Address</th><td style="width:35%;">${emp?.temp_address || 'N/A'}</td>
@@ -631,7 +628,7 @@ const AdminDashboard = () => {
             ${refHtml}
 
             <div style="page-break-before: always;"></div>
-            <h3 class="section-header" style="text-align:center; background-color:#333; color:white; padding:12px; border-radius: 8px;">APPENDIX: OFFICIAL DOCUMENTS & EVIDENCE</h3>
+            <h3 class="section-header" style="text-align:center; background-color:#0f172a; color:white; padding:12px; border-radius: 8px;">APPENDIX: OFFICIAL DOCUMENTS & EVIDENCE</h3>
             ${docsHtml || '<p style="text-align: center; color: #94a3b8; margin-top: 30px;">No documents uploaded to this profile.</p>'}
             
             <script>
