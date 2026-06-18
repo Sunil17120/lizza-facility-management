@@ -132,7 +132,7 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
 
   const handleKycVerification = async (mode) => {
     setIsProcessing(true); setError(null);
-    let res; let data; const kycFormData = new FormData();
+    let res; const kycFormData = new FormData();
     
     if (mode === 'xml') {
       if (!ekycZip || shareCode.length !== 4) { setError("Upload ZIP and enter 4-digit code."); setIsProcessing(false); return; }
@@ -144,8 +144,10 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
       res = await fetch(`${API_BASE_URL}/api/manager/extract-qr`, { method: 'POST', body: kycFormData }).catch(() => null);
     }
     
-    if (res && res.ok) {
-        data = await res.json();
+    if (!res) {
+        setError("Network error fetching verification. Backend unreachable.");
+    } else if (res.ok) {
+        const data = await res.json();
         if (data.status === "success") {
           setFormData(prev => ({
             ...prev, firstName: data.data.firstName || prev.firstName, lastName: data.data.lastName || prev.lastName,
@@ -158,10 +160,15 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
             fetch(data.data.photo).then(r => r.blob()).then(blob => setFiles(prev => ({ ...prev, profile: new File([blob], "kyc_photo.jpg", { type: "image/jpeg" }) })));
           }
           setKycStatus('verified');
-        } else { setError(data.detail || "Verification failed. Ensure the file is valid."); }
+        } else { 
+          setError(data.detail || "Verification failed. Ensure the file is valid."); 
+        }
     } else {
-        setError("Network error fetching verification. Backend unreachable.");
+        // --- THIS CATCHES THE 400 BAD REQUEST AND SHOWS IT ON SCREEN ---
+        const errorData = await res.json().catch(() => ({}));
+        setError(errorData.detail || `Server returned an error (${res.status}). Ensure the QR code is clear and cropped tightly.`);
     }
+    
     setIsProcessing(false);
   };
 
