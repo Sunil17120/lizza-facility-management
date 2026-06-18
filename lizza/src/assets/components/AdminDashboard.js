@@ -572,7 +572,7 @@ const AdminDashboard = () => {
               <span class="company-name">LIZZA FACILITY MANAGEMENT</span>
             </div>
             
-            <h2>Master Executive Dossier</h2>
+            
             <div style="text-align: center; font-size: 11px; color: #64748b; letter-spacing: 1.5px; border-bottom: 1px solid #eee; padding-bottom: 15px; margin-bottom: 25px; text-transform: uppercase;">
               Privileged & Confidential • Admin/HR Use Only
             </div>
