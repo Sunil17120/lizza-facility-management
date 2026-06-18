@@ -535,25 +535,37 @@ const AdminDashboard = () => {
 
       printWindow.document.write(`
           <html><head><title>Dossier_${emp?.full_name || 'Employee'}</title>
-            <style>
-              body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; padding: 30px; color: #333; max-width: 900px; margin: auto; font-size: 14px; }
+           <style>
+              body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; padding: 30px; color: #333; max-width: 900px; margin: auto; font-size: 14px; background-color: #ffffff; }
               .logo-header { text-align: center; margin-bottom: 20px; border-bottom: 3px solid #e31e24; padding-bottom: 15px; }
               .logo-header img { height: 50px; vertical-align: middle; margin-right: 15px; }
               .logo-header .company-name { font-size: 18px; font-weight: bold; color: #e31e24; vertical-align: middle; display: inline-block; }
-              h2 { text-align: center; color: #f50808; text-transform: uppercase; margin-bottom: 5px; }
+              
+              /* Unified to brand red */
+              h2 { text-align: center; color: #e31e24; text-transform: uppercase; margin-bottom: 5px; font-weight: 800; }
+              
               .flex-row { display: flex; justify-content: space-between; align-items: flex-start; }
-              .photo { width: 140px; height: 140px; border-radius: 8px; object-fit: cover; border: 2px solid #fd0d0d; }
+              
+              /* Made the photo border strictly brand red with a white inner gap */
+              .photo { width: 140px; height: 140px; border-radius: 8px; object-fit: cover; border: 3px solid #e31e24; padding: 3px; background: white; }
               .details { flex-grow: 1; padding-left: 25px; }
+              
               table { width: 100%; border-collapse: collapse; margin-top: 5px; margin-bottom: 15px; }
               td, th { padding: 8px 12px; border: 1px solid #dee2e6; text-align: left; }
-              th { background-color: #f8f9fa; color: #495057; font-weight: bold; width: 25%; }
-              .section-header { margin-top: 30px; border-bottom: 2px solid #ccc; padding-bottom: 5px; color: #333; font-size: 16px; text-transform: uppercase; }
+              
+              /* Themed Table Headers to Red/White */
+              th { background-color: #fff3f3; color: #e31e24; font-weight: bold; width: 25%; }
+              
+              /* Themed Section Headers to Red */
+              .section-header { margin-top: 30px; border-bottom: 2px solid #e31e24; padding-bottom: 5px; color: #e31e24; font-size: 16px; text-transform: uppercase; font-weight: bold; }
+              
               .doc-section { margin-top: 30px; text-align: center; page-break-inside: avoid; }
-              .doc-title { font-size: 14px; color: #555; margin-bottom: 10px; text-transform: uppercase; border-bottom: 1px dashed #eee; padding-bottom: 5px; }
-              .doc-img { max-width: 100%; max-height: 450px; border: 1px solid #ccc; border-radius: 4px; padding: 5px; object-fit: contain; }
+              .doc-title { font-size: 14px; color: #e31e24; font-weight: bold; margin-bottom: 10px; text-transform: uppercase; border-bottom: 1px dashed #e31e24; padding-bottom: 5px; }
+              .doc-img { max-width: 100%; max-height: 450px; border: 1px solid #ccc; border-radius: 8px; padding: 5px; object-fit: contain; }
               .text-muted { color: #6c757d; font-style: italic; }
-              .terms-box { font-size: 12px; background-color: #f8f9fa; padding: 15px; border: 1px solid #dee2e6; margin-bottom: 20px; }
+              .terms-box { font-size: 12px; background-color: #fff3f3; padding: 15px; border: 1px solid #e31e24; margin-bottom: 20px; border-radius: 8px; }
               .mobile-back-btn { background: #e31e24; color: white; border: none; padding: 16px 32px; font-size: 18px; border-radius: 50px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 12px rgba(227,30,36,0.3); margin-top: 20px; }
+              
               @media print {
                   .doc-section, table, .terms-box { page-break-inside: avoid; }
                   body { padding: 0; }
