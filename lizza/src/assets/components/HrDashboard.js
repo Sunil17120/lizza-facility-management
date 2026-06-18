@@ -237,7 +237,7 @@ const HrDashboard = () => {
                     .logo-header { text-align: center; margin-bottom: 20px; border-bottom: 3px solid #e31e24; padding-bottom: 15px; }
                     .logo-header img { height: 50px; vertical-align: middle; margin-right: 15px; }
                     .logo-header .company-name { font-size: 18px; font-weight: bold; color: #e31e24; vertical-align: middle; display: inline-block; }
-                    h2 { text-align: center; color: #0d6efd; text-transform: uppercase; margin-bottom: 5px; }
+                    h2 { text-align: center; color: #ec0404; text-transform: uppercase; margin-bottom: 5px; }
                     .flex-row { display: flex; justify-content: space-between; align-items: flex-start; }
                     .photo { width: 140px; height: 140px; border-radius: 8px; object-fit: cover; border: 2px solid #0d6efd; }
                     .details { flex-grow: 1; padding-left: 25px; }

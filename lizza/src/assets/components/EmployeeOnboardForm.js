@@ -4,6 +4,8 @@ import { Camera, CheckCircle, UploadCloud, QrCode, Fingerprint, Lock, Plus, Tras
 import ReactCrop from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 
+const API_BASE_URL = "https://sunil0034-lizza-facility-backend.hf.space";
+
 const compressImage = (file) => {
   return new Promise((resolve) => {
     if (!file.type.startsWith('image/')) { resolve(file); return; }
@@ -54,7 +56,7 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
   const [languages, setLanguages] = useState([{ name: '', read: false, write: false, speak: false }]);
   const [education, setEducation] = useState([{ qualification: '', year: '', institute: '', marks: '' }]);
   const [experience, setExperience] = useState([{ company: '', period: '', designation: '' }]);
-  const [family, setFamily] = useState([{ name: '', dob: '', relation: '' }]);
+  const [family, setFamily] = useState([{ name: '', dob: '', relation: '', contact: '' }]);
   const [references, setReferences] = useState({ local1: { name: '', contact: '', relation: '' }, local2: { name: '', contact: '', relation: '' } });
 
   const [files, setFiles] = useState({ profile: null, aadharPhoto: null, fingerprintsLeft: null, fingerprintsRight: null, panPhoto: null, voterPhoto: null, dlPhoto: null, passportPhoto: null, bankPassbook: null });
@@ -131,14 +133,15 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
   const handleKycVerification = async (mode) => {
     setIsProcessing(true); setError(null);
     let res; let data; const kycFormData = new FormData();
+    
     if (mode === 'xml') {
       if (!ekycZip || shareCode.length !== 4) { setError("Upload ZIP and enter 4-digit code."); setIsProcessing(false); return; }
       kycFormData.append('file', ekycZip); kycFormData.append('share_code', shareCode);
-      res = await fetch('https://lizza-facility-management.vercel.app/api/manager/extract-ekyc', { method: 'POST', body: kycFormData });
+      res = await fetch(`${API_BASE_URL}/api/manager/extract-ekyc`, { method: 'POST', body: kycFormData }).catch(() => null);
     } else if (mode === 'qr') {
       if (!qrImage) { setError("Upload/capture a QR Code."); setIsProcessing(false); return; }
       kycFormData.append('file', qrImage);
-      res = await fetch('https://lizza-facility-management.vercel.app/api/manager/extract-qr', { method: 'POST', body: kycFormData });
+      res = await fetch(`${API_BASE_URL}/api/manager/extract-qr`, { method: 'POST', body: kycFormData }).catch(() => null);
     }
     
     if (res && res.ok) {
@@ -157,12 +160,11 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
           setKycStatus('verified');
         } else { setError(data.detail || "Verification failed. Ensure the file is valid."); }
     } else {
-        setError("Network error fetching verification. Please try again.");
+        setError("Network error fetching verification. Backend unreachable.");
     }
     setIsProcessing(false);
   };
 
-  // --- Step Navigation & Validation ---
   const handleNext = () => {
     const stepContainer = document.getElementById(`step-${currentStep}`);
     if (stepContainer) {
@@ -184,13 +186,35 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
   };
 
   const handleSubmit = async (e) => {
-    e.preventDefault(); setError(null);
+    if (e) e.preventDefault(); 
+    
+    // Force browser validation on the current step before submitting
+    const stepContainer = document.getElementById(`step-4`);
+    if (stepContainer) {
+        const inputs = stepContainer.querySelectorAll('input, select, textarea');
+        for (let i = 0; i < inputs.length; i++) {
+            if (!inputs[i].checkValidity()) {
+                inputs[i].reportValidity();
+                return; 
+            }
+        }
+    }
+
+    setError(null);
+
+    // Cross-step security validations to prevent silent failures
+    if (['manager', 'field_officer', 'hr', 'admin'].includes(formData.userType) && !formData.email) {
+        setError("Personal Email is required for Supervisors/HR. Please return to Step 1 and provide it."); 
+        return; 
+    }
     if (!termsAccepted) { setError("You must accept the terms and conditions to complete onboarding."); return; }
     if (!files.aadharPhoto) { setError("Gov ID Photo (Front & Back) is strictly mandatory for our records."); return; }
     if (kycMode === 'without_aadhaar') {
         if (!files.fingerprintsLeft || !files.fingerprintsRight) { setError("Fingerprints are strictly required when skipping digital KYC."); return; }
         if (!formData.aadhar) { setError("Gov ID Number is strictly mandatory when skipping online KYC."); return; }
     }
+
+    setIsProcessing(true);
 
     const submitData = new FormData();
     submitData.append('kyc_mode', kycMode);
@@ -272,17 +296,26 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
 
     if (loggedInEmail) { submitData.append('onboarded_by_email', loggedInEmail); }
 
-    setIsProcessing(true);
-    const res = await fetch(`https://lizza-facility-management.vercel.app/api/manager/add-employee`, { method: 'POST', body: submitData });
+    const res = await fetch(`${API_BASE_URL}/api/manager/add-employee`, { method: 'POST', body: submitData }).catch(() => null);
+
+    if (!res) {
+        setError("Network error occurred. The backend server might be offline or blocking the request.");
+        setIsProcessing(false);
+        return;
+    }
+
     if (res.ok) {
-        alert(`✅ Registration Successful!\n\nThe application has been successfully submitted to the Admin Panel for final verification.\n\nTemporary Login: ${formData.dob.split('-').reverse().join('')}`); 
+        const pass = formData.dob ? formData.dob.split('-').reverse().join('') : 'N/A';
+        alert(`✅ Registration Successful!\n\nThe application has been successfully submitted to the Admin Panel for final verification.\n\nTemporary Login: ${pass}`); 
         onSuccess(); 
     } else { 
-        const data = await res.json();
-        setError(data.detail ? JSON.stringify(data.detail) : "Submission failed."); 
+        const data = await res.json().catch(() => ({}));
+        setError(data.detail ? JSON.stringify(data.detail) : "Submission failed from backend."); 
     }
     setIsProcessing(false);
   };
+
+  const isFormCompletable = currentStep === totalSteps && termsAccepted;
 
   return (
     <>
@@ -295,24 +328,25 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
           @keyframes fadeInAnim { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
           
           .custom-input { border-radius: 12px; background-color: #f8fafc; border: 1.5px solid #e2e8f0; padding: 12px 16px; font-size: 15px; color: #1e293b; transition: all 0.2s; }
-          .custom-input:focus { background-color: #fff; border-color: #f30c0c; box-shadow: 0 0 0 4px rgba(245, 16, 16, 0.1); outline: none; }
+          .custom-input:focus { background-color: #fff; border-color: #e31e24; box-shadow: 0 0 0 4px rgba(227, 30, 36, 0.1); outline: none; }
           
           .file-upload-wrapper { position: relative; border: 2px dashed #cbd5e1; border-radius: 16px; padding: 24px 16px; text-align: center; background: #f8fafc; transition: all 0.2s; cursor: pointer; }
-          .file-upload-wrapper:hover { border-color: #e80c0c; background: #eff6ff; }
+          .file-upload-wrapper:hover { border-color: #e31e24; background: #fff3f3; }
           .file-upload-wrapper input[type="file"] { position: absolute; top: 0; left: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
           
           .btn-premium { border-radius: 100px; padding: 14px 28px; font-weight: 600; font-size: 15px; transition: all 0.2s; }
-          .section-title { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 1px; color: #64748b; font-weight: 700; margin-bottom: 16px; }
+          .section-title { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 1px; color: #64748b; font-weight: 700; margin-bottom: 16px; border-bottom-color: #e31e24 !important; }
           
           .sticky-bottom-bar { position: sticky; bottom: 0; z-index: 1000; background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(10px); border-top: 1px solid #e2e8f0; padding: 16px; }
         `}
       </style>
 
       <div className="wizard-ui">
-        <Form onSubmit={handleSubmit} className="pb-5">
+        {/* Form Tag changed to drop native onSubmit to bypass browser bugs */}
+        <Form className="pb-5">
             
             <div className="text-center mb-4 pt-4 px-3">
-                <ShieldCheck size={36} className="text-primary mb-2" />
+                <ShieldCheck size={36} className="text-danger mb-2" />
                 <h4 className="fw-bolder text-dark mb-1">New Personnel Setup</h4>
                 <p className="text-muted small">Complete the digital onboarding process</p>
             </div>
@@ -320,17 +354,17 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
             <div className="px-4 mb-4">
                 <div className="position-relative mx-auto" style={{maxWidth: '400px'}}>
                     <div className="progress position-absolute top-50 start-0 w-100 translate-middle-y" style={{height: '4px', zIndex: 0}}>
-                        <div className="progress-bar bg-primary" style={{width: `${((currentStep - 1) / (totalSteps - 1)) * 100}%`, transition: '0.4s ease-in-out'}}></div>
+                        <div className="progress-bar bg-danger" style={{width: `${((currentStep - 1) / (totalSteps - 1)) * 100}%`, transition: '0.4s ease-in-out'}}></div>
                     </div>
                     <div className="d-flex justify-content-between position-relative z-1">
                         {[1, 2, 3, 4].map(step => (
-                            <div key={step} className={`rounded-circle d-flex align-items-center justify-content-center fw-bold shadow-sm ${currentStep >= step ? 'bg-primary text-white border-primary' : 'bg-white text-muted border-secondary'} border`} style={{width: '32px', height: '32px', transition: '0.4s ease-in-out'}}>
+                            <div key={step} className={`rounded-circle d-flex align-items-center justify-content-center fw-bold shadow-sm ${currentStep >= step ? 'bg-danger text-white border-danger' : 'bg-white text-muted border-secondary'} border`} style={{width: '32px', height: '32px', transition: '0.4s ease-in-out'}}>
                                 {currentStep > step ? <CheckCircle size={16}/> : step}
                             </div>
                         ))}
                     </div>
                 </div>
-                <div className="text-center mt-2 fw-bold text-primary small">
+                <div className="text-center mt-2 fw-bold text-danger small">
                     {currentStep === 1 && "Step 1: Setup & Demographics"}
                     {currentStep === 2 && "Step 2: Work & Banking"}
                     {currentStep === 3 && "Step 3: Background & Uniform"}
@@ -352,7 +386,7 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
                 </Modal.Body>
                 <Modal.Footer className="border-0 bg-light">
                     <Button variant="light" className="btn-premium px-4" onClick={() => setShowCropModal(false)}>Cancel</Button>
-                    <Button variant="primary" className="btn-premium px-4 shadow-sm" onClick={processCrop}>Confirm Crop</Button>
+                    <Button variant="danger" className="btn-premium px-4 shadow-sm" onClick={processCrop}>Confirm Crop</Button>
                 </Modal.Footer>
             </Modal>
 
@@ -360,15 +394,15 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
             <div id="step-1" className={currentStep === 1 ? 'fade-in px-3' : 'd-none'}>
                 <Card className="glass-card mb-4 border">
                     <Card.Body className="p-4">
-                        <div className="section-title text-primary border-bottom pb-2">Verification Mode</div>
+                        <div className="section-title text-danger border-bottom border-danger pb-2">Verification Mode</div>
                         <div className="d-flex flex-column flex-md-row gap-3 mt-3">
-                            <label className={`w-100 p-3 rounded-4 border ${kycMode === 'aadhaar_xml' ? 'border-primary bg-primary bg-opacity-10' : 'bg-light'} d-flex align-items-center`} style={{cursor: 'pointer'}}>
+                            <label className={`w-100 p-3 rounded-4 border ${kycMode === 'aadhaar_xml' ? 'border-danger bg-danger bg-opacity-10' : 'bg-light'} d-flex align-items-center`} style={{cursor: 'pointer'}}>
                                 <Form.Check type="radio" checked={kycMode === 'aadhaar_xml'} onChange={() => { setKycMode('aadhaar_xml'); setKycStatus('pending'); }} className="me-3 mb-0" style={{transform: 'scale(1.2)'}}/>
-                                <span className={`fw-bold ${kycMode === 'aadhaar_xml' ? 'text-primary' : 'text-dark'}`}>Offline XML</span>
+                                <span className={`fw-bold ${kycMode === 'aadhaar_xml' ? 'text-danger' : 'text-dark'}`}>Offline XML</span>
                             </label>
-                            <label className={`w-100 p-3 rounded-4 border ${kycMode === 'aadhaar_qr' ? 'border-primary bg-primary bg-opacity-10' : 'bg-light'} d-flex align-items-center`} style={{cursor: 'pointer'}}>
+                            <label className={`w-100 p-3 rounded-4 border ${kycMode === 'aadhaar_qr' ? 'border-danger bg-danger bg-opacity-10' : 'bg-light'} d-flex align-items-center`} style={{cursor: 'pointer'}}>
                                 <Form.Check type="radio" checked={kycMode === 'aadhaar_qr'} onChange={() => { setKycMode('aadhaar_qr'); setKycStatus('pending'); setQrImage(null); setQrPreview(null); }} className="me-3 mb-0" style={{transform: 'scale(1.2)'}}/>
-                                <span className={`fw-bold ${kycMode === 'aadhaar_qr' ? 'text-primary' : 'text-dark'}`}>QR Scan</span>
+                                <span className={`fw-bold ${kycMode === 'aadhaar_qr' ? 'text-danger' : 'text-dark'}`}>QR Scan</span>
                             </label>
                             <label className={`w-100 p-3 rounded-4 border ${kycMode === 'without_aadhaar' ? 'border-danger bg-danger bg-opacity-10' : 'bg-light'} d-flex align-items-center`} style={{cursor: 'pointer'}}>
                                 <Form.Check type="radio" checked={kycMode === 'without_aadhaar'} onChange={() => { setKycMode('without_aadhaar'); setKycStatus('pending'); }} className="me-3 mb-0" style={{transform: 'scale(1.2)'}}/>
@@ -379,9 +413,9 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
                 </Card>
 
                 {kycStatus === 'pending' && kycMode === 'aadhaar_xml' && (
-                    <Card className="glass-card mb-4 border-info">
+                    <Card className="glass-card mb-4 border-danger">
                     <Card.Body className="p-4 text-center">
-                        <UploadCloud size={36} className="mb-3 text-info"/>
+                        <UploadCloud size={36} className="mb-3 text-danger"/>
                         <h6 className="fw-bold fs-5">Upload Paperless XML/ZIP</h6>
                         <p className="text-muted small mb-4">Securely extract identity details offline.</p>
                         <div className="mx-auto" style={{maxWidth: '300px'}}>
@@ -391,31 +425,31 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
                             {ekycZip && <div className="text-success mt-2 small fw-bold">{ekycZip.name}</div>}
                         </div>
                         <Form.Control type="password" placeholder="4-Digit Share Code" className="custom-input text-center fw-bold letter-spacing-wide mb-3" value={shareCode} onChange={(e) => setShareCode(e.target.value)} />
-                        <Button type="button" variant="info" className="w-100 btn-premium text-white shadow-sm" onClick={() => handleKycVerification('xml')} disabled={isProcessing}>{isProcessing ? 'Verifying...' : 'Extract & Verify'}</Button>
+                        <Button type="button" variant="danger" className="w-100 btn-premium text-white shadow-sm" onClick={() => handleKycVerification('xml')} disabled={isProcessing}>{isProcessing ? 'Verifying...' : 'Extract & Verify'}</Button>
                         </div>
                     </Card.Body>
                     </Card>
                 )}
 
                 {kycStatus === 'pending' && kycMode === 'aadhaar_qr' && (
-                    <Card className="glass-card mb-4 border-primary">
+                    <Card className="glass-card mb-4 border-danger">
                     <Card.Body className="p-4 text-center">
-                        <QrCode size={36} className="mb-3 text-primary"/>
+                        <QrCode size={36} className="mb-3 text-danger"/>
                         <h6 className="fw-bold fs-5">Scan Verified QR Code</h6>
                         <div className="d-flex flex-column gap-3 my-4 mx-auto" style={{maxWidth: '300px'}}>
                         <div className="file-upload-wrapper">
-                            <UploadCloud size={20} className="mb-2 text-primary" />
+                            <UploadCloud size={20} className="mb-2 text-danger" />
                             <div className="fw-bold text-dark small">Upload QR Image</div>
                             <input type="file" accept="image/*" onChange={handleQrCapture} />
                         </div>
-                        <div className="file-upload-wrapper bg-primary bg-opacity-10 border-primary">
-                            <Camera size={20} className="mb-2 text-primary" />
-                            <div className="fw-bold text-primary small">Take Photo of QR</div>
+                        <div className="file-upload-wrapper bg-danger bg-opacity-10 border-danger">
+                            <Camera size={20} className="mb-2 text-danger" />
+                            <div className="fw-bold text-danger small">Take Photo of QR</div>
                             <input type="file" accept="image/*" capture="environment" onChange={handleQrCapture} />
                         </div>
                         </div>
                         {qrPreview && <div className="mb-4"><Image src={qrPreview} className="rounded-4 shadow-sm" style={{ maxHeight: '120px' }} /></div>}
-                        <Button type="button" variant="dark" onClick={() => handleKycVerification('qr')} disabled={!qrImage || isProcessing} className="w-100 btn-premium shadow-sm mx-auto" style={{maxWidth: '300px'}}>{isProcessing ? 'Scanning...' : 'Verify Extracted QR'}</Button>
+                        <Button type="button" variant="danger" onClick={() => handleKycVerification('qr')} disabled={!qrImage || isProcessing} className="w-100 btn-premium shadow-sm mx-auto" style={{maxWidth: '300px'}}>{isProcessing ? 'Scanning...' : 'Verify Extracted QR'}</Button>
                     </Card.Body>
                     </Card>
                 )}
@@ -433,8 +467,8 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
                         <Card.Body className="p-4">
                             <div className="text-center mb-4">
                                 <div className="position-relative d-inline-block">
-                                <Image src={previews.profile || "https://via.placeholder.com/120"} roundedCircle className="shadow-sm" style={{ width: '120px', height: '120px', objectFit: 'cover', border: '4px solid #0d6efd', backgroundColor: '#fff' }} />
-                                <label htmlFor="prof-up" className="position-absolute bottom-0 end-0 bg-primary text-white rounded-circle p-2 shadow active-scale" style={{ cursor: 'pointer', transform: 'translate(10%, 10%)' }}>
+                                <Image src={previews.profile || "https://via.placeholder.com/120"} roundedCircle className="shadow-sm" style={{ width: '120px', height: '120px', objectFit: 'cover', border: '4px solid #e31e24', backgroundColor: '#fff' }} />
+                                <label htmlFor="prof-up" className="position-absolute bottom-0 end-0 bg-danger text-white rounded-circle p-2 shadow active-scale" style={{ cursor: 'pointer', transform: 'translate(10%, 10%)' }}>
                                     <Camera size={20} />
                                 </label>
                                 <input id="prof-up" type="file" hidden accept="image/*" onChange={(e) => handleFileChange(e, 'profile')} />
@@ -442,7 +476,7 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
                                 <p className="small text-muted mt-3 fw-bold">Live Applicant Photo <span className="text-danger">*</span></p>
                             </div>
 
-                            <div className="section-title text-primary border-bottom pb-2">Identity Details</div>
+                            <div className="section-title text-danger border-bottom border-danger pb-2">Identity Details</div>
                             <Row className="g-3 mt-1">
                                 <Col xs={12} md={6}>
                                     <Form.Label className="small fw-bold text-muted ps-1">First Name <span className="text-danger">*</span></Form.Label>
@@ -490,10 +524,10 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
                                 </Col>
                             </Row>
 
-                            <h6 className="fw-bold border-bottom pb-2 text-primary mt-4">Medical & Demographics</h6>
+                            <h6 className="fw-bold border-bottom pb-2 text-danger mt-4">Medical & Demographics</h6>
                             <Row className="g-3 mt-1">
                                 <Col xs={6} md={3}><Form.Label className="small fw-bold text-muted ps-1">Height (cm)</Form.Label><Form.Control className="custom-input" value={formData.height} onChange={e => setFormData({...formData, height: e.target.value})} /></Col>
-                                <Col xs={6} md={3}><Form.Label className="small fw-bold text-muted ps-1">Blood Group</Form.Label><Form.Control className="custom-input" value={formData.bloodGroup} onChange={e => setFormData({...formData, bloodGroup: e.target.value})} /></Col>
+                                <Col xs={6} md={3}><Form.Label className="small fw-bold text-muted ps-1">Blood Group</Form.Label><Form.Control className="custom-input text-danger fw-bold" value={formData.bloodGroup} onChange={e => setFormData({...formData, bloodGroup: e.target.value})} /></Col>
                                 <Col xs={6} md={3}><Form.Label className="small fw-bold text-muted ps-1">Caste</Form.Label><Form.Control className="custom-input" value={formData.caste} onChange={e => setFormData({...formData, caste: e.target.value})} /></Col>
                                 <Col xs={6} md={3}><Form.Label className="small fw-bold text-muted ps-1">Category</Form.Label><Form.Control className="custom-input" value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})} /></Col>
                                 <Col xs={12} md={6}><Form.Label className="small fw-bold text-muted ps-1">Religion</Form.Label><Form.Control className="custom-input" value={formData.religion} onChange={e => setFormData({...formData, religion: e.target.value})} /></Col>
@@ -509,7 +543,7 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
             <div id="step-2" className={currentStep === 2 ? 'fade-in px-3' : 'd-none'}>
                 <Card className="glass-card mb-4 border">
                     <Card.Body className="p-4">
-                        <div className="section-title text-primary border-bottom pb-2">Address Details</div>
+                        <div className="section-title text-danger border-bottom border-danger pb-2">Address Details</div>
                         <Row className="g-3 mt-1">
                             <Col md={6}>
                                 <h6 className="fw-bold mb-3 text-dark">Permanent Address</h6>
@@ -527,7 +561,7 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
                             </Col>
                         </Row>
 
-                        <div className="section-title text-primary border-bottom pb-2 mt-5">Work Allocation</div>
+                        <div className="section-title text-danger border-bottom border-danger pb-2 mt-5">Work Allocation</div>
                         <Row className="g-3 mt-1">
                             <Col xs={12} md={4}>
                             <Form.Label className="small fw-bold text-muted ps-1">Department <span className="text-danger">*</span></Form.Label>
@@ -553,7 +587,7 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
                             </Col>
                         </Row>
 
-                        <div className="section-title text-primary border-bottom pb-2 mt-5">Banking Details</div>
+                        <div className="section-title text-danger border-bottom border-danger pb-2 mt-5">Banking Details</div>
                         <Row className="g-3 mt-1">
                             <Col xs={12} md={4}>
                                 <Form.Label className="small fw-bold text-muted ps-1">Bank Name</Form.Label>
@@ -569,7 +603,7 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
                             </Col>
                             <Col xs={12}>
                                 <div className="file-upload-wrapper p-3 mt-2 bg-light">
-                                    <UploadCloud size={20} className="text-primary mb-2" />
+                                    <UploadCloud size={20} className="text-danger mb-2" />
                                     <div className="fw-bold text-dark small">Tap to upload Bank Passbook / Cheque Copy</div>
                                     <input type="file" accept="image/*,.pdf" onChange={e => handleFileChange(e, 'bankPassbook')} />
                                     {files.bankPassbook && <div className="text-success mt-2 small fw-bold"><CheckCircle size={14} className="me-1"/> File Selected</div>}
@@ -584,7 +618,7 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
             <div id="step-3" className={currentStep === 3 ? 'fade-in px-3' : 'd-none'}>
                 <Card className="glass-card mb-4 border">
                     <Card.Body className="p-4">
-                        <div className="section-title text-primary border-bottom pb-2">Uniform Provisioning</div>
+                        <div className="section-title text-danger border-bottom border-danger pb-2">Uniform Provisioning</div>
                         <Row className="g-3 bg-light p-3 rounded-4 mx-0 mt-1 border">
                             <Col xs={12} md={4}>
                                 <Form.Label className="small fw-bold text-dark ps-1">Shirt Size</Form.Label>
@@ -602,7 +636,7 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
                             </Col>
                         </Row>
 
-                        <div className="section-title text-primary border-bottom pb-2 mt-5">Language Proficiency</div>
+                        <div className="section-title text-danger border-bottom border-danger pb-2 mt-5">Language Proficiency</div>
                         {languages.map((lang, idx) => (
                             <Row key={idx} className="g-2 mb-2 align-items-center">
                                 <Col xs={12} md={4}><Form.Control className="custom-input" placeholder="Language" value={lang.name} onChange={e => { const newLang = [...languages]; newLang[idx].name = e.target.value; setLanguages(newLang); }} /></Col>
@@ -611,9 +645,9 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
                                 <Col xs={4} md={2}><Form.Check type="checkbox" label="Speak" checked={lang.speak} onChange={e => { const newLang = [...languages]; newLang[idx].speak = e.target.checked; setLanguages(newLang); }} className="fw-bold small text-muted"/></Col>
                             </Row>
                         ))}
-                        <Button type="button" variant="outline-primary" size="sm" className="rounded-pill px-3 mt-2 fw-bold" onClick={() => setLanguages([...languages, { name: '', read: false, write: false, speak: false }])}><Plus size={14} className="me-1"/> Add Language</Button>
+                        <Button type="button" variant="outline-danger" size="sm" className="rounded-pill px-3 mt-2 fw-bold" onClick={() => setLanguages([...languages, { name: '', read: false, write: false, speak: false }])}><Plus size={14} className="me-1"/> Add Language</Button>
 
-                        <div className="section-title text-primary border-bottom pb-2 mt-5">Educational Qualification</div>
+                        <div className="section-title text-danger border-bottom border-danger pb-2 mt-5">Educational Qualification</div>
                         {education.map((edu, idx) => (
                             <Row key={idx} className="g-2 mb-2">
                                 <Col xs={12} md={3}><Form.Control className="custom-input" placeholder="Qualification" value={edu.qualification} onChange={e => { const newEdu = [...education]; newEdu[idx].qualification = e.target.value; setEducation(newEdu); }} /></Col>
@@ -622,9 +656,9 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
                                 <Col xs={6} md={3}><Form.Control className="custom-input" placeholder="Marks %" value={edu.marks} onChange={e => { const newEdu = [...education]; newEdu[idx].marks = e.target.value; setEducation(newEdu); }} /></Col>
                             </Row>
                         ))}
-                        <Button type="button" variant="outline-primary" size="sm" className="rounded-pill px-3 mt-2 fw-bold" onClick={() => setEducation([...education, { qualification: '', year: '', institute: '', marks: '' }])}><Plus size={14} className="me-1"/> Add Education</Button>
+                        <Button type="button" variant="outline-danger" size="sm" className="rounded-pill px-3 mt-2 fw-bold" onClick={() => setEducation([...education, { qualification: '', year: '', institute: '', marks: '' }])}><Plus size={14} className="me-1"/> Add Education</Button>
 
-                        <div className="section-title text-primary border-bottom pb-2 mt-5">Work Experience</div>
+                        <div className="section-title text-danger border-bottom border-danger pb-2 mt-5">Work Experience</div>
                         {experience.map((exp, idx) => (
                             <Row key={idx} className="g-2 mb-2">
                                 <Col xs={12} md={4}><Form.Control className="custom-input" placeholder="Company Name" value={exp.company} onChange={e => { const newExp = [...experience]; newExp[idx].company = e.target.value; setExperience(newExp); }} /></Col>
@@ -632,7 +666,35 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
                                 <Col xs={6} md={4}><Form.Control className="custom-input" placeholder="Designation" value={exp.designation} onChange={e => { const newExp = [...experience]; newExp[idx].designation = e.target.value; setExperience(newExp); }} /></Col>
                             </Row>
                         ))}
-                        <Button type="button" variant="outline-primary" size="sm" className="rounded-pill px-3 mt-2 fw-bold" onClick={() => setExperience([...experience, { company: '', period: '', designation: '' }])}><Plus size={14} className="me-1"/> Add Experience</Button>
+                        <Button type="button" variant="outline-danger" size="sm" className="rounded-pill px-3 mt-2 fw-bold" onClick={() => setExperience([...experience, { company: '', period: '', designation: '' }])}><Plus size={14} className="me-1"/> Add Experience</Button>
+
+                        <div className="section-title text-danger border-bottom border-danger pb-2 mt-5">Family Details</div>
+                        {family.map((fam, idx) => (
+                            <Row key={idx} className="g-2 mb-2">
+                                <Col xs={12} md={3}><Form.Control className="custom-input" placeholder="Name" value={fam.name} onChange={e => { const newFam = [...family]; newFam[idx].name = e.target.value; setFamily(newFam); }} /></Col>
+                                <Col xs={6} md={3}><Form.Control className="custom-input" type="date" placeholder="DOB" value={fam.dob} onChange={e => { const newFam = [...family]; newFam[idx].dob = e.target.value; setFamily(newFam); }} /></Col>
+                                <Col xs={6} md={3}><Form.Control className="custom-input" placeholder="Relation" value={fam.relation} onChange={e => { const newFam = [...family]; newFam[idx].relation = e.target.value; setFamily(newFam); }} /></Col>
+                                <Col xs={12} md={3}><Form.Control className="custom-input" placeholder="Contact No (Optional)" value={fam.contact} onChange={e => { const newFam = [...family]; newFam[idx].contact = e.target.value; setFamily(newFam); }} /></Col>
+                            </Row>
+                        ))}
+                        <Button type="button" variant="outline-danger" size="sm" className="rounded-pill px-3 mt-2 fw-bold" onClick={() => setFamily([...family, { name: '', dob: '', relation: '', contact: '' }])}><Plus size={14} className="me-1"/> Add Family Member</Button>
+
+                        <div className="section-title text-danger border-bottom border-danger pb-2 mt-5">Verification References</div>
+                        <Row className="g-4">
+                            <Col xs={12} md={6}>
+                                <Form.Label className="small fw-bold text-muted ps-1">Local Reference 1</Form.Label>
+                                <Form.Control className="custom-input mb-2" placeholder="Name" value={references.local1.name} onChange={e => setReferences({...references, local1: {...references.local1, name: e.target.value}})} />
+                                <Form.Control className="custom-input mb-2" placeholder="Contact No" value={references.local1.contact} onChange={e => setReferences({...references, local1: {...references.local1, contact: e.target.value}})} />
+                                <Form.Control className="custom-input" placeholder="Relationship" value={references.local1.relation} onChange={e => setReferences({...references, local1: {...references.local1, relation: e.target.value}})} />
+                            </Col>
+                            <Col xs={12} md={6}>
+                                <Form.Label className="small fw-bold text-muted ps-1">Local Reference 2</Form.Label>
+                                <Form.Control className="custom-input mb-2" placeholder="Name" value={references.local2.name} onChange={e => setReferences({...references, local2: {...references.local2, name: e.target.value}})} />
+                                <Form.Control className="custom-input mb-2" placeholder="Contact No" value={references.local2.contact} onChange={e => setReferences({...references, local2: {...references.local2, contact: e.target.value}})} />
+                                <Form.Control className="custom-input" placeholder="Relationship" value={references.local2.relation} onChange={e => setReferences({...references, local2: {...references.local2, relation: e.target.value}})} />
+                            </Col>
+                        </Row>
+
                     </Card.Body>
                 </Card>
             </div>
@@ -641,11 +703,25 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
             <div id="step-4" className={currentStep === 4 ? 'fade-in px-3' : 'd-none'}>
                 <Card className="glass-card mb-4 border">
                     <Card.Body className="p-4">
-                        <div className="section-title text-primary border-bottom pb-2">Government IDs Upload</div>
+                        <div className="section-title text-danger border-bottom border-danger pb-2">Government IDs Upload</div>
                         <Row className="g-3 mt-1">
+                            {/* --- MISSING FIELD ADDED HERE --- */}
+                            <Col xs={12}>
+                                <Form.Label className="small fw-bold text-muted ps-1">Gov ID Number {kycMode === 'without_aadhaar' && <span className="text-danger">*</span>}</Form.Label>
+                                <Form.Control 
+                                    className="custom-input fw-bold" 
+                                    type="text" 
+                                    maxLength="12" 
+                                    placeholder="[Aadhaar Redacted]" 
+                                    required={kycMode === 'without_aadhaar'} 
+                                    value={formData.aadhar} 
+                                    onChange={e => setFormData({...formData, aadhar: e.target.value.replace(/\D/g, '')})} 
+                                />
+                            </Col>
+                            {/* -------------------------------- */}
                             <Col xs={12} className="mb-2">
-                                <div className="file-upload-wrapper mt-2 border-warning bg-warning bg-opacity-10">
-                                    <UploadCloud size={24} className="text-warning mb-2" />
+                                <div className="file-upload-wrapper mt-2 border-danger bg-danger bg-opacity-10">
+                                    <UploadCloud size={24} className="text-danger mb-2" />
                                     <div className="fw-bold text-dark small">Tap to upload Gov ID Copy (Front & Back) <span className="text-danger">*</span></div>
                                     <input type="file" required={currentStep === 4} accept="image/*,.pdf" onChange={(e) => handleFileChange(e, 'aadharPhoto')} />
                                     {files.aadharPhoto && <div className="text-success mt-2 small fw-bold"><CheckCircle size={14} className="me-1"/> File Selected</div>}
@@ -657,9 +733,9 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
                         <Row className="g-3 mt-3 pt-3 border-top">
                             <Col xs={12} md={6}>
                                 <Form.Label className="small fw-bold text-muted ps-1">PAN Card Number</Form.Label>
-                                <Form.Control className="custom-input mb-2" value={formData.panCard} onChange={e => setFormData({...formData, panCard: e.target.value})} />
+                                <Form.Control className="custom-input mb-2 text-uppercase" value={formData.panCard} onChange={e => setFormData({...formData, panCard: e.target.value})} />
                                 <div className="file-upload-wrapper p-3 bg-light">
-                                    <UploadCloud size={18} className="text-primary mb-1" />
+                                    <UploadCloud size={18} className="text-danger mb-1" />
                                     <div className="fw-bold text-dark" style={{fontSize: '12px'}}>Upload PAN Photo</div>
                                     <input type="file" accept="image/*,.pdf" onChange={e => handleFileChange(e, 'panPhoto')} />
                                     {files.panPhoto && <div className="text-success mt-1 fw-bold" style={{fontSize:'10px'}}><CheckCircle size={12} className="me-1"/> Selected</div>}
@@ -667,9 +743,9 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
                             </Col>
                             <Col xs={12} md={6}>
                                 <Form.Label className="small fw-bold text-muted ps-1">Voter ID</Form.Label>
-                                <Form.Control className="custom-input mb-2" value={formData.voterId} onChange={e => setFormData({...formData, voterId: e.target.value})} />
+                                <Form.Control className="custom-input mb-2 text-uppercase" value={formData.voterId} onChange={e => setFormData({...formData, voterId: e.target.value})} />
                                 <div className="file-upload-wrapper p-3 bg-light">
-                                    <UploadCloud size={18} className="text-primary mb-1" />
+                                    <UploadCloud size={18} className="text-danger mb-1" />
                                     <div className="fw-bold text-dark" style={{fontSize: '12px'}}>Upload Voter ID Photo</div>
                                     <input type="file" accept="image/*,.pdf" onChange={e => handleFileChange(e, 'voterPhoto')} />
                                     {files.voterPhoto && <div className="text-success mt-1 fw-bold" style={{fontSize:'10px'}}><CheckCircle size={12} className="me-1"/> Selected</div>}
@@ -677,9 +753,9 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
                             </Col>
                             <Col xs={12} md={6}>
                                 <Form.Label className="small fw-bold text-muted ps-1">Driving Licence</Form.Label>
-                                <Form.Control className="custom-input mb-2" value={formData.drivingLicence} onChange={e => setFormData({...formData, drivingLicence: e.target.value})} />
+                                <Form.Control className="custom-input mb-2 text-uppercase" value={formData.drivingLicence} onChange={e => setFormData({...formData, drivingLicence: e.target.value})} />
                                 <div className="file-upload-wrapper p-3 bg-light">
-                                    <UploadCloud size={18} className="text-primary mb-1" />
+                                    <UploadCloud size={18} className="text-danger mb-1" />
                                     <div className="fw-bold text-dark" style={{fontSize: '12px'}}>Upload DL Photo</div>
                                     <input type="file" accept="image/*,.pdf" onChange={e => handleFileChange(e, 'dlPhoto')} />
                                     {files.dlPhoto && <div className="text-success mt-1 fw-bold" style={{fontSize:'10px'}}><CheckCircle size={12} className="me-1"/> Selected</div>}
@@ -687,9 +763,9 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
                             </Col>
                             <Col xs={12} md={6}>
                                 <Form.Label className="small fw-bold text-muted ps-1">Passport Number</Form.Label>
-                                <Form.Control className="custom-input mb-2" value={formData.passportNo} onChange={e => setFormData({...formData, passportNo: e.target.value})} />
+                                <Form.Control className="custom-input mb-2 text-uppercase" value={formData.passportNo} onChange={e => setFormData({...formData, passportNo: e.target.value})} />
                                 <div className="file-upload-wrapper p-3 bg-light">
-                                    <UploadCloud size={18} className="text-primary mb-1" />
+                                    <UploadCloud size={18} className="text-danger mb-1" />
                                     <div className="fw-bold text-dark" style={{fontSize: '12px'}}>Upload Passport Photo</div>
                                     <input type="file" accept="image/*,.pdf" onChange={e => handleFileChange(e, 'passportPhoto')} />
                                     {files.passportPhoto && <div className="text-success mt-1 fw-bold" style={{fontSize:'10px'}}><CheckCircle size={12} className="me-1"/> Selected</div>}
@@ -697,7 +773,7 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
                             </Col>
                         </Row>
 
-                        <div className="section-title text-primary border-bottom pb-2 mt-5">Additional Documents</div>
+                        <div className="section-title text-danger border-bottom border-danger pb-2 mt-5">Additional Documents</div>
                         {extraDocuments.map((doc, idx) => (
                             <Row key={idx} className="g-2 mb-3 align-items-center bg-light p-2 rounded-4 border mx-0">
                                 <Col xs={12} md={5}>
@@ -728,7 +804,7 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
                                 </Col>
                             </Row>
                         ))}
-                        <Button type="button" size="sm" variant="outline-primary" className="rounded-pill px-3 mt-2 fw-bold" onClick={() => setExtraDocuments([...extraDocuments, { title: '', file: null }])}>
+                        <Button type="button" size="sm" variant="outline-danger" className="rounded-pill px-3 mt-2 fw-bold" onClick={() => setExtraDocuments([...extraDocuments, { title: '', file: null }])}>
                             <Plus size={14} className="me-1"/> Add Extra Document
                         </Button>
 
@@ -755,38 +831,12 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
                             </div>
                         )}
 
-                        <div className="section-title text-primary border-bottom pb-2 mt-5">Family Details</div>
-                        {family.map((fam, idx) => (
-                            <Row key={idx} className="g-2 mb-2">
-                                <Col xs={12} md={4}><Form.Control className="custom-input" placeholder="Name" value={fam.name} onChange={e => { const newFam = [...family]; newFam[idx].name = e.target.value; setFamily(newFam); }} /></Col>
-                                <Col xs={6} md={4}><Form.Control className="custom-input" type="date" placeholder="DOB" value={fam.dob} onChange={e => { const newFam = [...family]; newFam[idx].dob = e.target.value; setFamily(newFam); }} /></Col>
-                                <Col xs={6} md={4}><Form.Control className="custom-input" placeholder="Relation" value={fam.relation} onChange={e => { const newFam = [...family]; newFam[idx].relation = e.target.value; setFamily(newFam); }} /></Col>
-                            </Row>
-                        ))}
-                        <Button type="button" variant="outline-primary" size="sm" className="rounded-pill px-3 mt-2 fw-bold" onClick={() => setFamily([...family, { name: '', dob: '', relation: '' }])}><Plus size={14} className="me-1"/> Add Family Member</Button>
-
-                        <div className="section-title text-primary border-bottom pb-2 mt-5">Verification References</div>
-                        <Row className="g-4">
-                            <Col xs={12} md={6}>
-                                <Form.Label className="small fw-bold text-muted ps-1">Local Reference 1</Form.Label>
-                                <Form.Control className="custom-input mb-2" placeholder="Name" value={references.local1.name} onChange={e => setReferences({...references, local1: {...references.local1, name: e.target.value}})} />
-                                <Form.Control className="custom-input mb-2" placeholder="Contact No" value={references.local1.contact} onChange={e => setReferences({...references, local1: {...references.local1, contact: e.target.value}})} />
-                                <Form.Control className="custom-input" placeholder="Relationship" value={references.local1.relation} onChange={e => setReferences({...references, local1: {...references.local1, relation: e.target.value}})} />
-                            </Col>
-                            <Col xs={12} md={6}>
-                                <Form.Label className="small fw-bold text-muted ps-1">Local Reference 2</Form.Label>
-                                <Form.Control className="custom-input mb-2" placeholder="Name" value={references.local2.name} onChange={e => setReferences({...references, local2: {...references.local2, name: e.target.value}})} />
-                                <Form.Control className="custom-input mb-2" placeholder="Contact No" value={references.local2.contact} onChange={e => setReferences({...references, local2: {...references.local2, contact: e.target.value}})} />
-                                <Form.Control className="custom-input" placeholder="Relationship" value={references.local2.relation} onChange={e => setReferences({...references, local2: {...references.local2, relation: e.target.value}})} />
-                            </Col>
-                        </Row>
-
                     </Card.Body>
                 </Card>
 
-                <Card className="glass-card mb-4 border-primary bg-primary bg-opacity-10 border-2">
+                <Card className="glass-card mb-4 border-danger bg-danger bg-opacity-10 border-2">
                     <Card.Body className="p-4">
-                    <div className="section-title text-primary border-bottom border-primary border-opacity-25 pb-2 d-flex align-items-center"><FileText className="me-2" size={18}/> Declarations & Terms</div>
+                    <div className="section-title text-danger border-bottom border-danger border-opacity-25 pb-2 d-flex align-items-center"><FileText className="me-2" size={18}/> Declarations & Terms</div>
                     <div className="bg-white p-4 rounded-4 mb-4 mt-3 border shadow-sm" style={{ maxHeight: '200px', overflowY: 'auto', fontSize: '0.85rem' }}>
                         <ol className="mb-0 ps-3">
                         {companyTerms.map((term, index) => (
@@ -811,11 +861,11 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
                 )}
                 
                 {currentStep < totalSteps ? (
-                    <Button type="button" variant="primary" className="btn-premium px-5 shadow-sm d-flex align-items-center active-scale" onClick={handleNext}>
+                    <Button type="button" variant="danger" className="btn-premium px-5 shadow-sm d-flex align-items-center active-scale" onClick={handleNext}>
                         Next <ChevronRight size={18} className="ms-1"/>
                     </Button>
                 ) : (
-                    <Button type="submit" variant="primary" className="btn-premium px-5 shadow-sm d-flex align-items-center active-scale" disabled={isProcessing || !termsAccepted}>
+                    <Button type="button" onClick={handleSubmit} variant="danger" className="btn-premium px-5 shadow-sm d-flex align-items-center active-scale" disabled={isProcessing || !isFormCompletable}>
                         {isProcessing ? 'Submitting...' : 'Submit to HR'} {!isProcessing && <CheckCircle size={18} className="ms-1"/>}
                     </Button>
                 )}
