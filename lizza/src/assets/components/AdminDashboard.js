@@ -720,14 +720,14 @@ const AdminDashboard = () => {
                 <Button variant="light" size="sm" className="rounded-circle shadow-sm p-2 active-scale" onClick={fetchBaseData} disabled={loading}>
                     <RefreshCw size={20} className={loading ? "text-muted" : "text-primary"} />
                 </Button>
-                <Button variant="primary" className="rounded-pill shadow-sm fw-bold active-scale d-none d-md-flex align-items-center px-4" onClick={() => setShowAddEmp(true)}>
+                <Button variant="danger" className="rounded-pill shadow-sm fw-bold active-scale d-none d-md-flex align-items-center px-4" onClick={() => setShowAddEmp(true)}>
                     <Plus className="me-1" size={18}/> Onboard Staff
                 </Button>
             </div>
           </div>
           
           <div className="d-md-none mb-4">
-              <Button variant="primary" className="w-100 rounded-pill shadow-sm fw-bold active-scale d-flex align-items-center justify-content-center py-2" onClick={() => setShowAddEmp(true)}>
+              <Button variant="danger" className="w-100 rounded-pill shadow-sm fw-bold active-scale d-flex align-items-center justify-content-center py-2" onClick={() => setShowAddEmp(true)}>
                   <Plus className="me-2" size={18}/> Onboard Direct Staff
               </Button>
           </div>
@@ -737,7 +737,7 @@ const AdminDashboard = () => {
             <Tab eventKey="overview" title="System Overview">
               <Row className="mb-4 g-3 mt-2">
                 <Col xs={12} md={4}><div className="stat-widget d-flex align-items-center"><Users size={36} className="text-secondary opacity-50 me-3"/><div><div className="text-muted small fw-bold tracking-wide">TOTAL STAFF</div><h3 className="fw-bolder mb-0 text-dark">{employees.length}</h3></div></div></Col>
-                <Col xs={12} md={4}><div className="stat-widget d-flex align-items-center"><UserCheck size={36} className="text-primary opacity-50 me-3"/><div><div className="text-primary small fw-bold tracking-wide">VERIFIED EMPLOYEES</div><h3 className="fw-bolder mb-0 text-primary">{verified.length}</h3></div></div></Col>
+                <Col xs={12} md={4}><div className="stat-widget d-flex align-items-center"><UserCheck size={36} className="text-danger opacity-50 me-3"/><div><div className="text-danger small fw-bold tracking-wide">VERIFIED EMPLOYEES</div><h3 className="fw-bolder mb-0 text-danger">{verified.length}</h3></div></div></Col>
                 <Col xs={12} md={4}><div className="stat-widget d-flex align-items-center"><MapPin size={36} className="text-success opacity-50 me-3"/><div><div className="text-success small fw-bold tracking-wide">ASSIGNED SITES</div><h3 className="fw-bolder mb-0 text-success">{locations.length}</h3></div></div></Col>
               </Row>
 
@@ -745,7 +745,7 @@ const AdminDashboard = () => {
                 <Col xs={12} lg={4} className="order-2 order-lg-1">
                   <Card className="glass-card h-100">
                     <Card.Body className="p-4 d-flex flex-column">
-                      <h6 className="fw-bold mb-4 d-flex align-items-center text-dark"><Building2 size={20} className="me-2 text-primary"/> Office Branches</h6>
+                      <h6 className="fw-bold mb-4 d-flex align-items-center text-dark"><Building2 size={20} className="me-2 text-danger"/> Office Branches</h6>
                       <Button variant="info" className="w-100 mb-4 rounded-pill fw-bold shadow-sm d-flex align-items-center justify-content-center text-white active-scale py-2" onClick={() => { setEditingEmp(null); setEmpSearchQuery(''); setEditEmpModal(true); }}>
                         <Edit2 size={16} className="me-2"/> Master Employee Editor
                       </Button>
