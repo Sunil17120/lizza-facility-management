@@ -126,31 +126,12 @@ const AdminDashboard = () => {
 
   const verified = employees.filter(e => e?.is_verified);
   const fieldOfficers = verified.filter(e => e?.user_type === 'field_officer');
-  const getFilteredReports = useCallback(() => {
-      return fieldReports.filter(visit => {
-          if (!visit.date) return false;
-          // visit.date is in format DD-Mon-YYYY (e.g., "18-Jun-2026")
-          const visitDate = new Date(visit.date);
-          
-          if (reportStartDate) {
-              const start = new Date(reportStartDate);
-              start.setHours(0, 0, 0, 0);
-              if (visitDate < start) return false;
-          }
-          if (reportEndDate) {
-              const end = new Date(reportEndDate);
-              end.setHours(23, 59, 59, 999);
-              if (visitDate > end) return false;
-          }
-          return true;
-      });
-  }, [fieldReports, reportStartDate, reportEndDate]);
-const groupedReports = getFilteredReports().reduce((acc, visit) => {
+ 
+const groupedReports = fieldReports.reduce((acc, visit) => {
     if (!acc[visit.date]) acc[visit.date] = [];
     acc[visit.date].push(visit);
     return acc;
   }, {});
-
   const managerStats = verified.filter(e => e?.user_type === 'manager').map(mgr => {
     const teamSize = verified.filter(emp => emp?.manager_id === mgr?.id).length;
     return { ...mgr, teamSize };
@@ -383,7 +364,7 @@ const groupedReports = getFilteredReports().reduce((acc, visit) => {
   };
 
 const downloadExcel = (withPhotos = false) => {
-    const dataToExport = getFilteredReports(); // <-- Use filtered data
+    const dataToExport = fieldReports;
     
     let tableHtml = `
       <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
