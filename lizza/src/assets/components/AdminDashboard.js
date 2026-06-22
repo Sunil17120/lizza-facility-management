@@ -229,7 +229,7 @@ const groupedReports = getFilteredReports().reduce((acc, visit) => {
       if (res.ok) setAttendanceRecords(await res.json());
       else setAttendanceRecords([]);
       setAttendanceLoading(false);
-  }, [reportMonth, reportYear, reportStartDate, reportEndDate, reportOfficerSearch, filterSite, filterRole, mainTab, employees]);
+  },  [reportMonth, reportYear, reportStartDate, reportEndDate, reportOfficerSearch, filterSite, filterRole, mainTab, employees]);
 
   useEffect(() => {
     if (mainTab !== 'reports') return;
@@ -1075,7 +1075,20 @@ const downloadExcel = (withPhotos = false) => {
                             {/* Replaced Month/Year with Start/End Date Pickers for better precision */}
                             <Col xs={6} md={3}>
                                 <Form.Label className="small fw-bold text-muted ps-1">Start Date</Form.Label>
-                                <Form.Control className="custom-input border-0" type="date" value={reportStartDate} onChange={e => setReportStartDate(e.target.value)} />
+                                <Form.Control 
+                                    className="custom-input border-0" 
+                                    type="date" 
+                                    value={reportStartDate} 
+                                    onChange={e => {
+                                        setReportStartDate(e.target.value);
+                                        // Automatically sync the hidden month/year for the backend API
+                                        if (e.target.value) {
+                                            const d = new Date(e.target.value);
+                                            setReportMonth(d.getMonth() + 1);
+                                            setReportYear(d.getFullYear());
+                                        }
+                                    }} 
+                                />
                             </Col>
                             <Col xs={6} md={3}>
                                 <Form.Label className="small fw-bold text-muted ps-1">End Date</Form.Label>
