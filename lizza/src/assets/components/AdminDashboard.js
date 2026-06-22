@@ -180,7 +180,8 @@ const groupedReports = getFilteredReports().reduce((acc, visit) => {
     if (mainTab !== 'reports') return;
     setReportsLoading(true);
       let url = `${API_BASE_URL}/api/admin/reports/monthly-field-visits?month=${reportMonth}&year=${reportYear}`;
-      
+      if (reportStartDate) url += `&start_date=${encodeURIComponent(reportStartDate)}`;
+      if (reportEndDate) url += `&end_date=${encodeURIComponent(reportEndDate)}`;
       if (reportOfficerSearch && employees.length > 0) {
         const matchedOfficer = employees.find(o => 
           o.is_verified &&
