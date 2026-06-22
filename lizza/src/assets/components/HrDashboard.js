@@ -158,25 +158,60 @@ const HrDashboard = () => {
         handleAdjustStock(category, size, -currentQuantity);
     };
 
-    const handleIssueUniform = async (e) => {
-        e.preventDefault();
-        if (!selectedInventoryId) return alert("Please select an item to issue.");
-        
-        const res = await fetch(`${API_BASE_URL}/api/hr/issue-uniform`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ inventory_id: selectedInventoryId, user_id: selectedUserForIssue.id, hr_email: hrEmail })
-        });
-        
-        if (res.ok) {
-            alert(`Kit successfully issued to ${selectedUserForIssue.full_name}!`);
-            setIssueModal(false);
-            setSelectedUserForIssue(null);
-            setSelectedInventoryId('');
-            fetchData();
-        } else {
-            alert("Error issuing item. Stock might be empty.");
+   const handleIssueFullKit = async () => {
+        if (!selectedUserForIssue || !selectedUserForIssue.uniform_details) {
+            return alert("No uniform sizes specified for this user.");
         }
+
+        setIsSyncing(true);
+        let issuedCount = 0;
+        let outOfStock = [];
+
+        // Break down the "Shirt: M, Pant: 34, Shoe: 9" string
+        const parts = selectedUserForIssue.uniform_details.split(',');
+        for (let part of parts) {
+            const splitPart = part.split(':');
+            if (splitPart.length === 2) {
+                const cat = splitPart[0].trim();
+                const sz = splitPart[1].trim();
+
+                if (sz !== 'N/A' && sz !== '') {
+                    // Find the exact item in the warehouse inventory
+                    const invItem = inventory.find(i => 
+                        i.item_category.toLowerCase() === cat.toLowerCase() && 
+                        i.size.toString().toLowerCase() === sz.toLowerCase()
+                    );
+
+                    // If we have it in stock, issue it instantly
+                    if (invItem && invItem.quantity > 0) {
+                        const res = await fetch(`${API_BASE_URL}/api/hr/issue-uniform`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ inventory_id: invItem.id, user_id: selectedUserForIssue.id, hr_email: hrEmail })
+                        });
+                        if (res.ok) issuedCount++;
+                    } else {
+                        // Keep track of what we couldn't fulfill
+                        outOfStock.push(`${cat} (Size ${sz})`);
+                    }
+                }
+            }
+        }
+
+        setIsSyncing(false);
+        
+        // Show a smart summary of what happened
+        if (issuedCount > 0) {
+            let msg = `Successfully issued ${issuedCount} items to ${selectedUserForIssue.full_name}!`;
+            if (outOfStock.length > 0) msg += `\n\nHowever, the following items are OUT OF STOCK and were skipped: ${outOfStock.join(', ')}`;
+            alert(msg);
+        } else {
+            alert(`Could not issue any items. They might be out of stock:\n${outOfStock.join('\n')}`);
+        }
+        
+        setIssueModal(false);
+        setSelectedUserForIssue(null);
+        fetchData();
     };
 
     const handlePrintProfile = async (userId) => {
@@ -723,8 +758,10 @@ const HrDashboard = () => {
                 </Modal>
 
                 {/* Issue Kit Modal */}
-                <Modal show={issueModal} onHide={() => { setIssueModal(false); setSelectedUserForIssue(null); setSelectedInventoryId(''); }} centered backdrop="static">
-                    <Modal.Header closeButton className="border-0 bg-primary text-white"><Modal.Title className="fw-bold fs-5">Issue Uniform Kit</Modal.Title></Modal.Header>
+               
+                {/* Smart Issue Kit Modal */}
+                <Modal show={issueModal} onHide={() => { setIssueModal(false); setSelectedUserForIssue(null); }} centered backdrop="static" size="lg">
+                    <Modal.Header closeButton className="border-0 bg-primary text-white"><Modal.Title className="fw-bold fs-5">Fulfillment Checklist</Modal.Title></Modal.Header>
                     <Modal.Body className="bg-light p-4">
                         {selectedUserForIssue && (
                             <>
@@ -733,28 +770,86 @@ const HrDashboard = () => {
                                     <div className="text-primary fs-5 fw-bolder">{selectedUserForIssue.full_name}</div>
                                     <Badge bg="secondary" className="mt-1">{selectedUserForIssue.blockchain_id}</Badge>
                                 </div>
-                                
-                                <div className="bg-white p-3 rounded-4 shadow-sm border mb-4 text-center">
-                                    <div className="small fw-bold text-muted mb-2">Requested Sizes on Record</div>
-                                    <div className="fw-bold text-dark">{selectedUserForIssue.uniform_details || 'No sizes specified in dossier.'}</div>
-                                </div>
 
-                                <Form onSubmit={handleIssueUniform}>
-                                    <Form.Group className="mb-4">
-                                        <Form.Label className="small fw-bold text-muted ps-1">Select Item from Inventory to Issue</Form.Label>
-                                        <Form.Select className="custom-input border-0 shadow-sm" required value={selectedInventoryId} onChange={e => setSelectedInventoryId(e.target.value)}>
-                                            <option value="">Choose item...</option>
-                                            {inventory.filter(i => i.quantity > 0).map(inv => (
-                                                <option key={inv.id} value={inv.id}>
-                                                    {inv.item_category} - Size {inv.size} ({inv.quantity} left)
-                                                </option>
-                                            ))}
-                                        </Form.Select>
-                                    </Form.Group>
-                                    <Button type="submit" variant="success" size="lg" className="w-100 fw-bold rounded-pill shadow-sm active-scale d-flex align-items-center justify-content-center">
-                                        Dispatch Item <ChevronRight size={18} className="ms-1"/>
-                                    </Button>
-                                </Form>
+                                <div className="bg-white rounded-4 shadow-sm border mb-4 overflow-hidden">
+                                    <div className="bg-light p-3 border-bottom text-center small fw-bold text-muted text-uppercase tracking-wide">
+                                        Requested Uniform Kit
+                                    </div>
+                                    
+                                    {selectedUserForIssue.uniform_details && selectedUserForIssue.uniform_details !== 'Not Specified' ? (
+                                        selectedUserForIssue.uniform_details.split(',').map((part, index) => {
+                                            const splitPart = part.split(':');
+                                            if (splitPart.length !== 2) return null;
+                                            const cat = splitPart[0].trim();
+                                            const reqSz = splitPart[1].trim();
+                                            
+                                            // 1. Check if this category was already issued to this user in the past
+                                            const alreadyIssued = issuedLogs.some(log => log.user_id === selectedUserForIssue.id && log.item_category.toLowerCase() === cat.toLowerCase());
+                                            
+                                            // 2. Filter warehouse stock to only show items for this specific category (e.g., only Shirts)
+                                            const availableStock = inventory.filter(i => i.item_category.toLowerCase() === cat.toLowerCase() && i.quantity > 0);
+                                            
+                                            // 3. Try to find the exact requested size in the warehouse
+                                            const exactMatch = availableStock.find(i => i.size.toString().toLowerCase() === reqSz.toLowerCase());
+                                            
+                                            return (
+                                                <div key={index} className="d-flex flex-column flex-md-row align-items-md-center justify-content-between p-3 border-bottom">
+                                                    <div className="mb-2 mb-md-0">
+                                                        <div className="fw-bold text-dark fs-6">{cat}</div>
+                                                        <div className="small text-muted">Requested Size: <strong className="text-dark">{reqSz}</strong></div>
+                                                    </div>
+                                                    
+                                                    {alreadyIssued ? (
+                                                        <Badge bg="success" className="px-3 py-2 rounded-pill"><CheckCircle size={14} className="me-1 mb-1"/> Already Issued</Badge>
+                                                    ) : (
+                                                        <div className="d-flex gap-2 align-items-center">
+                                                            <Form.Select 
+                                                                size="sm" 
+                                                                className="custom-input border-1 py-2 shadow-none" 
+                                                                style={{minWidth: '180px'}}
+                                                                id={`issue-select-${index}`}
+                                                                defaultValue={exactMatch ? exactMatch.id : ""}
+                                                            >
+                                                                <option value="">Choose Substitute...</option>
+                                                                {availableStock.map(inv => (
+                                                                    <option key={inv.id} value={inv.id}>Size {inv.size} ({inv.quantity} left)</option>
+                                                                ))}
+                                                            </Form.Select>
+                                                            <Button 
+                                                                variant="primary" 
+                                                                size="sm" 
+                                                                className="rounded-pill fw-bold px-3 py-2 active-scale"
+                                                                disabled={isSyncing}
+                                                                onClick={async () => {
+                                                                    const selId = document.getElementById(`issue-select-${index}`).value;
+                                                                    if(!selId) return alert(`Please select an available size to issue for the ${cat}.`);
+                                                                    
+                                                                    setIsSyncing(true);
+                                                                    const res = await fetch(`${API_BASE_URL}/api/hr/issue-uniform`, {
+                                                                        method: 'POST',
+                                                                        headers: { 'Content-Type': 'application/json' },
+                                                                        body: JSON.stringify({ inventory_id: selId, user_id: selectedUserForIssue.id, hr_email: hrEmail })
+                                                                    });
+                                                                    
+                                                                    if (res.ok) {
+                                                                        fetchData(); // Instantly refreshes stock and turns the row green
+                                                                    } else {
+                                                                        alert("Error issuing item. Stock might be empty.");
+                                                                        setIsSyncing(false);
+                                                                    }
+                                                                }}
+                                                            >
+                                                                {isSyncing ? <Spinner size="sm"/> : "Dispatch"}
+                                                            </Button>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            );
+                                        })
+                                    ) : (
+                                        <div className="text-center text-muted py-4">No sizes specified in dossier.</div>
+                                    )}
+                                </div>
                             </>
                         )}
                     </Modal.Body>
