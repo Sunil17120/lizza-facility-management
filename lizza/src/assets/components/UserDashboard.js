@@ -259,16 +259,28 @@ const UserDashboard = () => {
   };
 
   // Passive Tracking Engine for Automated Geofence Check-Out
+  // Passive Tracking Engine for Automated Geofence Check-Out & Live Map Sync
   useEffect(() => {
     if (!userEmail || !navigator.geolocation) return;
 
     const watchId = navigator.geolocation.watchPosition(
         (position) => {
+            const { latitude: lat, longitude: lon } = position.coords;
+
+            // 1. SILENT BACKGROUND SYNC FOR ADMIN LIVE MAP
+            // Only send if online, don't queue this if offline to save space.
+            if (navigator.onLine && checkedInRef.current) {
+                fetch(`${API_BASE_URL}/api/user/native-webhook`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: userEmail, lat: lat, lon: lon })
+                }).catch(() => {}); // Catch and ignore drops, it's just a passive ping
+            }
+
+            // 2. GEOFENCE AUTO-CHECKOUT PROTOCOL
             if (isProcessingRef.current || !checkedInRef.current || !currentSiteRef.current) return;
             
-            const { latitude: lat, longitude: lon } = position.coords;
             const separationDistance = calculateDistance(lat, lon, currentSiteRef.current.lat, currentSiteRef.current.lon);
-            
             const activeRadius = currentSiteRef.current.radius || 200;
             const checkoutThreshold = activeRadius + 30; // +30 meter buffer outside the perimeter
             

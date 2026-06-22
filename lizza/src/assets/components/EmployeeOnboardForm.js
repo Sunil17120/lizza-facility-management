@@ -630,7 +630,7 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
                             <Col xs={12} md={4}>
                                 <Form.Label className="small fw-bold text-dark ps-1">Shirt Size</Form.Label>
                                 <Form.Select className="custom-input border-0 shadow-sm" value={formData.uniformShirt} onChange={e => setFormData({...formData, uniformShirt: e.target.value})}>
-                                    <option value="">Select Size...</option><option value="S">S</option><option value="M">M</option><option value="L">L</option><option value="XL">XL</option><option value="XXL">XXL</option>
+                                    <option value="">Select Size...</option><option value="30">30</option><option value="32">32</option><option value="34">34</option><option value="36">36</option><option value="38">38</option><option value="40">40</option><option value="42">42</option><option value="44">44</option><option value="46">46</option>
                                 </Form.Select>
                             </Col>
                             <Col xs={6} md={4}>
