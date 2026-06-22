@@ -126,9 +126,26 @@ const AdminDashboard = () => {
 
   const verified = employees.filter(e => e?.is_verified);
   const fieldOfficers = verified.filter(e => e?.user_type === 'field_officer');
-  
-  const groupedReports = fieldReports.reduce((acc, visit) => {
-    if (!visit?.date) return acc;
+  const getFilteredReports = useCallback(() => {
+      return fieldReports.filter(visit => {
+          if (!visit.date) return false;
+          // visit.date is in format DD-Mon-YYYY (e.g., "18-Jun-2026")
+          const visitDate = new Date(visit.date);
+          
+          if (reportStartDate) {
+              const start = new Date(reportStartDate);
+              start.setHours(0, 0, 0, 0);
+              if (visitDate < start) return false;
+          }
+          if (reportEndDate) {
+              const end = new Date(reportEndDate);
+              end.setHours(23, 59, 59, 999);
+              if (visitDate > end) return false;
+          }
+          return true;
+      });
+  }, [fieldReports, reportStartDate, reportEndDate]);
+const groupedReports = getFilteredReports().reduce((acc, visit) => {
     if (!acc[visit.date]) acc[visit.date] = [];
     acc[visit.date].push(visit);
     return acc;
@@ -360,7 +377,9 @@ const AdminDashboard = () => {
       setTaskSubmitting(false);
   };
 
-  const downloadExcel = (withPhotos = false) => {
+const downloadExcel = (withPhotos = false) => {
+    const dataToExport = getFilteredReports(); // <-- Use filtered data
+    
     let tableHtml = `
       <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
       <head><meta charset="utf-8"></head><body>
@@ -375,7 +394,7 @@ const AdminDashboard = () => {
         <tbody>
     `;
 
-    fieldReports.forEach(r => {
+    dataToExport.forEach(r => {
       let imgTag = 'No Photo';
       if (withPhotos && r.photo) {
         const photoUrls = r.photo.split(',');
@@ -1051,26 +1070,53 @@ const AdminDashboard = () => {
             <Tab eventKey="reports" title="Analytics & Reports">
                 <Card className="glass-card mt-3">
                     <Card.Body className="p-4">
-                        <Row className="mb-4 g-3 bg-light p-3 rounded-4 border mx-0 align-items-end shadow-sm">
-                            <Col xs={12} md={3}>
-                                <Form.Label className="small fw-bold text-muted ps-1">Report Month</Form.Label>
-                                <Form.Select className="custom-input border-0" value={reportMonth} onChange={e => setReportMonth(parseInt(e.target.value))}>
-                                    {Array.from({length: 12}, (_, i) => <option key={i+1} value={i+1}>{new Date(0, i).toLocaleString('en-US', {month: 'long'})}</option>)}
-                                </Form.Select>
+                       <Row className="mb-4 g-3 bg-light p-3 rounded-4 border mx-0 align-items-end shadow-sm">
+                            {/* Replaced Month/Year with Start/End Date Pickers for better precision */}
+                            <Col xs={6} md={3}>
+                                <Form.Label className="small fw-bold text-muted ps-1">Start Date</Form.Label>
+                                <Form.Control className="custom-input border-0" type="date" value={reportStartDate} onChange={e => setReportStartDate(e.target.value)} />
                             </Col>
-                            <Col xs={12} md={3}>
-                                <Form.Label className="small fw-bold text-muted ps-1">Report Year</Form.Label>
-                                <Form.Control className="custom-input border-0" type="number" value={reportYear} onChange={e => setReportYear(parseInt(e.target.value))} />
+                            <Col xs={6} md={3}>
+                                <Form.Label className="small fw-bold text-muted ps-1">End Date</Form.Label>
+                                <Form.Control className="custom-input border-0" type="date" value={reportEndDate} onChange={e => setReportEndDate(e.target.value)} />
                             </Col>
+                            
+                            {/* Updated Employee Search with Autocomplete Dropdown */}
                             <Col xs={12} md={6}>
                                 <Form.Label className="small fw-bold text-muted ps-1">Employee Search</Form.Label>
-                                <Form.Control 
-                                    className="custom-input border-0" 
-                                    placeholder="Filter by name, ID, or email..." 
-                                    value={reportOfficerSearch} 
-                                    onChange={e => setReportOfficerSearch(e.target.value)} 
-                                />
+                                <div className="position-relative">
+                                    <Form.Control 
+                                        className="custom-input border-0" 
+                                        placeholder="Type name, ID, or email..." 
+                                        value={reportOfficerSearch} 
+                                        onChange={e => {
+                                            setReportOfficerSearch(e.target.value);
+                                            setShowReportSuggestions(true);
+                                        }}
+                                        onFocus={() => setShowReportSuggestions(true)}
+                                        onBlur={() => setTimeout(() => setShowReportSuggestions(false), 200)}
+                                    />
+                                    {showReportSuggestions && reportOfficerSearch && (
+                                        <div className="position-absolute w-100 bg-white shadow border rounded-3 mt-1 z-3" style={{ maxHeight: '250px', overflowY: 'auto', zIndex: 1050 }}>
+                                            {employees.filter(e => 
+                                                e.is_verified && 
+                                                (e.full_name?.toLowerCase().includes(reportOfficerSearch.toLowerCase()) || 
+                                                 e.blockchain_id?.toLowerCase().includes(reportOfficerSearch.toLowerCase()) ||
+                                                 e.email?.toLowerCase().includes(reportOfficerSearch.toLowerCase()))
+                                            ).map(emp => (
+                                                <div key={emp.id} className="p-3 border-bottom text-dark" style={{ cursor: 'pointer' }} onClick={() => {
+                                                    setReportOfficerSearch(emp.full_name); 
+                                                    setShowReportSuggestions(false);
+                                                }}>
+                                                    <div className="fw-bold">{emp.full_name}</div>
+                                                    <div className="small text-muted">{emp.blockchain_id} - {emp.user_type?.replace('_', ' ')}</div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
                             </Col>
+                            
                             <Col xs={12} md={4}>
                                 <Form.Label className="small fw-bold text-muted ps-1">Filter by Site</Form.Label>
                                 <Form.Select className="custom-input border-0" value={filterSite} onChange={e => setFilterSite(e.target.value)}>
@@ -1087,7 +1133,7 @@ const AdminDashboard = () => {
                                 </Form.Select>
                             </Col>
                             <Col xs={12} md={4}>
-                                <Button variant="primary" className="w-100 rounded-pill fw-bold shadow-sm d-flex align-items-center justify-content-center py-2" onClick={() => { fetchReportsData(); fetchAttendanceData(); }}>
+                                <Button variant="primary" className="w-100 rounded-pill fw-bold shadow-sm d-flex align-items-center justify-content-center py-2 active-scale" onClick={() => { fetchReportsData(); fetchAttendanceData(); }}>
                                     <Filter size={18} className="me-2"/> Apply Filters
                                 </Button>
                             </Col>
