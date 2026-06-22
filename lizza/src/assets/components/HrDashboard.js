@@ -41,6 +41,7 @@ const HrDashboard = () => {
     const [issueModal, setIssueModal] = useState(false);
     const [selectedUserForIssue, setSelectedUserForIssue] = useState(null);
     const [selectedInventoryId, setSelectedInventoryId] = useState('');
+    const [dispatchSearch, setDispatchSearch] = useState('');
 
     useEffect(() => {
         fetchData();
@@ -440,7 +441,38 @@ const HrDashboard = () => {
             alert("An error occurred while fetching the secure dossier data.");
         }
     };
+   const groupedDispatch = Object.values(issuedLogs.reduce((acc, log) => {
+        const date = new Date(log.issued_at).toLocaleDateString();
+        const key = `${log.user_id}-${date}`;
+        if (!acc[key]) {
+            acc[key] = { ...log, combined_items: [`${log.item_category} (${log.size_issued})`] };
+        } else {
+            acc[key].combined_items.push(`${log.item_category} (${log.size_issued})`);
+        }
+        return acc;
+    }, {})).sort((a, b) => new Date(b.issued_at) - new Date(a.issued_at));
 
+    // 2. Filter Dispatch History (Powers the new Search Bar)
+    const filteredDispatch = groupedDispatch.filter(log => {
+        const targetStaff = activeStaff.find(s => s.id === log.user_id) || pending.find(s => s.id === log.user_id);
+        const staffName = targetStaff ? targetStaff.full_name : `User ID: ${log.user_id}`;
+        const searchStr = `${staffName} ${log.combined_items.join(' ')} ${log.issued_by}`.toLowerCase();
+        return searchStr.includes(dispatchSearch.toLowerCase());
+    });
+
+    // 3. Auto-Hide Completed Uniform Requests
+    const activeUniformRequests = uniformRequests.filter(req => {
+        if (!req.details || req.details === 'Not Specified') return true;
+        const requestedParts = req.details.split(',').filter(p => p.includes(':'));
+        
+        // Check if every requested item category is already in the issuedLogs for this user
+        const allIssued = requestedParts.every(part => {
+            const cat = part.split(':')[0].trim();
+            return issuedLogs.some(log => log.user_id === req.user_id && log.item_category.toLowerCase() === cat.toLowerCase());
+        });
+        
+        return !allIssued; // Only keep it if it is NOT fully issued yet
+    });
     if (loading) return <div className="text-center py-5"><Spinner animation="border" variant="danger" /></div>;
 
     return (
@@ -516,10 +548,10 @@ const HrDashboard = () => {
                             ))}
                         </Row>
                     </Tab>
-                    <Tab eventKey="uniform-requests" title={`Approved Requests (${uniformRequests.length})`}>
+                    <Tab eventKey="uniform-requests" title={`Approved Requests (${activeUniformRequests.length})`}>
                         <Row className="g-3 mt-2">
-                            {uniformRequests.length === 0 ? <Col xs={12}><div className="text-center text-muted p-5 bg-white rounded-4 shadow-sm border border-light">No approved uniform requests waiting.</div></Col> :
-                                uniformRequests.map(req => (
+                            {activeUniformRequests.length === 0 ? <Col xs={12}><div className="text-center text-muted p-5 bg-white rounded-4 shadow-sm border border-light">No approved uniform requests waiting.</div></Col> :
+                                activeUniformRequests.map(req => (
                                 <Col xs={12} lg={6} key={req.req_id}>
                                     <Card className="glass-card h-100 border-start border-4 border-info">
                                         <Card.Body className="p-4 d-flex flex-column">
@@ -691,35 +723,55 @@ const HrDashboard = () => {
 
                     <Tab eventKey="tracking" title="Dispatch Tracking">
                         <Card className="glass-card border-0 mt-3">
-                            <Card.Header className="bg-white py-4 d-flex justify-content-between align-items-center border-bottom-0">
+                            <Card.Header className="bg-white py-4 d-flex flex-column flex-md-row justify-content-between align-items-md-center border-bottom-0 gap-3">
                                 <h5 className="m-0 fw-bold d-flex align-items-center text-dark"><MapPin className="me-2 text-success"/> Uniform Dispatch History</h5>
+                                
+                                {/* NEW: Search Bar */}
+                                <div className="position-relative" style={{ minWidth: '300px' }}>
+                                    <Search size={18} className="position-absolute text-muted" style={{top: '12px', left: '14px'}} />
+                                    <Form.Control 
+                                        type="text" 
+                                        placeholder="Search by name, item, or HR email..." 
+                                        className="custom-input border-0 bg-light shadow-sm w-100"
+                                        style={{paddingLeft: '40px'}}
+                                        value={dispatchSearch}
+                                        onChange={e => setDispatchSearch(e.target.value)}
+                                    />
+                                </div>
                             </Card.Header>
+
                             <Card.Body className="p-0">
-                                {issuedLogs.length === 0 ? <div className="text-center text-muted py-5 border-top bg-light">No dispatch records found.</div> : (
+                                {filteredDispatch.length === 0 ? <div className="text-center text-muted py-5 border-top bg-light">No dispatch records found matching your search.</div> : (
                                     <div className="table-responsive">
                                         <table className="table table-hover align-middle mb-0">
                                             <thead className="table-light text-muted small text-uppercase">
                                                 <tr>
                                                     <th className="ps-4">Date Issued</th>
-                                                    <th>Field Officer (Requested By)</th>
+                                                    <th>Field Officer / Approver</th>
                                                     <th>Ground Staff (Recipient)</th>
-                                                    <th>Item Category & Size</th>
+                                                    <th>Items Dispatched</th>
                                                     <th>Authorized By (HR)</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                {issuedLogs.map(log => {
-                                                    // Cross-reference the database to find the recipient and their onboarder
+                                                {filteredDispatch.map(log => {
                                                     const targetStaff = activeStaff.find(s => s.id === log.user_id) || pending.find(s => s.id === log.user_id);
                                                     const staffName = targetStaff ? targetStaff.full_name : `User ID: ${log.user_id}`;
                                                     const requestedBy = targetStaff?.onboarded_by_email ? targetStaff.onboarded_by_email : 'Direct HR / Admin';
                                                     
                                                     return (
-                                                        <tr key={log.id}>
+                                                        <tr key={`${log.user_id}-${log.issued_at}`}>
                                                             <td className="ps-4 py-3 fw-bold text-dark">{new Date(log.issued_at).toLocaleDateString()}</td>
                                                             <td><Badge bg="info" className="text-dark fw-bold">{requestedBy}</Badge></td>
                                                             <td><div className="fw-bold text-dark">{staffName}</div></td>
-                                                            <td className="fw-bold text-success">{log.item_category} - Size {log.size_issued}</td>
+                                                            
+                                                            {/* Combined Items on one line */}
+                                                            <td>
+                                                                <div className="fw-bold text-success">
+                                                                    {log.combined_items.join(', ')}
+                                                                </div>
+                                                            </td>
+                                                            
                                                             <td className="text-muted small">{log.issued_by}</td>
                                                         </tr>
                                                     );
