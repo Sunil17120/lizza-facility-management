@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Container, Row, Col, Card, Button, Badge, Modal, Form, Tabs, Tab, Spinner } from 'react-bootstrap';
-import { UserCheck, Shirt, PackagePlus, ShieldAlert, FileText, CheckCircle, RefreshCw, Users, Eye, ChevronRight, Minus, PlusCircle, Trash2, Building2, MapPin, Plus } from 'lucide-react';
+import { UserCheck, Shirt, PackagePlus, ShieldAlert, FileText, CheckCircle, RefreshCw, Users, Eye, ChevronRight, Minus, PlusCircle, Trash2, Building2, MapPin, Plus, Search } from 'lucide-react';
 import logoImg from './logo.png';
 
 const API_BASE_URL = "https://sunil0034-lizza-facility-backend.hf.space";
