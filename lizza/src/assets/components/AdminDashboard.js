@@ -488,6 +488,41 @@ const AdminDashboard = () => {
       }
 
       const emp = result.data;
+      const companyTerms = [
+        "If the applicant is selected, he/she should work with company for a period of minimum three months.",
+        "Employee agree that will work faithfully without any issues, and will be present in time for duty and complete the duty hrs as per schedule assigned.",
+        "Selected candidate should pay 2200/- as security deposit for providing uniform.",
+        "Selected candidate should submit any one original document while joining, same will be returned back after 1month as due to verification purpose.",
+        "Candidate who are selected and deployed in respective sites while in duty they are sole responsible for any theft or pilerage and they had to be borne by them.",
+        "A minimum of one-month notice has to given before leaving the job or a month salary will be deducted.",
+        "Employer may terminate Candidate (Employee) if any mis appropriation occurs in duty without prior notice.",
+        "The Selected Employee agree that any property like sim card or mobile should returned of at the time of resignation/termination.",
+        "Selected Employee should be flexible towards work like in shifts process as per Employer.",
+        "Resigned Employee salary will release after cmpletetion of 30 days of notice period, if not then one month salary will be on hold and that will be clear with a fine of 4000/-(every month on 25th).",
+        "The above all terms and conditions are Solley Accepted and signed."
+      ];
+      const termsHtml = `
+          <h3 class="section-header">10. Terms & Conditions</h3>
+          <div class="terms-box">
+              <ol style="padding-left: 20px; margin-bottom: 20px;">
+                  ${companyTerms.map(term => `<li style="margin-bottom: 8px;">${term}</li>`).join('')}
+              </ol>
+              <p><strong>Declaration:</strong> I, <strong>${emp?.full_name || 'the employee'}</strong>, confirm that I have read, understood, and agreed to the above terms.</p>
+              <p style="color: #e31e24;"><em>This document is digitally signed and verified by the LIZZA HR System.</em></p>
+              
+              <div style="margin-top: 40px; display: flex; justify-content: space-between; align-items: flex-end;">
+                  <div style="text-align: center;">
+                      <div style="border-bottom: 1px solid #000; width: 200px; margin-bottom: 5px;"></div>
+                      <strong>Employee Signature</strong>
+                  </div>
+                  <div style="text-align: center; border: 2px solid #e31e24; padding: 15px; border-radius: 8px; width: 220px;">
+                      <div style="font-size: 10px; color: #e31e24; margin-bottom: 5px;">[HR STAMP & SIGN]</div>
+                      <div style="height: 40px;"></div>
+                      <strong>Authorized Signatory</strong>
+                  </div>
+              </div>
+          </div>
+      `;
       const printWindow = window.open('', '_blank');
       
       let docsHtml = '';
@@ -657,7 +692,7 @@ const AdminDashboard = () => {
 
             <h3 class="section-header">9. Reference Details</h3>
             ${refHtml}
-
+            ${termsHtml}
             <div style="page-break-before: always;"></div>
             <h3 class="section-header" style="text-align:center; background-color:#0f172a; color:white; padding:12px; border-radius: 8px;">APPENDIX: OFFICIAL DOCUMENTS & EVIDENCE</h3>
             ${docsHtml || '<p style="text-align: center; color: #94a3b8; margin-top: 30px;">No documents uploaded to this profile.</p>'}

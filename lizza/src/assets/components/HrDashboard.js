@@ -31,6 +31,7 @@ const HrDashboard = () => {
     const [activeStaff, setActiveStaff] = useState([]);
     const [inventory, setInventory] = useState([]);
     const [issuedLogs, setIssuedLogs] = useState([]); 
+    const [uniformRequests, setUniformRequests] = useState([]);
     const [loading, setLoading] = useState(true);
     const [isSyncing, setIsSyncing] = useState(false);
 
@@ -45,13 +46,14 @@ const HrDashboard = () => {
         fetchData();
     }, []);
 
-    const fetchData = async () => {
+   const fetchData = async () => {
         setIsSyncing(true);
-        const [pendRes, invRes, staffRes, issuedRes] = await Promise.all([
+        const [pendRes, invRes, staffRes, issuedRes, uniReqRes] = await Promise.all([
             fetch(`${API_BASE_URL}/api/hr/pending-approvals?hr_email=${hrEmail}`).catch(() => ({ok: false})),
             fetch(`${API_BASE_URL}/api/hr/inventory`).catch(() => ({ok: false})),
             fetch(`${API_BASE_URL}/api/admin/employees?admin_email=${hrEmail}`).catch(() => ({ok: false})),
-            fetch(`${API_BASE_URL}/api/hr/issued-uniforms`).catch(() => ({ok: false})) 
+            fetch(`${API_BASE_URL}/api/hr/issued-uniforms`).catch(() => ({ok: false})),
+            fetch(`${API_BASE_URL}/api/hr/pending-uniforms`).catch(() => ({ok: false})) // <-- Added
         ]);
         
         let currentInventory = [];
@@ -66,6 +68,9 @@ const HrDashboard = () => {
         }
         if (issuedRes.ok) {
             setIssuedLogs(await issuedRes.json());
+        }
+        if (uniReqRes && uniReqRes.ok) {
+            setUniformRequests(await uniReqRes.json()); // <-- Added
         }
         
         setLoading(false);
@@ -185,6 +190,41 @@ const HrDashboard = () => {
             }
 
             const emp = result.data;
+            const companyTerms = [
+        "If the applicant is selected, he/she should work with company for a period of minimum three months.",
+        "Employee agree that will work faithfully without any issues, and will be present in time for duty and complete the duty hrs as per schedule assigned.",
+        "Selected candidate should pay 2200/- as security deposit for providing uniform.",
+        "Selected candidate should submit any one original document while joining, same will be returned back after 1month as due to verification purpose.",
+        "Candidate who are selected and deployed in respective sites while in duty they are sole responsible for any theft or pilerage and they had to be borne by them.",
+        "A minimum of one-month notice has to given before leaving the job or a month salary will be deducted.",
+        "Employer may terminate Candidate (Employee) if any mis appropriation occurs in duty without prior notice.",
+        "The Selected Employee agree that any property like sim card or mobile should returned of at the time of resignation/termination.",
+        "Selected Employee should be flexible towards work like in shifts process as per Employer.",
+        "Resigned Employee salary will release after cmpletetion of 30 days of notice period, if not then one month salary will be on hold and that will be clear with a fine of 4000/-(every month on 25th).",
+        "The above all terms and conditions are Solley Accepted and signed."
+      ];
+      const termsHtml = `
+          <h3 class="section-header">10. Terms & Conditions</h3>
+          <div class="terms-box">
+              <ol style="padding-left: 20px; margin-bottom: 20px;">
+                  ${companyTerms.map(term => `<li style="margin-bottom: 8px;">${term}</li>`).join('')}
+              </ol>
+              <p><strong>Declaration:</strong> I, <strong>${emp?.full_name || 'the employee'}</strong>, confirm that I have read, understood, and agreed to the above terms.</p>
+              <p style="color: #e31e24; font-weight: bold;"><em>This document is digitally signed and verified by the LIZZA HR System.</em></p>
+              
+              <div style="margin-top: 40px; display: flex; justify-content: space-between; align-items: flex-end;">
+                  <div style="text-align: center;">
+                      <div style="border-bottom: 1px solid #000; width: 200px; margin-bottom: 5px;"></div>
+                      <strong>Employee Signature</strong>
+                  </div>
+                  <div style="text-align: center; border: 2px solid #e31e24; padding: 15px; border-radius: 8px; width: 220px;">
+                      <div style="font-size: 10px; color: #e31e24; margin-bottom: 5px;">[HR STAMP & SIGN]</div>
+                      <div style="height: 40px;"></div>
+                      <strong>Authorized Signatory</strong>
+                  </div>
+              </div>
+          </div>
+      `;
             const printWindow = window.open('', '_blank');
             
             let docsHtml = '';
@@ -249,7 +289,7 @@ const HrDashboard = () => {
                     .doc-title { font-size: 14px; color: #555; margin-bottom: 10px; text-transform: uppercase; border-bottom: 1px dashed #eee; padding-bottom: 5px; }
                     .doc-img { max-width: 100%; max-height: 450px; border: 1px solid #ccc; border-radius: 4px; padding: 5px; object-fit: contain; }
                     .text-muted { color: #6c757d; font-style: italic; }
-                    .mobile-back-btn { background: #e31e24; color: white; border: none; padding: 16px 32px; font-size: 18px; border-radius: 50px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 12px rgba(227,30,36,0.3); margin-top: 20px; }
+                    .mobile-back-btn { background: #e31e24; color: white; border: none; padding: 16px 32px; font-size: 18px; border-radius: 50px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 12px rgba(227,30,36,0.3); margin-top: 20px; pointer-events: auto; -webkit-tap-highlight-color: transparent; }
                     @media print {
                         .doc-section, table { page-break-inside: avoid; }
                         body { padding: 0; }
@@ -279,7 +319,7 @@ const HrDashboard = () => {
                     <div class="details">
                       <table>
                         <tr><th>Full Name</th><td style="font-weight: bold; font-size: 16px;">${emp?.full_name || 'N/A'}</td></tr>
-                        <tr><th>System Role</th><td style="text-transform: uppercase; font-weight:bold; color: #0d6efd;">${emp?.user_type || 'N/A'}</td></tr>
+                        <tr><th>System Role</th><td style="text-transform: uppercase; font-weight:bold; color: #fd0d0d;">${emp?.user_type || 'N/A'}</td></tr>
                         <tr><th>Assigned Dept/Site</th><td>${emp?.department || 'N/A'} - ${emp?.unit_name || 'Dynamic'}</td></tr>
                         <tr><th>Onboarded By</th><td style="color:#e31e24; font-weight:bold;">${emp?.onboarded_by_name || 'Admin / Direct Hire'}</td></tr>
                         <tr><th>Designation</th><td>${emp?.designation || 'N/A'}</td></tr>
@@ -341,13 +381,14 @@ const HrDashboard = () => {
 
                   <h3 class="section-header">9. Reference Details</h3>
                   ${refHtml}
+                  ${termsHtml}
 
                   <div style="page-break-before: always;"></div>
                   <h3 class="section-header" style="text-align:center; background-color:#0f172a; color:white; padding:12px; border-radius: 8px;">APPENDIX: OFFICIAL DOCUMENTS & EVIDENCE</h3>
                   ${docsHtml || '<p style="text-align: center; color: #94a3b8; margin-top: 30px;">No documents uploaded to this profile.</p>'}
                   
                   <div class="no-print" style="text-align: center; margin: 40px 0; padding: 20px;">
-                      <button class="mobile-back-btn" onclick="window.close(); window.history.back();">← Return to Dashboard</button>
+                      <button class="mobile-back-btn" onclick="window.close();">← Close PDF Tab</button>
                   </div>
 
                   <script>
@@ -365,7 +406,7 @@ const HrDashboard = () => {
         }
     };
 
-    if (loading) return <div className="text-center py-5"><Spinner animation="border" variant="primary" /></div>;
+    if (loading) return <div className="text-center py-5"><Spinner animation="border" variant="danger" /></div>;
 
     return (
         <>
@@ -440,6 +481,41 @@ const HrDashboard = () => {
                             ))}
                         </Row>
                     </Tab>
+                    <Tab eventKey="uniform-requests" title={`Approved Requests (${uniformRequests.length})`}>
+                        <Row className="g-3 mt-2">
+                            {uniformRequests.length === 0 ? <Col xs={12}><div className="text-center text-muted p-5 bg-white rounded-4 shadow-sm border border-light">No approved uniform requests waiting.</div></Col> :
+                                uniformRequests.map(req => (
+                                <Col xs={12} lg={6} key={req.req_id}>
+                                    <Card className="glass-card h-100 border-start border-4 border-info">
+                                        <Card.Body className="p-4 d-flex flex-column">
+                                            <div className="d-flex justify-content-between align-items-start mb-3">
+                                                <div>
+                                                    <h5 className="fw-bold mb-1">{req.emp_name}</h5>
+                                                    <Badge bg="info" className="mb-2 text-dark">{req.emp_id}</Badge>
+                                                    <div className="small text-muted"><strong>Requested By:</strong> {req.requested_by}</div>
+                                                </div>
+                                            </div>
+                                            
+                                            <div className="bg-light p-3 rounded-4 mb-4 border shadow-sm">
+                                                <div className="small fw-bold text-primary mb-1">Approved Kit Details</div>
+                                                <div className="fw-bold text-dark">{req.details}</div>
+                                            </div>
+
+                                            <div className="d-flex gap-2 mt-auto">
+                                                <Button variant="danger" className="flex-grow-1 rounded-pill fw-bold shadow-sm active-scale d-flex align-items-center justify-content-center" onClick={() => { 
+                                                    const userObj = activeStaff.find(u => u.id === req.user_id) || {id: req.user_id, full_name: req.emp_name, blockchain_id: req.emp_id, uniform_details: req.details};
+                                                    setSelectedUserForIssue(userObj); 
+                                                    setIssueModal(true); 
+                                                }}>
+                                                    <Shirt size={16} className="me-2"/> Fulfill & Issue Kit
+                                                </Button>
+                                            </div>
+                                        </Card.Body>
+                                    </Card>
+                                </Col>
+                            ))}
+                        </Row>
+                    </Tab>
 
                     <Tab eventKey="directory" title="Active Staff Directory">
                         
@@ -448,13 +524,13 @@ const HrDashboard = () => {
                             {fieldOfficersAndManagers.length === 0 ? <Col xs={12}><div className="text-center text-muted p-4 bg-white rounded-4 shadow-sm border border-light">No supervisory staff found.</div></Col> :
                                 fieldOfficersAndManagers.map(emp => (
                                 <Col xs={12} md={6} lg={4} key={emp.id}>
-                                    <Card className="glass-card h-100 border-start border-4 border-primary bg-primary bg-opacity-10">
+                                    <Card className="glass-card h-100 border-start border-4 border-primary bg-danger bg-opacity-10">
                                         <Card.Body className="p-4 d-flex flex-column">
                                             <div className="d-flex align-items-center mb-3">
                                                 <img src={emp.profile_photo_path || "https://via.placeholder.com/150"} alt="Profile" className="rounded-circle shadow-sm me-3 bg-white p-1" style={{width: '60px', height: '60px', objectFit: 'cover'}} />
                                                 <div>
                                                     <h6 className="fw-bold mb-0 text-dark">{emp.full_name}</h6>
-                                                    <Badge bg="primary" className="mt-1">{emp.blockchain_id}</Badge>
+                                                    <Badge bg="danger" className="mt-1">{emp.blockchain_id}</Badge>
                                                 </div>
                                             </div>
                                             <div className="small text-muted mb-4 fw-bold">
@@ -465,7 +541,7 @@ const HrDashboard = () => {
                                                 <Button variant="outline-dark" size="sm" className="rounded-pill bg-white fw-bold d-flex align-items-center justify-content-center active-scale shadow-sm" onClick={() => handlePrintProfile(emp.id)}>
                                                     <Eye size={16} className="me-2"/> View Dossier PDF
                                                 </Button>
-                                                <Button variant="primary" size="sm" className="rounded-pill fw-bold shadow-sm d-flex align-items-center justify-content-center active-scale" onClick={() => { setSelectedUserForIssue(emp); setIssueModal(true); }}>
+                                                <Button variant="danger" size="sm" className="rounded-pill fw-bold shadow-sm d-flex align-items-center justify-content-center active-scale" onClick={() => { setSelectedUserForIssue(emp); setIssueModal(true); }}>
                                                     <Shirt size={16} className="me-2"/> Issue Uniform Kit to Officer
                                                 </Button>
                                             </div>

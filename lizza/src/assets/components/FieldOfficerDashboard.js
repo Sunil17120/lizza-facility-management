@@ -15,6 +15,7 @@ const base64ToFile = (base64String, filename) => { const arr = base64String.spli
 const compressImage = async (file, maxWidth = 1000, quality = 0.7) => { return new Promise((resolve) => { const reader = new FileReader(); reader.readAsDataURL(file); reader.onload = (event) => { const img = new Image(); img.src = event.target.result; img.onload = () => { const canvas = document.createElement('canvas'); let width = img.width; let height = img.height; if (width > maxWidth) { height = Math.round((height * maxWidth) / width); width = maxWidth; } canvas.width = width; canvas.height = height; const ctx = canvas.getContext('2d'); ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; ctx.drawImage(img, 0, 0, width, height); canvas.toBlob((blob) => { resolve(new File([blob], file.name, { type: 'image/jpeg', lastModified: Date.now() })); }, 'image/jpeg', quality); }; }; }); };
 const calculateDistance = (lat1, lon1, lat2, lon2) => { const R = 6371000; const toRad = (deg) => (deg * Math.PI) / 180; const dLat = toRad(lat2 - lat1); const dLon = toRad(lon2 - lon1); const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2; return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)); };
 
+
 const getFormattedDateStr = (date = new Date()) => {
     const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
     const d = date.getDate().toString().padStart(2, '0');
@@ -78,8 +79,19 @@ const FieldOfficerDashboard = () => {
   // --- New Modals State ---
   const [showAddEmp, setShowAddEmp] = useState(false);
   const [showUniformModal, setShowUniformModal] = useState(false);
-  const [uniformReqForm, setUniformReqForm] = useState({ target_user_id: '', target_user_name: '', item_details: '' });
+ const [uniformReqForm, setUniformReqForm] = useState({ 
+      target_user_id: '', 
+      shirtSize: '', 
+      pantSize: '', 
+      shoeSize: '', 
+      otherShirt: '', 
+      otherPant: '', 
+      otherShoe: '' 
+  });
   const [teamMembers, setTeamMembers] = useState([]);
+
+  // Safely filter recruits INSIDE the component
+  const myRecruits = teamMembers.filter(m => m.onboarded_by_email === userEmail);
 
   const isFetchingRef = useRef(false);
   const isProcessingRef = useRef(false);
@@ -231,10 +243,14 @@ const FieldOfficerDashboard = () => {
     const syncQueue = async (storageKey, endpoint, mapFunc) => {
         let queue = JSON.parse(localStorage.getItem(storageKey) || '[]');
         let failed = [];
-        for (let item of queue) {
+       for (let item of queue) {
             const req = mapFunc ? mapFunc(item) : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(item) };
-            const res = await fetch(`${API_BASE_URL}${endpoint}`, req).catch(() => ({ ok: false }));
-            if (!res || !res.ok) failed.push(item);
+            const res = await fetch(`${API_BASE_URL}${endpoint}`, req).catch(() => null);
+            
+            // CRITICAL FIX: Only keep in queue if network is dead or server crashed (500+)
+            if (!res || res.status >= 500) {
+                failed.push(item);
+            }
         }
         localStorage.setItem(storageKey, JSON.stringify(failed));
     };
@@ -389,7 +405,7 @@ const FieldOfficerDashboard = () => {
     }
   }, [userEmail]);
 
-  useEffect(() => {
+ useEffect(() => {
     if (!userEmail || !navigator.geolocation) return;
 
     const watchId = navigator.geolocation.watchPosition(
@@ -398,7 +414,18 @@ const FieldOfficerDashboard = () => {
             const { latitude: lat, longitude: lon, accuracy } = position.coords;
             const timestamp = new Date(position.timestamp).toISOString();
             lastSentPositionRef.current = { lat, lon, timestamp };
+            
+            // 1. Process geofences locally
             processNewLocation(lat, lon, accuracy, timestamp); 
+            
+            // 2. BROADCAST TO ADMIN MAP: Silently send GPS to backend if On Duty
+            if (dutyStatusRef.current === 'ON_DUTY') {
+                fetch(`${API_BASE_URL}/api/user/native-webhook`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: userEmail, lat: lat, lon: lon })
+                }).catch(() => {}); // Fails silently so it doesn't interrupt the user
+            }
         }, 
         () => {}, 
         { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
@@ -407,7 +434,7 @@ const FieldOfficerDashboard = () => {
     return () => navigator.geolocation.clearWatch(watchId);
   }, [userEmail, processNewLocation]);
 
-  const handleDayShiftAction = (action) => {
+ const handleDayShiftAction = async (action) => {
     if (action === 'START' || action === 'RESUME') { 
         setDutyStatus('ON_DUTY'); 
         if (isApp) LizzaTracker.startTracking({ email: userEmail });
@@ -418,14 +445,28 @@ const FieldOfficerDashboard = () => {
         triggerLocalNotification(action === 'BREAK' ? "Break Started" : "Shift Ended", "Location tracking has been paused.");
     }
 
-    Promise.resolve().then(() => {
-        const payload = { email: userEmail, action: action, timestamp: new Date().toISOString() };
+    const payload = { email: userEmail, action: action, timestamp: new Date().toISOString() };
+
+    if (navigator.onLine) {
+        try {
+            const res = await fetch(`${API_BASE_URL}/api/shift/day-action`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (!res.ok && res.status >= 500) throw new Error("Server Crash");
+        } catch (error) {
+            const q = JSON.parse(localStorage.getItem('offlineShiftQueue') || '[]');
+            q.push(payload);
+            localStorage.setItem('offlineShiftQueue', JSON.stringify(q));
+            updateQueueCounts();
+        }
+    } else {
         const q = JSON.parse(localStorage.getItem('offlineShiftQueue') || '[]');
         q.push(payload);
         localStorage.setItem('offlineShiftQueue', JSON.stringify(q));
         updateQueueCounts();
-        if (navigator.onLine) syncOfflineData();
-    });
+    }
   };
 
   const updateTaskForm = (taskId, key, val) => {
@@ -505,10 +546,18 @@ const FieldOfficerDashboard = () => {
   };
 
   // --- Handle Uniform Request ---
+ // --- Handle Uniform Request ---
   const handleUniformRequestSubmit = async (e) => {
     e.preventDefault();
-    if (!uniformReqForm.target_user_id || !uniformReqForm.item_details.trim()) {
-        return alert("Please select an employee and provide item details.");
+    
+    const finalShirt = uniformReqForm.shirtSize === 'Other' ? uniformReqForm.otherShirt : uniformReqForm.shirtSize;
+    const finalPant = uniformReqForm.pantSize === 'Other' ? uniformReqForm.otherPant : uniformReqForm.pantSize;
+    const finalShoe = uniformReqForm.shoeSize === 'Other' ? uniformReqForm.otherShoe : uniformReqForm.shoeSize;
+    
+    const combinedItemDetails = `Shirt: ${finalShirt || 'N/A'}, Pant: ${finalPant || 'N/A'}, Shoe: ${finalShoe || 'N/A'}`;
+    
+    if (!uniformReqForm.target_user_id || !finalShirt || !finalPant || !finalShoe) {
+        return alert("Please select an employee and provide all uniform sizes.");
     }
     
     const res = await fetch(`${API_BASE_URL}/api/uniform/request-adhoc`, {
@@ -517,7 +566,7 @@ const FieldOfficerDashboard = () => {
         body: JSON.stringify({
             target_user_id: uniformReqForm.target_user_id,
             requester_email: userEmail,
-            item_details: uniformReqForm.item_details,
+            item_details: combinedItemDetails,
             fo_email: userEmail
         })
     });
@@ -525,12 +574,13 @@ const FieldOfficerDashboard = () => {
     if (res.ok) {
         alert("Uniform request successfully submitted to Admin/HR!");
         setShowUniformModal(false);
-        setUniformReqForm({ target_user_id: '', target_user_name: '', item_details: '' });
+        setUniformReqForm({ 
+            target_user_id: '', shirtSize: '', pantSize: '', shoeSize: '', otherShirt: '', otherPant: '', otherShoe: '' 
+        });
     } else {
         alert("Failed to submit uniform request.");
     }
   };
-
   const todayStr = new Date().toISOString().split('T')[0];
   const activeTaskObj = (checkedInSite || proximateSite) ? assignedTasks.find(t => Number(t.site_id) === Number((checkedInSite || proximateSite).id) && t.date === todayStr && t.status === 'PENDING') : null;
 
@@ -601,20 +651,20 @@ const FieldOfficerDashboard = () => {
               <Button variant="light" size="sm" className="rounded-circle shadow-sm p-2 active-scale" onClick={fetchData} disabled={isSyncing}>
                  <RefreshCw size={20} className={isSyncing ? "text-muted" : "text-primary"} />
               </Button>
-              <Button variant="primary" className="rounded-pill shadow-sm fw-bold active-scale d-none d-md-flex align-items-center px-4" onClick={() => setShowAddEmp(true)}>
+              <Button variant="danger" className="rounded-pill shadow-sm fw-bold active-scale d-none d-md-flex align-items-center px-4" onClick={() => setShowAddEmp(true)}>
                   <Plus className="me-1" size={18}/> Onboard Staff
               </Button>
-              <Button variant="outline-primary" className="rounded-pill shadow-sm fw-bold active-scale d-none d-md-flex align-items-center px-4" onClick={() => setShowUniformModal(true)}>
+              <Button variant="outline-danger" className="rounded-pill shadow-sm fw-bold active-scale d-none d-md-flex align-items-center px-4" onClick={() => setShowUniformModal(true)}>
                   <Shirt className="me-1" size={18}/> Request Uniform
               </Button>
             </div>
           </div>
 
           <div className="d-md-none mb-4 px-2 d-flex gap-2">
-              <Button variant="primary" className="w-100 rounded-pill shadow-sm fw-bold active-scale d-flex align-items-center justify-content-center py-2" onClick={() => setShowAddEmp(true)}>
+              <Button variant="danger" className="w-100 rounded-pill shadow-sm fw-bold active-scale d-flex align-items-center justify-content-center py-2" onClick={() => setShowAddEmp(true)}>
                   <Plus className="me-2" size={18}/> Onboard
               </Button>
-              <Button variant="outline-primary" className="w-100 rounded-pill shadow-sm fw-bold active-scale d-flex align-items-center justify-content-center py-2" onClick={() => setShowUniformModal(true)}>
+              <Button variant="outline-danger" className="w-100 rounded-pill shadow-sm fw-bold active-scale d-flex align-items-center justify-content-center py-2" onClick={() => setShowUniformModal(true)}>
                   <Shirt className="me-2" size={18}/> Uniforms
               </Button>
           </div>
@@ -942,23 +992,67 @@ const FieldOfficerDashboard = () => {
                   />
               </Modal.Body>
           </Modal>
-
-          <Modal show={showUniformModal} onHide={() => setShowUniformModal(false)} centered backdrop="static">
-              <Modal.Header closeButton className="border-0 bg-primary text-white"><Modal.Title className="fw-bold fs-5 d-flex align-items-center"><Shirt size={20} className="me-2"/> Request Uniform Kit</Modal.Title></Modal.Header>
+<Modal show={showUniformModal} onHide={() => setShowUniformModal(false)} centered backdrop="static">
+              <Modal.Header closeButton className="border-0 bg-danger text-white">
+                  <Modal.Title className="fw-bold fs-5 d-flex align-items-center">
+                      <Shirt size={20} className="me-2"/> Request Uniform Kit
+                  </Modal.Title>
+              </Modal.Header>
               <Modal.Body className="bg-light p-4 rounded-bottom">
                   <Form onSubmit={handleUniformRequestSubmit}>
-                      <Form.Group className="mb-3">
-                          <Form.Label className="small fw-bold text-muted ps-1">Select Employee</Form.Label>
-                          <Form.Select className="custom-input border-0 shadow-sm fw-bold text-dark" value={uniformReqForm.target_user_id} onChange={(e) => setUniformReqForm({...uniformReqForm, target_user_id: e.target.value})}>
-                              <option value="">Choose your staff member...</option>
-                              {teamMembers.map(m => <option key={m.id} value={m.id}>{m.full_name} ({m.blockchain_id})</option>)}
-                          </Form.Select>
-                      </Form.Group>
                       <Form.Group className="mb-4">
-                          <Form.Label className="small fw-bold text-muted ps-1">Required Items & Sizes</Form.Label>
-                          <Form.Control as="textarea" rows={3} className="custom-input border-0 shadow-sm" placeholder="e.g. Shirt Size L, Pant Waist 34, Shoes size 9..." value={uniformReqForm.item_details} onChange={(e) => setUniformReqForm({...uniformReqForm, item_details: e.target.value})} required/>
+                          <Form.Label className="small fw-bold text-danger ps-1">Select Employee (Your Recruits Only)</Form.Label>
+                          <Form.Select className="custom-input border-danger border-opacity-50 bg-danger bg-opacity-10 shadow-sm fw-bold text-dark" value={uniformReqForm.target_user_id} onChange={(e) => setUniformReqForm({...uniformReqForm, target_user_id: e.target.value})} required>
+                              <option value="">Choose your staff member...</option>
+                              {myRecruits.map(m => <option key={m.id} value={m.id}>{m.full_name} ({m.blockchain_id || 'Pending ID'})</option>)}
+                          </Form.Select>
+                          {myRecruits.length === 0 && <small className="text-muted mt-1 d-block">You have not onboarded any staff yet.</small>}
                       </Form.Group>
-                      <Button type="submit" variant="primary" className="w-100 btn-premium shadow-sm active-scale">Submit Request to Admin</Button>
+
+                      <Row className="g-3 mb-4">
+                          <Col xs={12} md={4}>
+                              <Form.Group>
+                                  <Form.Label className="small fw-bold text-muted ps-1">Shirt Size</Form.Label>
+                                  <Form.Select className="custom-input border-0 shadow-sm" value={uniformReqForm.shirtSize} onChange={(e) => setUniformReqForm({...uniformReqForm, shirtSize: e.target.value})} required>
+                                      <option value="">Select...</option>
+                                      {['32', '34', '36', '38', '40', '42', '44', '46', 'Other'].map(s => <option key={s} value={s}>{s}</option>)}
+                                  </Form.Select>
+                                  {uniformReqForm.shirtSize === 'Other' && (
+                                      <Form.Control className="custom-input border-danger border-2 shadow-sm mt-2 fade-in" placeholder="Specify size" value={uniformReqForm.otherShirt} onChange={(e) => setUniformReqForm({...uniformReqForm, otherShirt: e.target.value})} required />
+                                  )}
+                              </Form.Group>
+                          </Col>
+                          
+                          <Col xs={12} md={4}>
+                              <Form.Group>
+                                  <Form.Label className="small fw-bold text-muted ps-1">Pant Size</Form.Label>
+                                  <Form.Select className="custom-input border-0 shadow-sm" value={uniformReqForm.pantSize} onChange={(e) => setUniformReqForm({...uniformReqForm, pantSize: e.target.value})} required>
+                                      <option value="">Select...</option>
+                                      {['28', '30', '32', '34', '36', '38', '40', '42', 'Other'].map(s => <option key={s} value={s}>{s}</option>)}
+                                  </Form.Select>
+                                  {uniformReqForm.pantSize === 'Other' && (
+                                      <Form.Control className="custom-input border-danger border-2 shadow-sm mt-2 fade-in" placeholder="Specify size" value={uniformReqForm.otherPant} onChange={(e) => setUniformReqForm({...uniformReqForm, otherPant: e.target.value})} required />
+                                  )}
+                              </Form.Group>
+                          </Col>
+                          
+                          <Col xs={12} md={4}>
+                              <Form.Group>
+                                  <Form.Label className="small fw-bold text-muted ps-1">Shoe Size (UK)</Form.Label>
+                                  <Form.Select className="custom-input border-0 shadow-sm" value={uniformReqForm.shoeSize} onChange={(e) => setUniformReqForm({...uniformReqForm, shoeSize: e.target.value})} required>
+                                      <option value="">Select...</option>
+                                      {['6', '7', '8', '9', '10', 'Other'].map(s => <option key={s} value={s}>{s}</option>)}
+                                  </Form.Select>
+                                  {uniformReqForm.shoeSize === 'Other' && (
+                                      <Form.Control className="custom-input border-danger border-2 shadow-sm mt-2 fade-in" placeholder="Specify size" value={uniformReqForm.otherShoe} onChange={(e) => setUniformReqForm({...uniformReqForm, otherShoe: e.target.value})} required />
+                                  )}
+                              </Form.Group>
+                          </Col>
+                      </Row>
+
+                      <Button type="submit" variant="danger" className="w-100 btn-premium shadow-sm active-scale fw-bold" disabled={myRecruits.length === 0}>
+                          Submit Request to Admin
+                      </Button>
                   </Form>
               </Modal.Body>
           </Modal>
