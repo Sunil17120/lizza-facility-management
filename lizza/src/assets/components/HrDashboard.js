@@ -227,48 +227,48 @@ const HrDashboard = () => {
 
             const emp = result.data;
             const companyTerms = [
-        "If the applicant is selected, he/she should work with company for a period of minimum three months.",
-        "Employee agree that will work faithfully without any issues, and will be present in time for duty and complete the duty hrs as per schedule assigned.",
-        "Selected candidate should pay 2200/- as security deposit for providing uniform.",
-        "Selected candidate should submit any one original document while joining, same will be returned back after 1month as due to verification purpose.",
-        "Candidate who are selected and deployed in respective sites while in duty they are sole responsible for any theft or pilerage and they had to be borne by them.",
-        "A minimum of one-month notice has to given before leaving the job or a month salary will be deducted.",
-        "Employer may terminate Candidate (Employee) if any mis appropriation occurs in duty without prior notice.",
-        "The Selected Employee agree that any property like sim card or mobile should returned of at the time of resignation/termination.",
-        "Selected Employee should be flexible towards work like in shifts process as per Employer.",
-        "Resigned Employee salary will release after cmpletetion of 30 days of notice period, if not then one month salary will be on hold and that will be clear with a fine of 4000/-(every month on 25th).",
-        "The above all terms and conditions are Solley Accepted and signed."
-      ];
-      const termsHtml = `
-          <h3 class="section-header">10. Terms & Conditions</h3>
-          <div class="terms-box">
-              <ol style="padding-left: 20px; margin-bottom: 20px;">
-                  ${companyTerms.map(term => `<li style="margin-bottom: 8px;">${term}</li>`).join('')}
-              </ol>
-              <p><strong>Declaration:</strong> I, <strong>${emp?.full_name || 'the employee'}</strong>, confirm that I have read, understood, and agreed to the above terms.</p>
-              <p style="color: #e31e24; font-weight: bold;"><em>This document is digitally signed and verified by the LIZZA HR System.</em></p>
-              
-              <div style="margin-top: 40px; display: flex; justify-content: space-between; align-items: flex-end;">
-                  <div style="text-align: center;">
-                      <div style="border-bottom: 1px solid #000; width: 200px; margin-bottom: 5px;"></div>
-                      <strong>Employee Signature</strong>
-                  </div>
-                  <div style="text-align: center; border: 2px solid #e31e24; padding: 15px; border-radius: 8px; width: 220px;">
-                      <div style="font-size: 10px; color: #e31e24; margin-bottom: 5px;">[HR STAMP & SIGN]</div>
-                      <div style="height: 40px;"></div>
-                      <strong>Authorized Signatory</strong>
-                  </div>
-              </div>
-          </div>
-      `;
-            const printWindow = window.open('', '_blank');
-            
+                "If the applicant is selected, he/she should work with company for a period of minimum three months.",
+                "Employee agree that will work faithfully without any issues, and will be present in time for duty and complete the duty hrs as per schedule assigned.",
+                "Selected candidate should pay 2200/- as security deposit for providing uniform.",
+                "Selected candidate should submit any one original document while joining, same will be returned back after 1month as due to verification purpose.",
+                "Candidate who are selected and deployed in respective sites while in duty they are sole responsible for any theft or pilerage and they had to be borne by them.",
+                "A minimum of one-month notice has to given before leaving the job or a month salary will be deducted.",
+                "Employer may terminate Candidate (Employee) if any mis appropriation occurs in duty without prior notice.",
+                "The Selected Employee agree that any property like sim card or mobile should returned of at the time of resignation/termination.",
+                "Selected Employee should be flexible towards work like in shifts process as per Employer.",
+                "Resigned Employee salary will release after cmpletetion of 30 days of notice period, if not then one month salary will be on hold and that will be clear with a fine of 4000/-(every month on 25th).",
+                "The above all terms and conditions are Solley Accepted and signed."
+            ];
+
+            const termsHtml = `
+                <h3 class="section-header">10. Terms & Conditions</h3>
+                <div class="terms-box">
+                    <ol style="padding-left: 20px; margin-bottom: 20px;">
+                        ${companyTerms.map(term => `<li style="margin-bottom: 8px;">${term}</li>`).join('')}
+                    </ol>
+                    <p><strong>Declaration:</strong> I, <strong>${emp?.full_name || 'the employee'}</strong>, confirm that I have read, understood, and agreed to the above terms.</p>
+                    <p style="color: #e31e24; font-weight: bold;"><em>This document is digitally signed and verified by the LIZZA HR System.</em></p>
+                    
+                    <div style="margin-top: 40px; display: flex; justify-content: space-between; align-items: flex-end;">
+                        <div style="text-align: center;">
+                            <div style="border-bottom: 1px solid #000; width: 200px; margin-bottom: 5px;"></div>
+                            <strong>Employee Signature</strong>
+                        </div>
+                        <div style="text-align: center; border: 2px solid #e31e24; padding: 15px; border-radius: 8px; width: 220px;">
+                            <div style="font-size: 10px; color: #e31e24; margin-bottom: 5px;">[HR STAMP & SIGN]</div>
+                            <div style="height: 40px;"></div>
+                            <strong>Authorized Signatory</strong>
+                        </div>
+                    </div>
+                </div>
+            `;
+
             let docsHtml = '';
             const addDoc = (title, url) => {
                 if (url) docsHtml += `<div class="doc-section"><h3 class="doc-title">${title}</h3><img src="${url}" class="doc-img" alt="${title}" /></div>`;
             };
             
-            addDoc('Aadhaar / Gov ID', emp?.aadhar_photo_path);
+            addDoc('Identity / Gov ID', emp?.aadhar_photo_path);
             addDoc('PAN Card', emp?.pan_photo_path);
             addDoc('Voter ID', emp?.voter_photo_path);
             addDoc('Driving Licence', emp?.dl_photo_path);
@@ -306,137 +306,149 @@ const HrDashboard = () => {
                 ? `<table><tr><th>Name</th><th>Contact Number</th><th>Relation / Context</th></tr>` + refData.map(r => `<tr><td>${r?.name||'-'}</td><td>${r?.contact || r?.phone || r?.mobile || '-'}</td><td>${r?.relation || r?.relationship || '-'}</td></tr>`).join('') + `</table>`
                 : '<p class="text-muted" style="text-align:center;">No reference details provided.</p>';
 
-            printWindow.document.write(`
-                <html><head><title>Dossier_${emp?.full_name || 'Employee'}</title>
-                  <style>
-                    body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; padding: 30px; color: #333; max-width: 900px; margin: auto; font-size: 14px; }
-                    .logo-header { text-align: center; margin-bottom: 20px; border-bottom: 3px solid #e31e24; padding-bottom: 15px; }
-                    .logo-header img { height: 50px; vertical-align: middle; margin-right: 15px; }
-                    .logo-header .company-name { font-size: 18px; font-weight: bold; color: #e31e24; vertical-align: middle; display: inline-block; }
-                    h2 { text-align: center; color: #ec0404; text-transform: uppercase; margin-bottom: 5px; }
-                    .flex-row { display: flex; justify-content: space-between; align-items: flex-start; }
-                    .photo { width: 140px; height: 140px; border-radius: 8px; object-fit: cover; border: 2px solid #0d6efd; }
-                    .details { flex-grow: 1; padding-left: 25px; }
-                    table { width: 100%; border-collapse: collapse; margin-top: 5px; margin-bottom: 15px; }
-                    td, th { padding: 8px 12px; border: 1px solid #dee2e6; text-align: left; }
-                    th { background-color: #f8f9fa; color: #495057; font-weight: bold; width: 25%; }
-                    .section-header { margin-top: 30px; border-bottom: 2px solid #ccc; padding-bottom: 5px; color: #333; font-size: 16px; text-transform: uppercase; }
-                    .doc-section { margin-top: 30px; text-align: center; page-break-inside: avoid; }
-                    .doc-title { font-size: 14px; color: #555; margin-bottom: 10px; text-transform: uppercase; border-bottom: 1px dashed #eee; padding-bottom: 5px; }
-                    .doc-img { max-width: 100%; max-height: 450px; border: 1px solid #ccc; border-radius: 4px; padding: 5px; object-fit: contain; }
-                    .text-muted { color: #6c757d; font-style: italic; }
-                    .mobile-back-btn { background: #e31e24; color: white; border: none; padding: 16px 32px; font-size: 18px; border-radius: 50px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 12px rgba(227,30,36,0.3); margin-top: 20px; pointer-events: auto; -webkit-tap-highlight-color: transparent; }
-                    @media print {
-                        .doc-section, table { page-break-inside: avoid; }
-                        body { padding: 0; }
-                        .no-print { display: none !important; }
-                    }
-                  </style>
-                </head><body>
-                  <div class="no-print" style="text-align: center; padding: 15px; background: #fff3f3; border-bottom: 2px solid #e31e24; margin-bottom: 20px;">
-                      <h4 style="color: #e31e24; margin: 0 0 10px 0;">PDF Document Generator</h4>
-                      <p style="margin: 0 0 15px 0;">The print dialog should open automatically. If you are on a mobile device and this window does not close automatically, tap the button below.</p>
-                      <button class="mobile-back-btn" onclick="window.close(); window.history.back();">← Close & Return to Dashboard</button>
-                  </div>
-
-                  <div class="logo-header">
-                    <img src="${logoImg}" alt="Company Logo" />
-                    <span class="company-name">LIZZA FACILITY MANAGEMENT</span>
-                  </div>
-                  
-                  <h2>Official HR Dossier</h2>
-                  <div style="text-align: center; font-size: 11px; color: #555; letter-spacing: 1.5px; border-bottom: 1px solid #eee; padding-bottom: 15px; margin-bottom: 20px; text-transform: uppercase;">
-                    Privileged & Confidential • HR Dept Only
-                  </div>
-                  
-                  <h3 class="section-header" style="margin-top:0;">1. Identity & Employment Status</h3>
-                  <div class="flex-row">
-                    <div><img src="${emp?.profile_photo_path || 'https://via.placeholder.com/150'}" class="photo" alt="Profile" /></div>
-                    <div class="details">
-                      <table>
-                        <tr><th>Full Name</th><td style="font-weight: bold; font-size: 16px;">${emp?.full_name || 'N/A'}</td></tr>
-                        <tr><th>System Role</th><td style="text-transform: uppercase; font-weight:bold; color: #fd0d0d;">${emp?.user_type || 'N/A'}</td></tr>
-                        <tr><th>Assigned Dept/Site</th><td>${emp?.department || 'N/A'} - ${emp?.unit_name || 'Dynamic'}</td></tr>
-                        <tr><th>Onboarded By</th><td style="color:#e31e24; font-weight:bold;">${emp?.onboarded_by_name || 'Admin / Direct Hire'}</td></tr>
-                        <tr><th>Designation</th><td>${emp?.designation || 'N/A'}</td></tr>
-                        <tr><th>Primary Mobile</th><td>${emp?.phone_number || 'N/A'}</td></tr>
-                        <tr><th>KYC Authenticity</th><td>${kycStatusHtml}</td></tr>
-                      </table>
+            // Generate Complete Content String
+            const completeHtmlContent = `
+                <html>
+                <head>
+                    <title>Dossier_${emp?.full_name || 'Employee'}</title>
+                    <style>
+                        body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; padding: 30px; color: #333; max-width: 900px; margin: auto; font-size: 14px; }
+                        .logo-header { text-align: center; margin-bottom: 20px; border-bottom: 3px solid #e31e24; padding-bottom: 15px; }
+                        .logo-header img { height: 50px; vertical-align: middle; margin-right: 15px; }
+                        .logo-header .company-name { font-size: 18px; font-weight: bold; color: #e31e24; vertical-align: middle; display: inline-block; }
+                        h2 { text-align: center; color: #ec0404; text-transform: uppercase; margin-bottom: 5px; }
+                        .flex-row { display: flex; justify-content: space-between; align-items: flex-start; }
+                        .photo { width: 140px; height: 140px; border-radius: 8px; object-fit: cover; border: 2px solid #0d6efd; }
+                        .details { flex-grow: 1; padding-left: 25px; }
+                        table { width: 100%; border-collapse: collapse; margin-top: 5px; margin-bottom: 15px; }
+                        td, th { padding: 8px 12px; border: 1px solid #dee2e6; text-align: left; }
+                        th { background-color: #f8f9fa; color: #495057; font-weight: bold; width: 25%; }
+                        .section-header { margin-top: 30px; border-bottom: 2px solid #ccc; padding-bottom: 5px; color: #333; font-size: 16px; text-transform: uppercase; }
+                        .doc-section { margin-top: 30px; text-align: center; page-break-inside: avoid; }
+                        .doc-title { font-size: 14px; color: #555; margin-bottom: 10px; text-transform: uppercase; border-bottom: 1px dashed #eee; padding-bottom: 5px; }
+                        .doc-img { max-width: 100%; max-height: 450px; border: 1px solid #ccc; border-radius: 4px; padding: 5px; object-fit: contain; }
+                        .text-muted { color: #6c757d; font-style: italic; }
+                        .mobile-back-btn { background: #e31e24; color: white; border: none; padding: 16px 32px; font-size: 18px; border-radius: 50px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 12px rgba(227,30,36,0.3); margin-top: 20px; }
+                        @media print {
+                            .doc-section, table { page-break-inside: avoid; }
+                            body { padding: 0; }
+                            .no-print { display: none !important; }
+                        }
+                    </style>
+                </head>
+                <body>
+                    <div class="no-print" style="text-align: center; padding: 15px; background: #fff3f3; border-bottom: 2px solid #e31e24; margin-bottom: 20px;">
+                        <h4 style="color: #e31e24; margin: 0 0 10px 0;">PDF Document Generator</h4>
+                        <p style="margin: 0 0 15px 0;">Use your browser menu to save or share as PDF if the system sheet does not appear automatically.</p>
+                        <button class="mobile-back-btn" onclick="window.close();">← Return to Dashboard</button>
                     </div>
-                  </div>
 
-                  <h3 class="section-header">2. Demographics, Medical & Uniform</h3>
-                  <table>
-                    <tr><th>Date of Birth</th><td>${emp?.dob || 'N/A'}</td><th>Blood Group</th><td style="color:#e31e24; font-weight:bold;">${emp?.blood_group || 'N/A'}</td></tr>
-                    <tr><th>Gender</th><td>${emp?.gender || 'N/A'}</td><th>Height (cm)</th><td>${emp?.height || 'N/A'}</td></tr>
-                    <tr><th>Marital Status</th><td>${emp?.marital_status || 'N/A'}</td><th>Nationality</th><td>${emp?.nationality || 'N/A'}</td></tr>
-                    <tr><th>Father's Name</th><td>${emp?.father_name || 'N/A'}</td><th>Religion</th><td>${emp?.religion || 'N/A'}</td></tr>
-                    <tr><th>Mother's Name</th><td>${emp?.mother_name || 'N/A'}</td><th>Category/Caste</th><td>${emp?.category || '-'} / ${emp?.caste || '-'}</td></tr>
-                    <tr><th>Identity Mark</th><td colspan="3">${emp?.identity_mark || 'None'}</td></tr>
-                    <tr><th>Medical Remarks</th><td>${emp?.medical_remarks || 'None'}</td><th>Uniform Sizes</th><td style="font-weight:bold; color:#0d6efd;">${emp?.uniform_details || 'Not Specified'}</td></tr>
-                  </table>
+                    <div class="logo-header">
+                        <img src="${logoImg}" alt="Company Logo" />
+                        <span class="company-name">LIZZA FACILITY MANAGEMENT</span>
+                    </div>
+                    
+                    <h2>Official HR Dossier</h2>
+                    <div style="text-align: center; font-size: 11px; color: #555; letter-spacing: 1.5px; border-bottom: 1px solid #eee; padding-bottom: 15px; margin-bottom: 20px; text-transform: uppercase;">
+                        Privileged & Confidential • HR Dept Only
+                    </div>
+                    
+                    <h3 class="section-header" style="margin-top:0;">1. Identity & Employment Status</h3>
+                    <div class="flex-row">
+                        <div><img src="${emp?.profile_photo_path || 'https://via.placeholder.com/150'}" class="photo" alt="Profile" /></div>
+                        <div class="details">
+                            <table>
+                                <tr><th>Full Name</th><td style="font-weight: bold; font-size: 16px;">${emp?.full_name || 'N/A'}</td></tr>
+                                <tr><th>System Role</th><td style="text-transform: uppercase; font-weight:bold; color: #fd0d0d;">${emp?.user_type || 'N/A'}</td></tr>
+                                <tr><th>Assigned Dept/Site</th><td>${emp?.department || 'N/A'} - ${emp?.unit_name || 'Dynamic'}</td></tr>
+                                <tr><th>Onboarded By</th><td style="color:#e31e24; font-weight:bold;">${emp?.onboarded_by_name || 'Admin / Direct Hire'}</td></tr>
+                                <tr><th>Designation</th><td>${emp?.designation || 'N/A'}</td></tr>
+                                <tr><th>Primary Mobile</th><td>${emp?.phone_number || 'N/A'}</td></tr>
+                                <tr><th>KYC Authenticity</th><td>${kycStatusHtml}</td></tr>
+                            </table>
+                        </div>
+                    </div>
 
-                  <h3 class="section-header">3. Address Information</h3>
-                  <table>
-                    <tr><th colspan="2" style="text-align:center; background-color:#e9ecef;">Permanent Address</th><th colspan="2" style="text-align:center; background-color:#e9ecef;">Temporary Address</th></tr>
-                    <tr>
-                        <th style="width:15%;">Address</th><td style="width:35%;">${emp?.perm_address || 'N/A'}</td>
-                        <th style="width:15%;">Address</th><td style="width:35%;">${emp?.temp_address || 'N/A'}</td>
-                    </tr>
-                    <tr>
-                        <th>State & PIN</th><td>${emp?.perm_state || 'N/A'} - ${emp?.perm_pin || ''}</td>
-                        <th>State & PIN</th><td>${emp?.temp_state || 'N/A'} - ${emp?.temp_pin || ''}</td>
-                    </tr>
-                    <tr>
-                        <th>Alt. Contact</th><td>${emp?.perm_mobile || 'N/A'}</td>
-                        <th>Local Contact</th><td>${emp?.temp_mobile || 'N/A'}</td>
-                    </tr>
-                  </table>
+                    <h3 class="section-header">2. Demographics, Medical & Uniform</h3>
+                    <table>
+                        <tr><th>Date of Birth</th><td>${emp?.dob || 'N/A'}</td><th>Blood Group</th><td style="color:#e31e24; font-weight:bold;">${emp?.blood_group || 'N/A'}</td></tr>
+                        <tr><th>Gender</th><td>${emp?.gender || 'N/A'}</td><th>Height (cm)</th><td>${emp?.height || 'N/A'}</td></tr>
+                        <tr><th>Marital Status</th><td>${emp?.marital_status || 'N/A'}</td><th>Nationality</th><td>${emp?.nationality || 'N/A'}</td></tr>
+                        <tr><th>Father's Name</th><td>${emp?.father_name || 'N/A'}</td><th>Religion</th><td>${emp?.religion || 'N/A'}</td></tr>
+                        <tr><th>Mother's Name</th><td>${emp?.mother_name || 'N/A'}</td><th>Category/Caste</th><td>${emp?.category || '-'} / ${emp?.caste || '-'}</td></tr>
+                        <tr><th>Identity Mark</th><td colspan="3">${emp?.identity_mark || 'None'}</td></tr>
+                        <tr><th>Medical Remarks</th><td>${emp?.medical_remarks || 'None'}</td><th>Uniform Sizes</th><td style="font-weight:bold; color:#0d6efd;">${emp?.uniform_details || 'Not Specified'}</td></tr>
+                    </table>
 
-                  <h3 class="section-header">4. Verified Identity & KYC Details</h3>
-                  <table>
-                      <tr><th>Gov ID (UID) Number</th><td style="font-weight:bold;">${emp?.aadhar_raw && emp.aadhar_raw !== 'N/A' ? emp.aadhar_raw : 'Not Provided'}</td><th>PAN Number</th><td style="font-weight:bold;">${emp?.pan_raw && emp.pan_raw !== 'N/A' ? emp.pan_raw : 'Not Provided'}</td></tr>
-                      <tr><th>Voter ID</th><td>${emp?.voter_id_raw && emp.voter_id_raw !== 'N/A' ? emp.voter_id_raw : 'Not Provided'}</td><th>Driving Licence</th><td>${emp?.dl_raw && emp.dl_raw !== 'N/A' ? emp.dl_raw : 'Not Provided'}</td></tr>
-                      <tr><th>Passport Number</th><td colspan="3">${emp?.passport_raw && emp.passport_raw !== 'N/A' ? emp.passport_raw : 'Not Provided'}</td></tr>
-                  </table>
+                    <h3 class="section-header">3. Address Information</h3>
+                    <table>
+                        <tr><th colspan="2" style="text-align:center; background-color:#e9ecef;">Permanent Address</th><th colspan="2" style="text-align:center; background-color:#e9ecef;">Temporary Address</th></tr>
+                        <tr>
+                            <th style="width:15%;">Address</th><td style="width:35%;">${emp?.perm_address || 'N/A'}</td>
+                            <th style="width:15%;">Address</th><td style="width:35%;">${emp?.temp_address || 'N/A'}</td>
+                        </tr>
+                        <tr>
+                            <th>State & PIN</th><td>${emp?.perm_state || 'N/A'} - ${emp?.perm_pin || ''}</td>
+                            <th>State & PIN</th><td>${emp?.temp_state || 'N/A'} - ${emp?.temp_pin || ''}</td>
+                        </tr>
+                        <tr>
+                            <th>Alt. Contact</th><td>${emp?.perm_mobile || 'N/A'}</td>
+                            <th>Local Contact</th><td>${emp?.temp_mobile || 'N/A'}</td>
+                        </tr>
+                    </table>
 
-                  <h3 class="section-header">5. Salary & Banking Details</h3>
-                  <table>
-                      <tr><th>Bank Name</th><td>${emp?.bank_name || 'N/A'}</td><th>IFSC Code</th><td>${emp?.ifsc_code || 'N/A'}</td></tr>
-                      <tr><th>Account Number</th><td colspan="3" style="font-weight:bold; letter-spacing: 1px;">${emp?.account_number_raw && emp.account_number_raw !== 'N/A' ? emp.account_number_raw : 'Not Provided'}</td></tr>
-                  </table>
+                    <h3 class="section-header">4. Verified Identity & KYC Details</h3>
+                    <table>
+                        <tr><th>Gov ID (UID) Number</th><td style="font-weight:bold;">${emp?.aadhar_raw && emp.aadhar_raw !== 'N/A' ? emp.aadhar_raw : 'Not Provided'}</td><th>PAN Number</th><td style="font-weight:bold;">${emp?.pan_raw && emp.pan_raw !== 'N/A' ? emp.pan_raw : 'Not Provided'}</td></tr>
+                        <tr><th>Voter ID</th><td>${emp?.voter_id_raw && emp.voter_id_raw !== 'N/A' ? emp.voter_id_raw : 'Not Provided'}</td><th>Driving Licence</th><td>${emp?.dl_raw && emp.dl_raw !== 'N/A' ? emp.dl_raw : 'Not Provided'}</td></tr>
+                        <tr><th>Passport Number</th><td colspan="3">${emp?.passport_raw && emp.passport_raw !== 'N/A' ? emp.passport_raw : 'Not Provided'}</td></tr>
+                    </table>
 
-                  <h3 class="section-header">6. Education History</h3>
-                  ${eduHtml}
+                    <h3 class="section-header">5. Salary & Banking Details</h3>
+                    <table>
+                        <tr><th>Bank Name</th><td>${emp?.bank_name || 'N/A'}</td><th>IFSC Code</th><td>${emp?.ifsc_code || 'N/A'}</td></tr>
+                        <tr><th>Account Number</th><td colspan="3" style="font-weight:bold; letter-spacing: 1px;">${emp?.account_number_raw && emp.account_number_raw !== 'N/A' ? emp.account_number_raw : 'Not Provided'}</td></tr>
+                    </table>
 
-                  <h3 class="section-header">7. Prior Work Experience</h3>
-                  ${expHtml}
+                    <h3 class="section-header">6. Education History</h3>
+                    ${eduHtml}
 
-                  <h3 class="section-header">8. Family Details</h3>
-                  ${famHtml}
+                    <h3 class="section-header">7. Prior Work Experience</h3>
+                    ${expHtml}
 
-                  <h3 class="section-header">9. Reference Details</h3>
-                  ${refHtml}
-                  ${termsHtml}
+                    <h3 class="section-header">8. Family Details</h3>
+                    ${famHtml}
 
-                  <div style="page-break-before: always;"></div>
-                  <h3 class="section-header" style="text-align:center; background-color:#0f172a; color:white; padding:12px; border-radius: 8px;">APPENDIX: OFFICIAL DOCUMENTS & EVIDENCE</h3>
-                  ${docsHtml || '<p style="text-align: center; color: #94a3b8; margin-top: 30px;">No documents uploaded to this profile.</p>'}
-                  
-                  <div class="no-print" style="text-align: center; margin: 40px 0; padding: 20px;">
-                      <button class="mobile-back-btn" onclick="window.close();">← Close PDF Tab</button>
-                  </div>
+                    <h3 class="section-header">9. Reference Details</h3>
+                    ${refHtml}
+                    ${termsHtml}
 
-                  <script>
-                    window.onload = function() {
-                        setTimeout(() => { 
-                            window.print(); 
-                        }, 1200);
-                    };
-                  </script>
-                </body></html>
-            `);
-            printWindow.document.close();
+                    <div style="page-break-before: always;"></div>
+                    <h3 class="section-header" style="text-align:center; background-color:#0f172a; color:white; padding:12px; border-radius: 8px;">APPENDIX: OFFICIAL DOCUMENTS & EVIDENCE</h3>
+                    ${docsHtml || '<p style="text-align: center; color: #94a3b8; margin-top: 30px;">No documents uploaded to this profile.</p>'}
+                    
+                    <script>
+                        window.onload = function() {
+                            setTimeout(() => { 
+                                try {
+                                    window.print(); 
+                                } catch(e) {
+                                    console.log('Mobile printing fallback triggered');
+                                }
+                            }, 1000);
+                        };
+                    </script>
+                </body>
+                </html>
+            `;
+
+            // CRITICAL FIX: Convert layout string to a Blob object URL for safe mobile rendering
+            const blob = new Blob([completeHtmlContent], { type: 'text/html;charset=utf-8' });
+            const blobUrl = URL.createObjectURL(blob);
+            
+            // Open via safe native redirection tab instance
+            window.open(blobUrl, '_blank');
+
         } catch (error) {
             alert("An error occurred while fetching the secure dossier data.");
         }
