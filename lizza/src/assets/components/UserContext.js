@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 
-// Mocking Capacitor for web preview to avoid module resolution errors
 const Capacitor = window.Capacitor || { isNativePlatform: () => false };
 const registerPlugin = window.Capacitor?.registerPlugin || (() => ({
   requestPermissions: async () => ({ receive: 'denied' }),
@@ -12,50 +11,35 @@ const PushNotifications = registerPlugin('PushNotifications');
 const isApp = Capacitor.isNativePlatform();
 
 const UserContext = createContext();
-// REPLACE THIS:
-// const API_BASE_URL = process.env.REACT_APP_API_BASE_URL;
-
-// WITH THIS (Your actual Hugging Face backend URL):
 const API_BASE_URL = "https://sunil0034-lizza-facility-backend.hf.space";
 
 const registerPushToken = async (email, setPushMessage, setPushMessageType) => {
   if (!isApp || !email) return;
-  try {
-    const permission = await PushNotifications.requestPermissions();
-    if (permission.receive !== 'granted') {
-      setPushMessage('Push notifications are disabled. Enable notifications to receive alerts.');
-      setPushMessageType('warning');
-      return;
-    }
-
-    await PushNotifications.register();
-
-    PushNotifications.addListener('registration', async (token) => {
-      try {
-        await fetch(`${API_BASE_URL}/api/user/update-fcm-token`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, fcm_token: token.value })
-        });
-        try { localStorage.setItem('fcmToken', token.value); } catch (e) {}
-      } catch (e) {
-        console.error('Failed to persist FCM token:', e);
-      }
-    });
-
-    PushNotifications.addListener('registrationError', (error) => {
-      console.error('Push registration error:', error);
-    });
-
-    PushNotifications.addListener('pushNotificationReceived', (notification) => {
-      const title = notification?.notification?.title || notification?.data?.title;
-      const body = notification?.notification?.body || notification?.data?.body || '';
-      try { setPushMessage(`${title}: ${body}`); setPushMessageType('info'); } catch (e) {}
-    });
-
-  } catch (error) {
-    console.error('Push notification setup failed:', error);
+  
+  const permission = await PushNotifications.requestPermissions();
+  if (permission.receive !== 'granted') {
+    setPushMessage('Push notifications are disabled. Enable notifications to receive alerts.');
+    setPushMessageType('warning');
+    return;
   }
+
+  await PushNotifications.register();
+
+  PushNotifications.addListener('registration', async (token) => {
+    await fetch(`${API_BASE_URL}/api/user/update-fcm-token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, fcm_token: token.value })
+    });
+    localStorage.setItem('fcmToken', token.value);
+  });
+
+  PushNotifications.addListener('pushNotificationReceived', (notification) => {
+    const title = notification?.notification?.title || notification?.data?.title;
+    const body = notification?.notification?.body || notification?.data?.body || '';
+    setPushMessage(`${title}: ${body}`); 
+    setPushMessageType('info');
+  });
 };
 
 export const UserProvider = ({ children }) => {
@@ -68,12 +52,9 @@ export const UserProvider = ({ children }) => {
     const email = localStorage.getItem('userEmail');
     const cachedUserData = localStorage.getItem('userData');
     
-    // OFFLINE FIX: Instantly load cached user data to prevent kick-to-login
     if (cachedUserData) {
-        try {
-            setUser(JSON.parse(cachedUserData));
-            setLoading(false);
-        } catch(e) {}
+        setUser(JSON.parse(cachedUserData));
+        setLoading(false);
     }
 
     if (email) {
@@ -81,11 +62,7 @@ export const UserProvider = ({ children }) => {
         .then(res => res.json())
         .then(data => {
             setUser(data);
-            localStorage.setItem('userData', JSON.stringify(data)); // Save latest data for offline use
-            setLoading(false);
-        })
-        .catch(() => {
-            // Network failed. Do not clear the user. The cached data remains active.
+            localStorage.setItem('userData', JSON.stringify(data));
             setLoading(false);
         });
     } else {
@@ -109,19 +86,18 @@ export const UserProvider = ({ children }) => {
     setUser(userData);
     localStorage.setItem('userName', userData.full_name);
     localStorage.setItem('userRole', userData.user_type);
-    localStorage.setItem('userData', JSON.stringify(userData)); // Ensure it saves on initial login
+    localStorage.setItem('userData', JSON.stringify(userData));
   };
 
   const logoutUser = async () => {
-    try {
-      if (user && user.email) {
-        await fetch(`${API_BASE_URL}/api/user/send-logout-notification`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: user.email })
-        });
-      }
-    } catch (e) {}
+    if (user && user.email) {
+      await fetch(`${API_BASE_URL}/api/user/send-logout-notification`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: user.email })
+      });
+    }
+    
     setPushMessage('You have been logged out.');
     setPushMessageType('info');
     setUser(null);
