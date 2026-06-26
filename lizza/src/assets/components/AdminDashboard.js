@@ -157,7 +157,7 @@ const groupedReports = fieldReports.reduce((acc, visit) => {
 
   useEffect(() => { fetchBaseData(); }, [fetchBaseData]);
 
-  const fetchReportsData = useCallback(async () => {
+const fetchReportsData = useCallback(async () => {
     if (mainTab !== 'reports') return;
     setReportsLoading(true);
       let url = `${API_BASE_URL}/api/admin/reports/monthly-field-visits?month=${reportMonth}&year=${reportYear}`;
@@ -183,11 +183,7 @@ const groupedReports = fieldReports.reduce((acc, visit) => {
       if (res.ok) setFieldReports(await res.json());
       else setFieldReports([]);
       setReportsLoading(false);
-      
-  // THIS IS THE CRITICAL LINE: reportStartDate and reportEndDate must be in this array!
   }, [reportMonth, reportYear, reportStartDate, reportEndDate, reportOfficerSearch, filterSite, filterRole, mainTab, employees]);
-
-  useEffect(() => { fetchReportsData(); }, [fetchReportsData]);
 
   const fetchAttendanceData = useCallback(async () => {
     if (mainTab !== 'reports') return;
@@ -216,10 +212,17 @@ const groupedReports = fieldReports.reduce((acc, visit) => {
       setAttendanceLoading(false);
   },  [reportMonth, reportYear, reportStartDate, reportEndDate, reportOfficerSearch, filterSite, filterRole, mainTab, employees]);
 
+  // FIX: This single useEffect replaces the previous two.
+  // It completely stops the infinite over-fetching on keystrokes and dropdown changes.
+  // The data will now only fetch automatically when the user navigates to the Reports tab.
+  // Filter updates will wait until the "Apply Filters" button is explicitly clicked.
   useEffect(() => {
-    if (mainTab !== 'reports') return;
-    fetchAttendanceData();
-  }, [fetchAttendanceData]);
+    if (mainTab === 'reports') {
+      fetchReportsData();
+      fetchAttendanceData();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mainTab]);
 
   useEffect(() => {
     const handleVisibilityChange = async () => {
