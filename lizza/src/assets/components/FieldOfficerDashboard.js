@@ -14,7 +14,7 @@ const fileToBase64 = (file) => new Promise((resolve) => { const reader = new Fil
 const base64ToFile = (base64String, filename) => { const arr = base64String.split(','); const mime = arr[0].match(/:(.*?);/)[1]; const bstr = atob(arr[1]); let n = bstr.length; const u8arr = new Uint8Array(n); while(n--){ u8arr[n] = bstr.charCodeAt(n); } return new File([u8arr], filename, {type:mime}); };
 const compressImage = async (file, maxWidth = 1000, quality = 0.7) => { return new Promise((resolve) => { const reader = new FileReader(); reader.readAsDataURL(file); reader.onload = (event) => { const img = new Image(); img.src = event.target.result; img.onload = () => { const canvas = document.createElement('canvas'); let width = img.width; let height = img.height; if (width > maxWidth) { height = Math.round((height * maxWidth) / width); width = maxWidth; } canvas.width = width; canvas.height = height; const ctx = canvas.getContext('2d'); ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; ctx.drawImage(img, 0, 0, width, height); canvas.toBlob((blob) => { resolve(new File([blob], file.name, { type: 'image/jpeg', lastModified: Date.now() })); }, 'image/jpeg', quality); }; }; }); };
 const calculateDistance = (lat1, lon1, lat2, lon2) => { const R = 6371000; const toRad = (deg) => (deg * Math.PI) / 180; const dLat = toRad(lat2 - lat1); const dLon = toRad(lon2 - lon1); const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2; return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)); };
-
+const locationBatchQueueRef = useRef([]);
 
 const getFormattedDateStr = (date = new Date()) => {
     const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -237,34 +237,47 @@ const FieldOfficerDashboard = () => {
     return () => clearInterval(interval);
   }, [dutyStatus, shiftData]); 
 
-  const syncOfflineData = useCallback(async () => {
-    if (!navigator.onLine || !isApp) return;
+const syncOfflineData = useCallback(async () => {
+    if (!navigator.onLine || !isApp || isProcessingRef.current) return;
+    isProcessingRef.current = true;
     
     const syncQueue = async (storageKey, endpoint, mapFunc) => {
         let queue = JSON.parse(localStorage.getItem(storageKey) || '[]');
-        let failed = [];
-       for (let item of queue) {
+        if (queue.length === 0) return;
+
+        let itemsToKeep = [];
+        for (let item of queue) {
             const req = mapFunc ? mapFunc(item) : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(item) };
             const res = await fetch(`${API_BASE_URL}${endpoint}`, req).catch(() => null);
             
-            // CRITICAL FIX: Only keep in queue if network is dead or server crashed (500+)
+            // Only keep if network fails or server 500s. Drop 400 bad requests.
             if (!res || res.status >= 500) {
-                failed.push(item);
+                itemsToKeep.push(item);
             }
         }
-        localStorage.setItem(storageKey, JSON.stringify(failed));
+
+        // Prevent race conditions where user added data during the sync
+        let freshQueue = JSON.parse(localStorage.getItem(storageKey) || '[]');
+        let newlyAddedItems = freshQueue.slice(queue.length);
+        localStorage.setItem(storageKey, JSON.stringify(itemsToKeep.concat(newlyAddedItems)));
     };
 
     await syncQueue('offlineShiftQueue', '/api/shift/day-action');
     
     let attQ = JSON.parse(localStorage.getItem('offlineAttendanceQueue') || '[]');
-    let fAtt = [];
-    for (let act of attQ) {
-        const ep = act.actionType === 'CHECK_IN' ? '/api/user/checkin' : '/api/user/checkout';
-        const res = await fetch(`${API_BASE_URL}${ep}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(act) }).catch(() => ({ ok: false }));
-        if (!res || !res.ok) fAtt.push(act);
+    if (attQ.length > 0) {
+        let fAtt = [];
+        for (let act of attQ) {
+            const ep = act.actionType === 'CHECK_IN' ? '/api/user/checkin' : '/api/user/checkout';
+            const res = await fetch(`${API_BASE_URL}${ep}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(act) }).catch(() => null);
+            if (!res || res.status >= 500) {
+                fAtt.push(act);
+            }
+        }
+        let freshAtt = JSON.parse(localStorage.getItem('offlineAttendanceQueue') || '[]');
+        let newAtt = freshAtt.slice(attQ.length);
+        localStorage.setItem('offlineAttendanceQueue', JSON.stringify(fAtt.concat(newAtt)));
     }
-    localStorage.setItem('offlineAttendanceQueue', JSON.stringify(fAtt));
 
     await syncQueue('offlineVisitQueue', '/api/field-officer/log-visit', (visit) => {
         const formData = new FormData();
@@ -282,7 +295,8 @@ const FieldOfficerDashboard = () => {
     });
 
     updateQueueCounts();
-  }, [updateQueueCounts, userEmail]);
+    isProcessingRef.current = false;
+}, [updateQueueCounts, userEmail]);
 
   useEffect(() => {
     const handleOnline = () => { setIsOnline(true); if (isApp) syncOfflineData(); };
@@ -415,47 +429,69 @@ const FieldOfficerDashboard = () => {
             const timestamp = new Date(position.timestamp).toISOString();
             lastSentPositionRef.current = { lat, lon, timestamp };
             
-            // 1. Process geofences locally
+            // Local Geofence processing
             processNewLocation(lat, lon, accuracy, timestamp); 
             
-            // 2. BROADCAST TO ADMIN MAP: Silently send GPS to backend if On Duty
+            // Queue GPS ping instead of instantly fetching
             if (dutyStatusRef.current === 'ON_DUTY') {
-                fetch(`${API_BASE_URL}/api/user/native-webhook`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email: userEmail, lat: lat, lon: lon })
-                }).catch(() => {}); // Fails silently so it doesn't interrupt the user
+                locationBatchQueueRef.current.push({
+                    lat: lat,
+                    lon: lon,
+                    timestamp: timestamp,
+                    activity_state: "ON_DUTY"
+                });
             }
         }, 
         () => {}, 
         { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
 
-    return () => navigator.geolocation.clearWatch(watchId);
-  }, [userEmail, processNewLocation]);
+    const batchInterval = setInterval(() => {
+        const currentBatch = [...locationBatchQueueRef.current];
+        
+        if (currentBatch.length > 0 && navigator.onLine) {
+            fetch(`${API_BASE_URL}/api/user/bulk-native-webhook`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    email: userEmail, 
+                    locations: currentBatch 
+                })
+            })
+            .then(res => {
+                if (res.ok) {
+                    locationBatchQueueRef.current = locationBatchQueueRef.current.slice(currentBatch.length);
+                }
+            })
+            .catch(() => console.log("Bulk sync failed, will retry"));
+        }
+    }, 30000); // 30 second cycle
+
+    return () => {
+        navigator.geolocation.clearWatch(watchId);
+        clearInterval(batchInterval);
+    };
+}, [userEmail, processNewLocation]);
 
  const handleDayShiftAction = async (action) => {
-    if (action === 'START' || action === 'RESUME') { 
-        setDutyStatus('ON_DUTY'); 
-        if (isApp) LizzaTracker.startTracking({ email: userEmail });
-        triggerLocalNotification(action === 'START' ? "Shift Started" : "Duty Resumed", "Live GPS tracking is now active.");
-    } else { 
-        setDutyStatus(action === 'BREAK' ? 'ON_BREAK' : 'OFF_DUTY'); 
-        if (isApp) LizzaTracker.stopTracking(); 
-        triggerLocalNotification(action === 'BREAK' ? "Break Started" : "Shift Ended", "Location tracking has been paused.");
-    }
-
     const payload = { email: userEmail, action: action, timestamp: new Date().toISOString() };
 
     if (navigator.onLine) {
-        try {
-            const res = await fetch(`${API_BASE_URL}/api/shift/day-action`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-            if (!res.ok && res.status >= 500) throw new Error("Server Crash");
-        } catch (error) {
+        const res = await fetch(`${API_BASE_URL}/api/shift/day-action`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        }).catch(() => null);
+        
+        // Block UI change if the server explicitly rejects it (e.g. duplicate shift)
+        if (res && !res.ok && res.status < 500) {
+            const errorData = await res.json();
+            alert(errorData.detail || "Action rejected by server.");
+            return; 
+        }
+        
+        // Push to offline queue if network died or server crashed
+        if (!res || res.status >= 500) {
             const q = JSON.parse(localStorage.getItem('offlineShiftQueue') || '[]');
             q.push(payload);
             localStorage.setItem('offlineShiftQueue', JSON.stringify(q));
@@ -467,7 +503,18 @@ const FieldOfficerDashboard = () => {
         localStorage.setItem('offlineShiftQueue', JSON.stringify(q));
         updateQueueCounts();
     }
-  };
+
+    // Only update the UI state if we didn't return early from a 400 error
+    if (action === 'START' || action === 'RESUME') { 
+        setDutyStatus('ON_DUTY'); 
+        if (isApp) LizzaTracker.startTracking({ email: userEmail });
+        triggerLocalNotification(action === 'START' ? "Shift Started" : "Duty Resumed", "Live GPS tracking is now active.");
+    } else { 
+        setDutyStatus(action === 'BREAK' ? 'ON_BREAK' : 'OFF_DUTY'); 
+        if (isApp) LizzaTracker.stopTracking(); 
+        triggerLocalNotification(action === 'BREAK' ? "Break Started" : "Shift Ended", "Location tracking has been paused.");
+    }
+};
 
   const updateTaskForm = (taskId, key, val) => {
       setActiveTaskForm(prev => ({ ...prev, [taskId]: { ...(prev[taskId] || {}), [key]: val, id: taskId } }));
