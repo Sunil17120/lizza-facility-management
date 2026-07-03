@@ -582,7 +582,7 @@ const activeUniformRequests = uniformRequests;
     </Button>
     
     <Button variant="outline-success" className="w-100 rounded-pill fw-bold shadow-sm active-scale d-flex align-items-center justify-content-center" onClick={async () => {
-    if (!window.confirm("This will automatically deduct available items from inventory and generate dispatch logs. Proceed?")) return;
+    if (!window.confirm("This will automatically deduct available items from inventory and generate dispatch logs. Proceed??")) return;
     setIsSyncing(true);
     
     let outOfStock = [];
