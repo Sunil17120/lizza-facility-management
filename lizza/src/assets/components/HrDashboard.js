@@ -581,13 +581,11 @@ const activeUniformRequests = uniformRequests;
         <Shirt size={16} className="me-2"/> Fulfill & Issue Kit
     </Button>
     
-    <Button variant="outline-success" className="w-100 rounded-pill fw-bold shadow-sm active-scale d-flex align-items-center justify-content-center" onClick={async () => {
-    if (!window.confirm("This will automatically deduct available items from inventory and generate dispatch logs. Proceed??")) return;
-    setIsSyncing(true);
-    
+  <Button variant="outline-success" className="w-100 rounded-pill fw-bold shadow-sm active-scale d-flex align-items-center justify-content-center" onClick={async () => {
     let outOfStock = [];
+    let itemsToIssue = [];
     
-    // 1. Parse the adhoc request and auto-dispatch available items
+    // 1. DRY RUN: Check stock availability first without issuing or deleting anything
     if (req.details && req.details !== 'Not Specified') {
         const parts = req.details.split(',');
         for (let part of parts) {
@@ -597,19 +595,13 @@ const activeUniformRequests = uniformRequests;
                 const sz = splitPart[1].trim();
                 
                 if (sz !== 'N/A' && sz !== '') {
-                    // Find matching item in inventory state
                     const invItem = inventory.find(i => 
                         i.item_category.toLowerCase() === cat.toLowerCase() && 
                         i.size.toString().toLowerCase() === sz.toLowerCase()
                     );
                     
                     if (invItem && invItem.quantity > 0) {
-                        // Issue the uniform (This automatically deducts stock and adds to Dispatch Tracking)
-                        await fetch(`${API_BASE_URL}/api/hr/issue-uniform`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ inventory_id: invItem.id, user_id: req.user_id, hr_email: hrEmail })
-                        });
+                        itemsToIssue.push(invItem);
                     } else {
                         outOfStock.push(`${cat} (Size ${sz})`);
                     }
@@ -618,19 +610,43 @@ const activeUniformRequests = uniformRequests;
         }
     }
 
-    // 2. Mark the original request as completed
+    // 2. HALT IF OUT OF STOCK: Do not remove the request. Tell HR to pick substitutes.
+    if (outOfStock.length > 0) {
+        const forceClose = window.confirm(
+            `AUTO-ASSIGN HALTED!\n\nThe following requested sizes are OUT OF STOCK:\n${outOfStock.join('\n')}\n\nPlease click "Cancel" to keep this request open, then use the red "Fulfill & Issue Kit" button to manually select substitute sizes.\n\n(Only click "OK" if you have already manually issued substitutes and just want to clear this request from the list.)`
+        );
+        
+        // If HR clicks cancel, abort entirely. The request STAYS in the pending list.
+        if (!forceClose) return; 
+        
+        // If they click OK, they are confirming they already handled it and want it removed.
+        setIsSyncing(true);
+        await fetch(`${API_BASE_URL}/api/hr/complete-uniform-req/${req.req_id}`, { method: 'POST' });
+        setIsSyncing(false);
+        fetchData();
+        return;
+    }
+
+    // 3. SUCCESS PATH: If ALL items are in stock, confirm, auto-issue, and close request.
+    if (!window.confirm("All requested items are in stock. Auto-deduct from inventory and close this request?")) return;
+    
+    setIsSyncing(true);
+    
+    // Dispatch the items
+    for (let invItem of itemsToIssue) {
+        await fetch(`${API_BASE_URL}/api/hr/issue-uniform`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ inventory_id: invItem.id, user_id: req.user_id, hr_email: hrEmail })
+        });
+    }
+
+    // Safely mark the request as complete now that items are dispatched
     await fetch(`${API_BASE_URL}/api/hr/complete-uniform-req/${req.req_id}`, { method: 'POST' });
     
     setIsSyncing(false);
-    
-    // 3. Provide HR with immediate feedback
-    if (outOfStock.length > 0) {
-        alert(`Request completed, but these items were OUT OF STOCK and skipped:\n${outOfStock.join(', ')}`);
-    } else {
-        alert("Successfully auto-fulfilled and logged to Dispatch Tracking!");
-    }
-    
-    fetchData(); // Refreshes the tables so you see the new dispatch logs immediately
+    alert("Successfully auto-fulfilled all items and closed the request!");
+    fetchData();
 }}>
     <CheckCircle size={16} className="me-2"/> Auto-Assign & Complete
 </Button>
