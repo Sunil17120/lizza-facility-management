@@ -594,6 +594,8 @@ const syncOfflineData = useCallback(async () => {
 
   // --- Handle Uniform Request ---
  // --- Handle Uniform Request ---
+ // --- Handle Uniform Request ---
+// --- Handle Uniform Request ---
   const handleUniformRequestSubmit = async (e) => {
     e.preventDefault();
     
@@ -601,11 +603,19 @@ const syncOfflineData = useCallback(async () => {
     const finalPant = uniformReqForm.pantSize === 'Other' ? uniformReqForm.otherPant : uniformReqForm.pantSize;
     const finalShoe = uniformReqForm.shoeSize === 'Other' ? uniformReqForm.otherShoe : uniformReqForm.shoeSize;
     
-    const combinedItemDetails = `Shirt: ${finalShirt || 'N/A'}, Pant: ${finalPant || 'N/A'}, Shoe: ${finalShoe || 'N/A'}`;
-    
-    if (!uniformReqForm.target_user_id || !finalShirt || !finalPant || !finalShoe) {
-        return alert("Please select an employee and provide all uniform sizes.");
+    if (!uniformReqForm.target_user_id) {
+        return alert("Please select an employee.");
     }
+
+    if (!finalShirt && !finalPant && !finalShoe) {
+        return alert("Please select a size for at least one item (Shirt, Pant, or Shoe).");
+    }
+    
+    const detailsArray = [];
+    if (finalShirt) detailsArray.push(`Shirt: ${finalShirt}`);
+    if (finalPant) detailsArray.push(`Pant: ${finalPant}`);
+    if (finalShoe) detailsArray.push(`Shoe: ${finalShoe}`);
+    const combinedItemDetails = detailsArray.join(', ');
     
     const res = await fetch(`${API_BASE_URL}/api/uniform/request-adhoc`, {
         method: 'POST',
@@ -1060,12 +1070,12 @@ const syncOfflineData = useCallback(async () => {
                           <Col xs={12} md={4}>
                               <Form.Group>
                                   <Form.Label className="small fw-bold text-muted ps-1">Shirt Size</Form.Label>
-                                  <Form.Select className="custom-input border-0 shadow-sm" value={uniformReqForm.shirtSize} onChange={(e) => setUniformReqForm({...uniformReqForm, shirtSize: e.target.value})} required>
+                                  <Form.Select className="custom-input border-0 shadow-sm" value={uniformReqForm.shirtSize} onChange={(e) => setUniformReqForm({...uniformReqForm, shirtSize: e.target.value})}>
                                       <option value="">Select...</option>
                                       {['32', '34', '36', '38', '40', '42', '44', '46', 'Other'].map(s => <option key={s} value={s}>{s}</option>)}
                                   </Form.Select>
                                   {uniformReqForm.shirtSize === 'Other' && (
-                                      <Form.Control className="custom-input border-danger border-2 shadow-sm mt-2 fade-in" placeholder="Specify size" value={uniformReqForm.otherShirt} onChange={(e) => setUniformReqForm({...uniformReqForm, otherShirt: e.target.value})} required />
+                                      <Form.Control className="custom-input border-danger border-2 shadow-sm mt-2 fade-in" placeholder="Specify size" value={uniformReqForm.otherShirt} onChange={(e) => setUniformReqForm({...uniformReqForm, otherShirt: e.target.value})} />
                                   )}
                               </Form.Group>
                           </Col>
@@ -1073,12 +1083,12 @@ const syncOfflineData = useCallback(async () => {
                           <Col xs={12} md={4}>
                               <Form.Group>
                                   <Form.Label className="small fw-bold text-muted ps-1">Pant Size</Form.Label>
-                                  <Form.Select className="custom-input border-0 shadow-sm" value={uniformReqForm.pantSize} onChange={(e) => setUniformReqForm({...uniformReqForm, pantSize: e.target.value})} required>
+                                  <Form.Select className="custom-input border-0 shadow-sm" value={uniformReqForm.pantSize} onChange={(e) => setUniformReqForm({...uniformReqForm, pantSize: e.target.value})}>
                                       <option value="">Select...</option>
                                       {['28', '30', '32', '34', '36', '38', '40', '42', 'Other'].map(s => <option key={s} value={s}>{s}</option>)}
                                   </Form.Select>
                                   {uniformReqForm.pantSize === 'Other' && (
-                                      <Form.Control className="custom-input border-danger border-2 shadow-sm mt-2 fade-in" placeholder="Specify size" value={uniformReqForm.otherPant} onChange={(e) => setUniformReqForm({...uniformReqForm, otherPant: e.target.value})} required />
+                                      <Form.Control className="custom-input border-danger border-2 shadow-sm mt-2 fade-in" placeholder="Specify size" value={uniformReqForm.otherPant} onChange={(e) => setUniformReqForm({...uniformReqForm, otherPant: e.target.value})} />
                                   )}
                               </Form.Group>
                           </Col>
@@ -1086,12 +1096,12 @@ const syncOfflineData = useCallback(async () => {
                           <Col xs={12} md={4}>
                               <Form.Group>
                                   <Form.Label className="small fw-bold text-muted ps-1">Shoe Size (UK)</Form.Label>
-                                  <Form.Select className="custom-input border-0 shadow-sm" value={uniformReqForm.shoeSize} onChange={(e) => setUniformReqForm({...uniformReqForm, shoeSize: e.target.value})} required>
+                                  <Form.Select className="custom-input border-0 shadow-sm" value={uniformReqForm.shoeSize} onChange={(e) => setUniformReqForm({...uniformReqForm, shoeSize: e.target.value})}>
                                       <option value="">Select...</option>
                                       {['6', '7', '8', '9', '10', 'Other'].map(s => <option key={s} value={s}>{s}</option>)}
                                   </Form.Select>
                                   {uniformReqForm.shoeSize === 'Other' && (
-                                      <Form.Control className="custom-input border-danger border-2 shadow-sm mt-2 fade-in" placeholder="Specify size" value={uniformReqForm.otherShoe} onChange={(e) => setUniformReqForm({...uniformReqForm, otherShoe: e.target.value})} required />
+                                      <Form.Control className="custom-input border-danger border-2 shadow-sm mt-2 fade-in" placeholder="Specify size" value={uniformReqForm.otherShoe} onChange={(e) => setUniformReqForm({...uniformReqForm, otherShoe: e.target.value})} />
                                   )}
                               </Form.Group>
                           </Col>

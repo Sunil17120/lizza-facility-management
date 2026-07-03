@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Container, Row, Col, Card, Button, Badge, Modal, Form, Tabs, Tab, Spinner } from 'react-bootstrap';
-import { UserCheck, Shirt, PackagePlus, ShieldAlert, FileText, CheckCircle, RefreshCw, Users, Eye, ChevronRight, Minus, PlusCircle, Trash2, Building2, MapPin, Plus, Search } from 'lucide-react';
+import { UserCheck, Shirt, PackagePlus, ShieldAlert, FileText, CheckCircle, RefreshCw, Users, Eye, Building2, MapPin, Search, Trash2 } from 'lucide-react';
 import logoImg from './logo.png';
 
 const API_BASE_URL = "https://sunil0034-lizza-facility-backend.hf.space";
 
-// --- Helper Functions for Dossier ---
 const safeParseJSON = (jsonStr) => {
     if (!jsonStr || jsonStr === 'null' || jsonStr === 'undefined') return [];
     const parsed = JSON.parse(jsonStr);
@@ -15,14 +14,10 @@ const safeParseJSON = (jsonStr) => {
 
 const parseReferencesJSON = (jsonStr) => {
     if (!jsonStr || jsonStr === 'null' || jsonStr === 'undefined') return [];
-    try {
-        const parsed = JSON.parse(jsonStr);
-        if (Array.isArray(parsed)) return parsed.filter(item => item && item.name && (item.contact || item.phone || item.mobile));
-        if (typeof parsed === 'object' && parsed !== null) return Object.values(parsed).filter(item => item && item.name && (item.contact || item.phone || item.mobile || item.relationship || item.relation));
-        return [];
-    } catch (e) {
-        return [];
-    }
+    const parsed = JSON.parse(jsonStr);
+    if (Array.isArray(parsed)) return parsed.filter(item => item && item.name && (item.contact || item.phone || item.mobile));
+    if (typeof parsed === 'object' && parsed !== null) return Object.values(parsed).filter(item => item && item.name && (item.contact || item.phone || item.mobile || item.relationship || item.relation));
+    return [];
 };
 
 const HrDashboard = () => {
@@ -34,11 +29,13 @@ const HrDashboard = () => {
     const [uniformRequests, setUniformRequests] = useState([]);
     const [loading, setLoading] = useState(true);
     const [isSyncing, setIsSyncing] = useState(false);
-// --- Add these two state variables ---
     const [activeDossier, setActiveDossier] = useState(null);
     const [isDossierLoading, setIsDossierLoading] = useState(false);
     const [showStockModal, setShowStockModal] = useState(false);
     const [newStock, setNewStock] = useState({ item_category: 'Shirt', size: '', quantity: 0 });
+    
+    // New state to hold draft quantities for manual overwriting
+    const [draftStock, setDraftStock] = useState({});
     
     const [issueModal, setIssueModal] = useState(false);
     const [selectedUserForIssue, setSelectedUserForIssue] = useState(null);
@@ -56,7 +53,7 @@ const HrDashboard = () => {
             fetch(`${API_BASE_URL}/api/hr/inventory`).catch(() => ({ok: false})),
             fetch(`${API_BASE_URL}/api/admin/employees?admin_email=${hrEmail}`).catch(() => ({ok: false})),
             fetch(`${API_BASE_URL}/api/hr/issued-uniforms`).catch(() => ({ok: false})),
-            fetch(`${API_BASE_URL}/api/hr/pending-uniforms`).catch(() => ({ok: false})) // <-- Added
+            fetch(`${API_BASE_URL}/api/hr/pending-uniforms`).catch(() => ({ok: false}))
         ]);
         
         let currentInventory = [];
@@ -73,7 +70,7 @@ const HrDashboard = () => {
             setIssuedLogs(await issuedRes.json());
         }
         if (uniReqRes && uniReqRes.ok) {
-            setUniformRequests(await uniReqRes.json()); // <-- Added
+            setUniformRequests(await uniReqRes.json());
         }
         
         setLoading(false);
@@ -84,7 +81,6 @@ const HrDashboard = () => {
     const fieldOfficersAndManagers = activeStaff.filter(emp => emp.user_type === 'field_officer' || emp.user_type === 'manager');
     const groundStaff = activeStaff.filter(emp => emp.user_type === 'employee');
 
-    // --- AUTOMATED INVENTORY ISSUANCE LOGIC ---
     const autoIssueUniforms = async (emp, currentInventory) => {
         if (!emp.uniform_details || emp.uniform_details === 'Not Specified') return;
         
@@ -147,18 +143,33 @@ const HrDashboard = () => {
         }
     };
 
-    const handleAdjustStock = async (category, size, adjustmentAmount) => {
+    // Calculate difference and sync with backend
+    const handleOverwriteStock = async (inv) => {
+        const newQuantity = draftStock[inv.id];
+        if (newQuantity === undefined) return;
+        const difference = newQuantity - inv.quantity;
+        
         const res = await fetch(`${API_BASE_URL}/api/hr/add-inventory`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ item_category: category, size: size, quantity: adjustmentAmount, hr_email: hrEmail })
+            body: JSON.stringify({ item_category: inv.item_category, size: inv.size, quantity: difference, hr_email: hrEmail })
         });
-        if (res.ok) fetchData();
+        
+        if (res.ok) {
+            const newDrafts = { ...draftStock };
+            delete newDrafts[inv.id];
+            setDraftStock(newDrafts);
+            fetchData();
+        }
     };
 
-    const handleDeleteStock = async (category, size, currentQuantity) => {
-        if (!window.confirm(`Are you sure you want to delete ${category} (Size ${size})? This will set stock to 0.`)) return;
-        handleAdjustStock(category, size, -currentQuantity);
+    const handleDeleteStock = async (invId, category, size) => {
+        if (!window.confirm(`Are you sure you want to completely delete ${category} (Size ${size}) from the database?`)) return;
+        
+        const res = await fetch(`${API_BASE_URL}/api/hr/inventory/${invId}?hr_email=${hrEmail}`, {
+            method: 'DELETE'
+        });
+        if (res.ok) fetchData();
     };
 
    const handleIssueFullKit = async () => {
@@ -170,7 +181,6 @@ const HrDashboard = () => {
         let issuedCount = 0;
         let outOfStock = [];
 
-        // Break down the "Shirt: M, Pant: 34, Shoe: 9" string
         const parts = selectedUserForIssue.uniform_details.split(',');
         for (let part of parts) {
             const splitPart = part.split(':');
@@ -179,13 +189,11 @@ const HrDashboard = () => {
                 const sz = splitPart[1].trim();
 
                 if (sz !== 'N/A' && sz !== '') {
-                    // Find the exact item in the warehouse inventory
                     const invItem = inventory.find(i => 
                         i.item_category.toLowerCase() === cat.toLowerCase() && 
                         i.size.toString().toLowerCase() === sz.toLowerCase()
                     );
 
-                    // If we have it in stock, issue it instantly
                     if (invItem && invItem.quantity > 0) {
                         const res = await fetch(`${API_BASE_URL}/api/hr/issue-uniform`, {
                             method: 'POST',
@@ -194,7 +202,6 @@ const HrDashboard = () => {
                         });
                         if (res.ok) issuedCount++;
                     } else {
-                        // Keep track of what we couldn't fulfill
                         outOfStock.push(`${cat} (Size ${sz})`);
                     }
                 }
@@ -203,7 +210,6 @@ const HrDashboard = () => {
 
         setIsSyncing(false);
         
-        // Show a smart summary of what happened
         if (issuedCount > 0) {
             let msg = `Successfully issued ${issuedCount} items to ${selectedUserForIssue.full_name}!`;
             if (outOfStock.length > 0) msg += `\n\nHowever, the following items are OUT OF STOCK and were skipped: ${outOfStock.join(', ')}`;
@@ -455,27 +461,14 @@ const handlePrintProfile = async (userId) => {
         return acc;
     }, {})).sort((a, b) => new Date(b.issued_at) - new Date(a.issued_at));
 
-    // 2. Filter Dispatch History (Powers the new Search Bar)
     const filteredDispatch = groupedDispatch.filter(log => {
         const targetStaff = activeStaff.find(s => s.id === log.user_id) || pending.find(s => s.id === log.user_id);
         const staffName = targetStaff ? targetStaff.full_name : `User ID: ${log.user_id}`;
         const searchStr = `${staffName} ${log.combined_items.join(' ')} ${log.issued_by}`.toLowerCase();
         return searchStr.includes(dispatchSearch.toLowerCase());
     });
+const activeUniformRequests = uniformRequests;
 
-    // 3. Auto-Hide Completed Uniform Requests
-    const activeUniformRequests = uniformRequests.filter(req => {
-        if (!req.details || req.details === 'Not Specified') return true;
-        const requestedParts = req.details.split(',').filter(p => p.includes(':'));
-        
-        // Check if every requested item category is already in the issuedLogs for this user
-        const allIssued = requestedParts.every(part => {
-            const cat = part.split(':')[0].trim();
-            return issuedLogs.some(log => log.user_id === req.user_id && log.item_category.toLowerCase() === cat.toLowerCase());
-        });
-        
-        return !allIssued; // Only keep it if it is NOT fully issued yet
-    });
     if (loading) return <div className="text-center py-5"><Spinner animation="border" variant="danger" /></div>;
 
     return (
@@ -571,15 +564,31 @@ const handlePrintProfile = async (userId) => {
                                                 <div className="fw-bold text-dark">{req.details}</div>
                                             </div>
 
-                                            <div className="d-flex gap-2 mt-auto">
-                                                <Button variant="danger" className="flex-grow-1 rounded-pill fw-bold shadow-sm active-scale d-flex align-items-center justify-content-center" onClick={() => { 
-                                                    const userObj = activeStaff.find(u => u.id === req.user_id) || {id: req.user_id, full_name: req.emp_name, blockchain_id: req.emp_id, uniform_details: req.details};
-                                                    setSelectedUserForIssue(userObj); 
-                                                    setIssueModal(true); 
-                                                }}>
-                                                    <Shirt size={16} className="me-2"/> Fulfill & Issue Kit
-                                                </Button>
-                                            </div>
+                                           <div className="d-flex flex-column gap-2 mt-auto">
+    <Button variant="danger" className="w-100 rounded-pill fw-bold shadow-sm active-scale d-flex align-items-center justify-content-center" onClick={() => { 
+        // Find the base user, but STRICTLY override their uniform_details with the requested details
+        const baseUser = activeStaff.find(u => u.id === req.user_id) || {};
+        const userObj = {
+            ...baseUser,
+            id: req.user_id, 
+            full_name: req.emp_name, 
+            blockchain_id: req.emp_id, 
+            uniform_details: req.details 
+        };
+        setSelectedUserForIssue(userObj); 
+        setIssueModal(true); 
+    }}>
+        <Shirt size={16} className="me-2"/> Fulfill & Issue Kit
+    </Button>
+    
+    <Button variant="outline-success" className="w-100 rounded-pill fw-bold shadow-sm active-scale d-flex align-items-center justify-content-center" onClick={async () => {
+        setIsSyncing(true);
+        await fetch(`${API_BASE_URL}/api/hr/complete-uniform-req/${req.req_id}`, { method: 'POST' });
+        fetchData();
+    }}>
+        <CheckCircle size={16} className="me-2"/> Mark Completed
+    </Button>
+</div>
                                         </Card.Body>
                                     </Card>
                                 </Col>
@@ -660,7 +669,7 @@ const handlePrintProfile = async (userId) => {
                                 <Card className="glass-card border-0">
                                     <Card.Header className="bg-white py-4 d-flex justify-content-between align-items-center border-bottom-0">
                                         <h5 className="m-0 fw-bold d-flex align-items-center text-dark"><PackagePlus className="me-2 text-primary"/> Warehouse Stock</h5>
-                                        <Button variant="primary" className="rounded-pill fw-bold shadow-sm px-4 active-scale d-flex align-items-center" onClick={() => setShowStockModal(true)}><PlusCircle size={16} className="me-2"/> Add Stock</Button>
+                                        <Button variant="primary" className="rounded-pill fw-bold shadow-sm px-4 active-scale d-flex align-items-center" onClick={() => setShowStockModal(true)}>Add Stock</Button>
                                     </Card.Header>
                                     <Card.Body className="p-0">
                                         {inventory.length === 0 ? <div className="text-center text-muted py-5">No inventory added yet.</div> : (
@@ -680,14 +689,30 @@ const handlePrintProfile = async (userId) => {
                                                                     </Badge>
                                                                 </td>
                                                                 <td className="text-end pe-4">
-                                                                    <div className="d-flex justify-content-end gap-2">
-                                                                        <Button variant="outline-danger" size="sm" className="rounded-circle p-2 shadow-sm d-flex align-items-center" title="Subtract 1" onClick={() => handleAdjustStock(inv.item_category, inv.size, -1)} disabled={inv.quantity <= 0}>
-                                                                            <Minus size={14}/>
+                                                                    <div className="d-flex justify-content-end gap-2 align-items-center">
+                                                                        <Form.Control
+                                                                            type="number"
+                                                                            min="0"
+                                                                            className="custom-input p-1 text-center border"
+                                                                            style={{ width: '80px', height: '36px' }}
+                                                                            value={draftStock[inv.id] !== undefined ? draftStock[inv.id] : inv.quantity}
+                                                                            onChange={(e) => setDraftStock({ ...draftStock, [inv.id]: parseInt(e.target.value, 10) || 0 })}
+                                                                        />
+                                                                        <Button 
+                                                                            variant="success" 
+                                                                            size="sm" 
+                                                                            className="rounded-pill px-3 shadow-sm d-flex align-items-center fw-bold" 
+                                                                            onClick={() => handleOverwriteStock(inv)}
+                                                                            disabled={draftStock[inv.id] === undefined || draftStock[inv.id] === inv.quantity}
+                                                                        >
+                                                                            <RefreshCw size={14} className="me-1"/> Update
                                                                         </Button>
-                                                                        <Button variant="outline-success" size="sm" className="rounded-circle p-2 shadow-sm d-flex align-items-center" title="Add 1" onClick={() => handleAdjustStock(inv.item_category, inv.size, 1)}>
-                                                                            <Plus size={14}/>
-                                                                        </Button>
-                                                                        <Button variant="danger" size="sm" className="rounded-pill px-3 shadow-sm d-flex align-items-center fw-bold ms-2" onClick={() => handleDeleteStock(inv.item_category, inv.size, inv.quantity)}>
+                                                                        <Button 
+                                                                            variant="danger" 
+                                                                            size="sm" 
+                                                                            className="rounded-pill px-3 shadow-sm d-flex align-items-center fw-bold ms-2" 
+                                                                            onClick={() => handleDeleteStock(inv.id, inv.item_category, inv.size)}
+                                                                        >
                                                                             <Trash2 size={14} className="me-1"/> Delete
                                                                         </Button>
                                                                     </div>
@@ -729,7 +754,6 @@ const handlePrintProfile = async (userId) => {
                             <Card.Header className="bg-white py-4 d-flex flex-column flex-md-row justify-content-between align-items-md-center border-bottom-0 gap-3">
                                 <h5 className="m-0 fw-bold d-flex align-items-center text-dark"><MapPin className="me-2 text-success"/> Uniform Dispatch History</h5>
                                 
-                                {/* NEW: Search Bar */}
                                 <div className="position-relative" style={{ minWidth: '300px' }}>
                                     <Search size={18} className="position-absolute text-muted" style={{top: '12px', left: '14px'}} />
                                     <Form.Control 
@@ -768,7 +792,6 @@ const handlePrintProfile = async (userId) => {
                                                             <td><Badge bg="info" className="text-dark fw-bold">{requestedBy}</Badge></td>
                                                             <td><div className="fw-bold text-dark">{staffName}</div></td>
                                                             
-                                                            {/* Combined Items on one line */}
                                                             <td>
                                                                 <div className="fw-bold text-success">
                                                                     {log.combined_items.join(', ')}
@@ -788,7 +811,6 @@ const handlePrintProfile = async (userId) => {
                     </Tab>
                 </Tabs>
 
-                {/* Add Stock Modal */}
                 <Modal show={showStockModal} onHide={() => setShowStockModal(false)} centered backdrop="static">
                     <Modal.Header closeButton className="border-0"><Modal.Title className="fw-bold fs-5">Receive Warehouse Stock</Modal.Title></Modal.Header>
                     <Modal.Body className="bg-light rounded-bottom p-4">
@@ -812,9 +834,6 @@ const handlePrintProfile = async (userId) => {
                     </Modal.Body>
                 </Modal>
 
-                {/* Issue Kit Modal */}
-               
-                {/* Smart Issue Kit Modal */}
                 <Modal show={issueModal} onHide={() => { setIssueModal(false); setSelectedUserForIssue(null); }} centered backdrop="static" size="lg">
                     <Modal.Header closeButton className="border-0 bg-primary text-white"><Modal.Title className="fw-bold fs-5">Fulfillment Checklist</Modal.Title></Modal.Header>
                     <Modal.Body className="bg-light p-4">
@@ -838,13 +857,8 @@ const handlePrintProfile = async (userId) => {
                                             const cat = splitPart[0].trim();
                                             const reqSz = splitPart[1].trim();
                                             
-                                            // 1. Check if this category was already issued to this user in the past
                                             const alreadyIssued = issuedLogs.some(log => log.user_id === selectedUserForIssue.id && log.item_category.toLowerCase() === cat.toLowerCase());
-                                            
-                                            // 2. Filter warehouse stock to only show items for this specific category (e.g., only Shirts)
                                             const availableStock = inventory.filter(i => i.item_category.toLowerCase() === cat.toLowerCase() && i.quantity > 0);
-                                            
-                                            // 3. Try to find the exact requested size in the warehouse
                                             const exactMatch = availableStock.find(i => i.size.toString().toLowerCase() === reqSz.toLowerCase());
                                             
                                             return (
@@ -887,7 +901,7 @@ const handlePrintProfile = async (userId) => {
                                                                     });
                                                                     
                                                                     if (res.ok) {
-                                                                        fetchData(); // Instantly refreshes stock and turns the row green
+                                                                        fetchData(); 
                                                                     } else {
                                                                         alert("Error issuing item. Stock might be empty.");
                                                                         setIsSyncing(false);
