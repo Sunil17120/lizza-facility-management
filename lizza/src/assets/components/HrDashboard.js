@@ -582,12 +582,58 @@ const activeUniformRequests = uniformRequests;
     </Button>
     
     <Button variant="outline-success" className="w-100 rounded-pill fw-bold shadow-sm active-scale d-flex align-items-center justify-content-center" onClick={async () => {
-        setIsSyncing(true);
-        await fetch(`${API_BASE_URL}/api/hr/complete-uniform-req/${req.req_id}`, { method: 'POST' });
-        fetchData();
-    }}>
-        <CheckCircle size={16} className="me-2"/> Mark Completed
-    </Button>
+    if (!window.confirm("This will automatically deduct available items from inventory and generate dispatch logs. Proceed?")) return;
+    setIsSyncing(true);
+    
+    let outOfStock = [];
+    
+    // 1. Parse the adhoc request and auto-dispatch available items
+    if (req.details && req.details !== 'Not Specified') {
+        const parts = req.details.split(',');
+        for (let part of parts) {
+            const splitPart = part.split(':');
+            if (splitPart.length === 2) {
+                const cat = splitPart[0].trim();
+                const sz = splitPart[1].trim();
+                
+                if (sz !== 'N/A' && sz !== '') {
+                    // Find matching item in inventory state
+                    const invItem = inventory.find(i => 
+                        i.item_category.toLowerCase() === cat.toLowerCase() && 
+                        i.size.toString().toLowerCase() === sz.toLowerCase()
+                    );
+                    
+                    if (invItem && invItem.quantity > 0) {
+                        // Issue the uniform (This automatically deducts stock and adds to Dispatch Tracking)
+                        await fetch(`${API_BASE_URL}/api/hr/issue-uniform`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ inventory_id: invItem.id, user_id: req.user_id, hr_email: hrEmail })
+                        });
+                    } else {
+                        outOfStock.push(`${cat} (Size ${sz})`);
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Mark the original request as completed
+    await fetch(`${API_BASE_URL}/api/hr/complete-uniform-req/${req.req_id}`, { method: 'POST' });
+    
+    setIsSyncing(false);
+    
+    // 3. Provide HR with immediate feedback
+    if (outOfStock.length > 0) {
+        alert(`Request completed, but these items were OUT OF STOCK and skipped:\n${outOfStock.join(', ')}`);
+    } else {
+        alert("Successfully auto-fulfilled and logged to Dispatch Tracking!");
+    }
+    
+    fetchData(); // Refreshes the tables so you see the new dispatch logs immediately
+}}>
+    <CheckCircle size={16} className="me-2"/> Auto-Assign & Complete
+</Button>
 </div>
                                         </Card.Body>
                                     </Card>
