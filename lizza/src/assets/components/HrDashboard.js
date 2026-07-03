@@ -834,7 +834,7 @@ const activeUniformRequests = uniformRequests;
                     </Modal.Body>
                 </Modal>
 
-                <Modal show={issueModal} onHide={() => { setIssueModal(false); setSelectedUserForIssue(null); }} centered backdrop="static" size="lg">
+    <Modal show={issueModal} onHide={() => { setIssueModal(false); setSelectedUserForIssue(null); }} centered backdrop="static" size="lg">
                     <Modal.Header closeButton className="border-0 bg-primary text-white"><Modal.Title className="fw-bold fs-5">Fulfillment Checklist</Modal.Title></Modal.Header>
                     <Modal.Body className="bg-light p-4">
                         {selectedUserForIssue && (
@@ -857,7 +857,8 @@ const activeUniformRequests = uniformRequests;
                                             const cat = splitPart[0].trim();
                                             const reqSz = splitPart[1].trim();
                                             
-                                            const alreadyIssued = issuedLogs.some(log => log.user_id === selectedUserForIssue.id && log.item_category.toLowerCase() === cat.toLowerCase());
+                                            // FIX: Allow replacements by treating the item as NOT issued yet for this specific ad-hoc request
+                                            const alreadyIssued = false; 
                                             const availableStock = inventory.filter(i => i.item_category.toLowerCase() === cat.toLowerCase() && i.quantity > 0);
                                             const exactMatch = availableStock.find(i => i.size.toString().toLowerCase() === reqSz.toLowerCase());
                                             
@@ -901,7 +902,8 @@ const activeUniformRequests = uniformRequests;
                                                                     });
                                                                     
                                                                     if (res.ok) {
-                                                                        fetchData(); 
+                                                                        alert(`${cat} successfully dispatched!`);
+                                                                        await fetchData(); // Ensures dispatch tracking and inventory update instantly
                                                                     } else {
                                                                         alert("Error issuing item. Stock might be empty.");
                                                                         setIsSyncing(false);
