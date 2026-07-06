@@ -303,10 +303,10 @@ const handlePrintProfile = async (userId) => {
         ? `<table><tr><th>Company Name</th><th>Designation</th><th>Period</th></tr>` + expData.map(e => `<tr><td>${e?.company||'-'}</td><td>${e?.designation||'-'}</td><td>${e?.period||'-'}</td></tr>`).join('') + `</table>`
         : '<p class="text-muted" style="text-align:center;">No prior work experience provided.</p>';
 
-    const famData = safeParseJSON(emp?.family_json);
-    let famHtml = famData.length > 0 && famData[0]?.name
-        ? `<table><tr><th>Name</th><th>Relationship</th><th>DOB</th></tr>` + famData.map(f => `<tr><td>${f?.name||'-'}</td><td>${f?.relation||'-'}</td><td>${f?.dob||'-'}</td></tr>`).join('') + `</table>`
-        : '<p class="text-muted" style="text-align:center;">No family details provided.</p>';
+   const famData = safeParseJSON(emp?.family_json);
+let famHtml = famData.length > 0 && famData[0]?.name
+    ? `<table><tr><th>Name</th><th>Relationship</th><th>DOB</th><th>Contact Number</th></tr>` + famData.map(f => `<tr><td>${f?.name||'-'}</td><td>${f?.relation||'-'}</td><td>${f?.dob||'-'}</td><td>${f?.contact||'-'}</td></tr>`).join('') + `</table>`
+    : '<p class="text-muted" style="text-align:center;">No family details provided.</p>';
 
     const refData = parseReferencesJSON(emp?.references_json);
     let refHtml = refData.length > 0
