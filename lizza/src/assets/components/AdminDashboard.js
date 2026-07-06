@@ -1181,11 +1181,18 @@ const downloadExcel = (withPhotos = false) => {
                                                                 </td>
                                                                 <td className="pe-4 border-bottom">
                                                                     {report.photo ? (
-                                                                        <div className="position-relative" style={{width: '60px', height: '60px', cursor: 'pointer'}} onClick={() => setPhotoPreview(report.photo)}>
-                                                                            <img src={report.photo.split(',')[0]} alt="Visit" style={{width: '100%', height: '100%', objectFit: 'cover', borderRadius: '8px'}} className="shadow-sm"/>
-                                                                            <div className="position-absolute top-50 start-50 translate-middle bg-dark bg-opacity-50 text-white rounded-circle p-1"><Eye size={12}/></div>
-                                                                        </div>
-                                                                    ) : <span className="text-muted small">No photo</span>}
+    <div className="position-relative d-inline-block" style={{width: '60px', height: '60px', cursor: 'pointer'}} onClick={() => setPhotoPreview(report.photo)}>
+        <img src={report.photo.split(',')[0].trim()} alt="Visit" style={{width: '100%', height: '100%', objectFit: 'cover', borderRadius: '8px'}} className="shadow-sm"/>
+        <div className="position-absolute top-50 start-50 translate-middle bg-dark bg-opacity-50 text-white rounded-circle p-1"><Eye size={12}/></div>
+        
+        {/* Show a badge if there are multiple photos */}
+        {report.photo.split(',').length > 1 && (
+            <Badge bg="danger" className="position-absolute top-0 start-100 translate-middle rounded-pill shadow-sm border border-white" style={{fontSize: '0.65rem'}}>
+                +{report.photo.split(',').length - 1}
+            </Badge>
+        )}
+    </div>
+) : <span className="text-muted small">No photo</span>}
                                                                 </td>
                                                             </tr>
                                                         ))}
@@ -1557,11 +1564,21 @@ const downloadExcel = (withPhotos = false) => {
           </Modal>
 
           <Modal show={!!photoPreview} onHide={() => setPhotoPreview(null)} centered size="lg" backdrop="static">
-            <Modal.Header closeButton className="bg-dark text-white border-0"><Modal.Title className="h6 fw-bold">Geotagged Visual Evidence</Modal.Title></Modal.Header>
-            <Modal.Body className="p-0 text-center bg-dark">
-                <img src={photoPreview} alt="Geotagged Visit" style={{ width: '100%', maxHeight: '75vh', objectFit: 'contain' }} />
-            </Modal.Body>
-          </Modal>
+  <Modal.Header closeButton className="bg-dark text-white border-0">
+    <Modal.Title className="h6 fw-bold">Geotagged Visual Evidence</Modal.Title>
+  </Modal.Header>
+  <Modal.Body className="p-3 text-center bg-dark d-flex flex-column gap-3" style={{ maxHeight: '80vh', overflowY: 'auto' }}>
+      {/* Split the string and map through every photo URL */}
+      {photoPreview && photoPreview.split(',').map((imgUrl, index) => (
+          <img 
+              key={index} 
+              src={imgUrl.trim()} 
+              alt={`Evidence ${index + 1}`} 
+              style={{ width: '100%', maxHeight: '75vh', objectFit: 'contain', border: '1px solid #444', borderRadius: '8px' }} 
+          />
+      ))}
+  </Modal.Body>
+</Modal>
 
           <Modal show={!!routeViewerUserId} onHide={() => setRouteViewerUserId(null)} size="xl" centered backdrop="static">
             <Modal.Header closeButton className="bg-dark text-white border-0 py-4 px-4">
