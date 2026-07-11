@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Container, Row, Col, Card, Button, Badge, Modal, Form, Tabs, Tab, Spinner } from 'react-bootstrap';
-import { UserCheck, Shirt, PackagePlus, ShieldAlert, FileText, CheckCircle, RefreshCw, Users, Eye, Building2, MapPin, Search, Trash2 } from 'lucide-react';
+import { UserCheck, Shirt, PackagePlus, ShieldAlert, FileText, CheckCircle, RefreshCw, Users, Eye, Building2, MapPin, Search, Trash2, Download } from 'lucide-react';
 import logoImg from './logo.png';
 
 const API_BASE_URL = "https://sunil0034-lizza-facility-backend.hf.space";
@@ -41,6 +41,11 @@ const HrDashboard = () => {
     const [selectedUserForIssue, setSelectedUserForIssue] = useState(null);
     const [selectedInventoryId, setSelectedInventoryId] = useState('');
     const [dispatchSearch, setDispatchSearch] = useState('');
+    const [equipmentInventory, setEquipmentInventory] = useState([]);
+    const [equipmentLogs, setEquipmentLogs] = useState({ allocations: [], checkouts: [] });
+    const [equipForm, setEquipForm] = useState({ asset_name: '', category: 'Site Basics', quantity: 0 });
+    const [allocateForm, setAllocateForm] = useState({ asset_id: '', location_id: '', quantity: 1, type: 'SITE' });
+    const [returnedLogs, setReturnedLogs] = useState({ uniforms: [], equipment: [] });
 
     useEffect(() => {
         fetchData();
@@ -48,12 +53,15 @@ const HrDashboard = () => {
 
    const fetchData = async () => {
         setIsSyncing(true);
-        const [pendRes, invRes, staffRes, issuedRes, uniReqRes] = await Promise.all([
+        const [pendRes, invRes, staffRes, issuedRes, uniReqRes, equipRes, equipLogsRes, returnRes] = await Promise.all([
             fetch(`${API_BASE_URL}/api/hr/pending-approvals?hr_email=${hrEmail}`).catch(() => ({ok: false})),
             fetch(`${API_BASE_URL}/api/hr/inventory`).catch(() => ({ok: false})),
             fetch(`${API_BASE_URL}/api/admin/employees?admin_email=${hrEmail}`).catch(() => ({ok: false})),
             fetch(`${API_BASE_URL}/api/hr/issued-uniforms`).catch(() => ({ok: false})),
-            fetch(`${API_BASE_URL}/api/hr/pending-uniforms`).catch(() => ({ok: false}))
+            fetch(`${API_BASE_URL}/api/hr/pending-uniforms`).catch(() => ({ok: false})),
+            fetch(`${API_BASE_URL}/api/equipment/inventory`).catch(() => ({ok: false})),
+            fetch(`${API_BASE_URL}/api/equipment/logs`).catch(() => ({ok: false})),
+            fetch(`${API_BASE_URL}/api/hr/returned-logs`).catch(() => ({ok: false}))
         ]);
         
         let currentInventory = [];
@@ -72,7 +80,9 @@ const HrDashboard = () => {
         if (uniReqRes && uniReqRes.ok) {
             setUniformRequests(await uniReqRes.json());
         }
-        
+        if (equipRes && equipRes.ok) setEquipmentInventory(await equipRes.json());
+        if (equipLogsRes && equipLogsRes.ok) setEquipmentLogs(await equipLogsRes.json());
+        if (returnRes && returnRes.ok) setReturnedLogs(await returnRes.json());
         setLoading(false);
         setIsSyncing(false);
         return currentInventory; 
@@ -470,7 +480,24 @@ let famHtml = famData.length > 0 && famData[0]?.name
 const activeUniformRequests = uniformRequests;
 
     if (loading) return <div className="text-center py-5"><Spinner animation="border" variant="danger" /></div>;
-
+const downloadDispatchExcel = () => {
+        let tableHtml = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"></head><body><table border="1"><thead><tr style="background-color: #f2f2f2; font-weight: bold;"><th>Date Issued</th><th>Approver</th><th>Recipient</th><th>Target Site</th><th>Items</th><th>Authorized By</th></tr></thead><tbody>`;
+        filteredDispatch.forEach(log => {
+            const targetStaff = activeStaff.find(s => s.id === log.user_id) || pending.find(s => s.id === log.user_id);
+            const staffName = targetStaff ? targetStaff.full_name : `User ID: ${log.user_id}`;
+            const requestedBy = targetStaff?.onboarded_by_email ? targetStaff.onboarded_by_email : 'Direct HR';
+            const site = log.site_name || targetStaff?.department || 'Unassigned';
+            tableHtml += `<tr><td>${new Date(log.issued_at).toLocaleDateString()}</td><td>${requestedBy}</td><td>${staffName}</td><td>${site}</td><td>${log.combined_items.join(', ')}</td><td>${log.issued_by}</td></tr>`;
+        });
+        tableHtml += `</tbody></table></body></html>`;
+        const blob = new Blob([tableHtml], { type: 'application/vnd.ms-excel' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = `Uniform_Dispatch_Report.xls`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    };
     return (
         <>
         <style>
@@ -864,6 +891,186 @@ const activeUniformRequests = uniformRequests;
                             </Card.Body>
                         </Card>
                     </Tab>
+                    {/* TAB: DISPATCH TRACKING */}
+                    <Tab eventKey="tracking" title="Uniform Dispatch Log">
+                        <Card className="glass-card border-0 mt-3">
+                            <Card.Header className="bg-white py-4 d-flex flex-column flex-md-row justify-content-between align-items-md-center border-bottom-0 gap-3">
+                                <div className="d-flex align-items-center gap-3">
+                                    <h5 className="m-0 fw-bold d-flex align-items-center text-dark"><MapPin className="me-2 text-danger"/> Uniform Dispatch History</h5>
+                                    <Button variant="dark" size="sm" className="rounded-pill fw-bold shadow-sm d-flex align-items-center" onClick={downloadDispatchExcel} disabled={filteredDispatch.length === 0}>
+                                        <Download size={14} className="me-2"/> Download Excel
+                                    </Button>
+                                </div>
+                                <div className="position-relative" style={{ minWidth: '300px' }}>
+                                    <Search size={18} className="position-absolute text-muted" style={{top: '12px', left: '14px'}} />
+                                    <Form.Control type="text" placeholder="Search tracking log..." className="custom-input border-0 bg-light shadow-sm w-100" style={{paddingLeft: '40px'}} value={dispatchSearch} onChange={e => setDispatchSearch(e.target.value)} />
+                                </div>
+                            </Card.Header>
+                            <Card.Body className="p-0">
+                                {filteredDispatch.length === 0 ? <div className="text-center text-muted py-5 border-top bg-light">No dispatch records found.</div> : (
+                                    <div className="table-responsive">
+                                        <table className="table table-hover align-middle mb-0">
+                                            <thead className="table-light text-muted small text-uppercase">
+                                                <tr><th className="ps-4">Date Issued</th><th>Approver</th><th>Ground Staff</th><th>Target Site</th><th>Uniform Kit</th></tr>
+                                            </thead>
+                                            <tbody>
+                                                {filteredDispatch.map(log => {
+                                                    const targetStaff = activeStaff.find(s => s.id === log.user_id) || pending.find(s => s.id === log.user_id);
+                                                    const staffName = targetStaff ? targetStaff.full_name : `User ID: ${log.user_id}`;
+                                                    const requestedBy = targetStaff?.onboarded_by_email ? targetStaff.onboarded_by_email : 'Direct HR';
+                                                    const site = log.site_name || targetStaff?.department || 'Unassigned';
+                                                    return (
+                                                        <tr key={`${log.user_id}-${log.issued_at}`}>
+                                                            <td className="ps-4 py-3 fw-bold text-dark">{new Date(log.issued_at).toLocaleDateString()}</td>
+                                                            <td><Badge bg="dark" className="text-white fw-bold">{requestedBy}</Badge></td>
+                                                            <td><div className="fw-bold text-dark">{staffName}</div></td>
+                                                            <td><span className="text-muted small fw-bold">{site}</span></td>
+                                                            <td>
+                                                                <div className={`fw-bold ${log.is_returned ? 'text-muted text-decoration-line-through' : 'text-danger'}`}>{log.combined_items.join(', ')}</div>
+                                                                {log.is_returned && <Badge bg="secondary" className="mt-1 rounded-0" style={{fontSize: '10px'}}>RETURNED</Badge>}
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                )}
+                            </Card.Body>
+                        </Card>
+                    </Tab>
+
+                    {/* TAB: EQUIPMENT DIRECTORY (RED/BLACK/WHITE THEME) */}
+                    <Tab eventKey="equipment" title="Asset Directory">
+                        <Row className="g-4 mt-2">
+                            <Col xs={12} lg={4}>
+                                <Card className="mb-4 border-0 shadow-sm" style={{ backgroundColor: '#ffffff', borderTop: '4px solid #e31e24' }}>
+                                    <Card.Header className="bg-white py-3 fw-bold border-bottom text-dark d-flex align-items-center"><PackagePlus size={18} className="me-2 text-danger"/> Add New Asset</Card.Header>
+                                    <Card.Body>
+                                        <Form onSubmit={async (e) => {
+                                            e.preventDefault();
+                                            await fetch(`${API_BASE_URL}/api/equipment/add-inventory`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...equipForm, hr_email: hrEmail }) });
+                                            setEquipForm({ asset_name: '', category: 'Site Basics', quantity: 0 });
+                                            fetchData();
+                                        }}>
+                                            <Form.Group className="mb-3"><Form.Control className="border-1 shadow-none" style={{ borderColor: '#212529' }} placeholder="Asset Name (e.g. Torch)" value={equipForm.asset_name} onChange={e => setEquipForm({...equipForm, asset_name: e.target.value})} required /></Form.Group>
+                                            <Form.Group className="mb-3">
+                                                <Form.Select className="border-1 shadow-none" style={{ borderColor: '#212529' }} value={equipForm.category} onChange={e => setEquipForm({...equipForm, category: e.target.value})}>
+                                                    <option value="Site Basics">Site Basics</option><option value="Electronics">Electronics</option><option value="Apparel Accessories">Apparel Accessories</option><option value="Tools">Tools</option>
+                                                </Form.Select>
+                                            </Form.Group>
+                                            <Form.Group className="mb-3"><Form.Control className="border-1 shadow-none" style={{ borderColor: '#212529' }} type="number" placeholder="Quantity" value={equipForm.quantity} onChange={e => setEquipForm({...equipForm, quantity: e.target.value})} required /></Form.Group>
+                                            <Button type="submit" variant="danger" className="w-100 rounded-0 fw-bold">REGISTER ASSET</Button>
+                                        </Form>
+                                    </Card.Body>
+                                </Card>
+
+                                <Card className="border-0 shadow-sm" style={{ backgroundColor: '#ffffff', borderTop: '4px solid #212529' }}>
+                                    <Card.Header className="bg-dark text-white py-3 fw-bold border-bottom-0 d-flex align-items-center"><ShieldAlert size={18} className="me-2 text-white"/> Independent Dispatch</Card.Header>
+                                    <Card.Body>
+                                        <Form onSubmit={async (e) => {
+                                            e.preventDefault();
+                                            const endpoint = allocateForm.type === 'SITE' ? 'allocate' : 'checkout';
+                                            const bodyData = { asset_id: allocateForm.asset_id, hr_email: hrEmail };
+                                            if (allocateForm.type === 'SITE') { bodyData.location_id = allocateForm.location_id; bodyData.quantity = allocateForm.quantity; } else { bodyData.user_id = allocateForm.location_id; }
+                                            const res = await fetch(`${API_BASE_URL}/api/equipment/${endpoint}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bodyData) });
+                                            if (res.ok) { alert("Equipment Dispatched"); fetchData(); }
+                                        }}>
+                                            <Form.Group className="mb-3">
+                                                <Form.Select className="border-1 fw-bold shadow-none" style={{ borderColor: '#212529', color: '#e31e24' }} onChange={e => setAllocateForm({...allocateForm, type: e.target.value})}>
+                                                    <option value="SITE">Allocate to Site Location</option><option value="USER">Checkout to Officer/Staff</option>
+                                                </Form.Select>
+                                            </Form.Group>
+                                            <Form.Group className="mb-3">
+                                                <Form.Select className="border-1 shadow-none" style={{ borderColor: '#212529' }} onChange={e => setAllocateForm({...allocateForm, asset_id: e.target.value})} required>
+                                                    <option value="">Select Asset from Vault...</option>
+                                                    {equipmentInventory.filter(a => a.total_quantity > 0).map(a => <option key={a.id} value={a.id}>{a.asset_name} (Stock: {a.total_quantity})</option>)}
+                                                </Form.Select>
+                                            </Form.Group>
+                                            {allocateForm.type === 'SITE' ? (
+                                                <Form.Group className="mb-3"><Form.Control className="border-1 shadow-none" style={{ borderColor: '#212529' }} type="number" placeholder="Qty to Send" onChange={e => setAllocateForm({...allocateForm, quantity: e.target.value})} required /></Form.Group>
+                                            ) : (
+                                                <Form.Group className="mb-3">
+                                                    <Form.Select className="border-1 shadow-none" style={{ borderColor: '#212529' }} onChange={e => setAllocateForm({...allocateForm, location_id: e.target.value})} required>
+                                                        <option value="">Select Target Employee...</option>
+                                                        {activeStaff.map(emp => <option key={emp.id} value={emp.id}>{emp.full_name} ({emp.user_type})</option>)}
+                                                    </Form.Select>
+                                                </Form.Group>
+                                            )}
+                                            <Button type="submit" variant="dark" className="w-100 rounded-0 fw-bold">EXECUTE TRANSFER</Button>
+                                        </Form>
+                                    </Card.Body>
+                                </Card>
+                            </Col>
+
+                            <Col xs={12} lg={8}>
+                                <Card className="h-100 border-0 shadow-sm" style={{ backgroundColor: '#ffffff', borderTop: '4px solid #212529' }}>
+                                    <Card.Header className="bg-white py-4 d-flex justify-content-between align-items-center border-bottom"><h5 className="m-0 fw-bolder text-dark">MASTER ASSET LEDGER</h5></Card.Header>
+                                    <div className="table-responsive p-3">
+                                        <h6 className="fw-bold text-danger small text-uppercase mb-3">Site Allocations (Permanent / Bulk)</h6>
+                                        <table className="table align-middle mb-5 border">
+                                            <thead className="table-dark small text-uppercase"><tr><th>Target Site</th><th>Asset</th><th>Quantity Residing</th><th>Last Dispatched</th></tr></thead>
+                                            <tbody>
+                                                {equipmentLogs.allocations.length === 0 ? <tr><td colSpan="4" className="text-center py-4 text-muted">No site allocations.</td></tr> :
+                                                equipmentLogs.allocations.map(a => (
+                                                    <tr key={a.id}><td><Badge bg="dark" className="rounded-0">{a.site}</Badge></td><td className="fw-bold text-dark">{a.asset}</td><td className="fw-bold text-danger">{a.quantity}</td><td>{new Date(a.date).toLocaleDateString()}</td></tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+
+                                        <h6 className="fw-bold text-danger small text-uppercase mb-3">Active Personnel Checkouts (Temporary)</h6>
+                                        <table className="table align-middle mb-0 border">
+                                            <thead className="table-dark small text-uppercase"><tr><th>Employee</th><th>Asset</th><th>Status</th><th>Action</th></tr></thead>
+                                            <tbody>
+                                                {equipmentLogs.checkouts.length === 0 ? <tr><td colSpan="4" className="text-center py-4 text-muted">No active checkouts.</td></tr> :
+                                                equipmentLogs.checkouts.map(c => (
+                                                    <tr key={c.id}>
+                                                        <td className="fw-bold text-dark">{c.user}</td><td className="fw-bold text-muted">{c.asset}</td>
+                                                        <td><Badge bg={c.status === 'CHECKED_OUT' ? 'danger' : 'success'} className="rounded-0">{c.status}</Badge></td>
+                                                        <td>
+                                                            {c.status === 'CHECKED_OUT' && (
+                                                                <Button variant="outline-dark" size="sm" className="rounded-0 fw-bold" onClick={async () => {
+                                                                    await fetch(`${API_BASE_URL}/api/equipment/return`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ checkout_id: c.id }) });
+                                                                    fetchData();
+                                                                }}>CONFIRM RETURN</Button>
+                                                            )}
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </Card>
+                            </Col>
+                        </Row>
+                    </Tab>
+
+                    {/* TAB: RETURNS & RECOVERIES */}
+                    <Tab eventKey="returns" title="Returns Ledger">
+                        <Row className="g-4 mt-2">
+                            <Col xs={12}>
+                                <Card className="border-0 shadow-sm mb-4" style={{ backgroundColor: '#ffffff', borderTop: '4px solid #e31e24' }}>
+                                    <Card.Header className="bg-white py-4 d-flex justify-content-between align-items-center border-bottom">
+                                        <h5 className="m-0 fw-bolder text-dark d-flex align-items-center"><RefreshCw size={20} className="me-2 text-danger"/> RECOVERED PERSONNEL UNIFORMS (RESIGNATIONS)</h5>
+                                    </Card.Header>
+                                    <div className="table-responsive p-3">
+                                        <table className="table align-middle mb-0 border">
+                                            <thead className="table-dark small text-uppercase"><tr><th>Resigned Employee</th><th>Recovered Item</th><th>Original Issue Date</th><th>Date Returned to Stock</th></tr></thead>
+                                            <tbody>
+                                                {returnedLogs.uniforms.length === 0 ? <tr><td colSpan="4" className="text-center py-4 text-muted">No recovered uniforms recorded.</td></tr> :
+                                                returnedLogs.uniforms.map(u => (
+                                                    <tr key={u.id}>
+                                                        <td className="fw-bold text-dark">{u.user}</td><td className="fw-bold text-danger">{u.item}</td>
+                                                        <td className="text-muted">{new Date(u.issued_at).toLocaleDateString()}</td><td className="fw-bold text-dark">{new Date(u.returned_at).toLocaleDateString()}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </Card>
+                            </Col>
+                        </Row>
+                    </Tab>
                 </Tabs>
 
                 <Modal show={showStockModal} onHide={() => setShowStockModal(false)} centered backdrop="static">
@@ -970,6 +1177,40 @@ const activeUniformRequests = uniformRequests;
                         <div className="text-center text-muted py-4">No sizes specified in dossier.</div>
                     )}
                 </div>
+                <div className="bg-white rounded-4 shadow-sm border mb-4 p-3 border-danger border-opacity-50">
+                    <div className="small fw-bold text-danger text-uppercase tracking-wide mb-3"><PackagePlus size={16} className="me-1 mb-1"/> Add Special Items & Accessories</div>
+                    <div className="d-flex gap-2">
+                        <Form.Select id="adhoc-issue-select" className="custom-input border-1 py-2 shadow-none flex-grow-1 border-dark">
+                            <option value="">Select extra item from Equipment Vault (Tie, Belt, etc.)...</option>
+                            {equipmentInventory.filter(i => i.total_quantity > 0).map(inv => (
+                                <option key={inv.id} value={inv.id}>{inv.asset_name} - {inv.category} ({inv.total_quantity} left)</option>
+                            ))}
+                        </Form.Select>
+                        <Button variant="dark" className="rounded-pill fw-bold px-4 py-2 active-scale text-white" disabled={isSyncing}
+                            onClick={async () => {
+                                const selId = document.getElementById("adhoc-issue-select").value;
+                                if(!selId) return alert("Select a special item to dispatch.");
+                                setIsSyncing(true);
+                                const res = await fetch(`${API_BASE_URL}/api/equipment/checkout`, {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ 
+                                        asset_id: selId, 
+                                        user_id: selectedUserForIssue.id, 
+                                        hr_email: hrEmail
+                                    })
+                                });
+                                if (res.ok) {
+                                    alert(`Accessory successfully dispatched and logged in Asset Directory!`);
+                                    await fetchData(); 
+                                }
+                                setIsSyncing(false);
+                            }}>
+                            Dispatch Accessory
+                        </Button>
+                    </div>
+                </div>
+                
 
                 {/* NEW FOOTER TO CLOSE THE REQUEST DIRECTLY FROM THE MODAL */}
                 {selectedUserForIssue.active_req_id && (

@@ -250,12 +250,15 @@ const fetchReportsData = useCallback(async () => {
     if (res.ok) alert("Settings saved for " + emp.full_name);
   };
 
-  const handleDeleteEmp = async (id) => {
-    if(window.confirm("Permanently delete this employee?")) {
-        await fetch(`${API_BASE_URL}/api/admin/delete-employee/${id}`, { method: 'DELETE' });
-        fetchBaseData();
+const handleResignEmp = async (id) => {
+    if(window.confirm("Process resignation? This will deactivate their account and automatically return all issued items to stock.")) {
+        const res = await fetch(`${API_BASE_URL}/api/admin/resign-employee/${id}`, { method: 'POST' });
+        if (res.ok) {
+            alert("Resignation processed. Account deactivated and items returned to stock.");
+            fetchBaseData();
+        }
     }
-  };
+};
 
   const handleDeleteVisit = async (id) => {
     if (window.confirm('Permanently delete this visit record?')) {
@@ -881,7 +884,12 @@ const downloadExcel = (withPhotos = false) => {
                     <tbody className="border-top-0">
                         {verified.map(emp => (
                         <tr key={emp.id}>
-                            <td className="ps-4 py-3 border-bottom"><div className="fw-bold text-dark fs-6">{emp.full_name || 'N/A'}</div></td>
+                            <td className="ps-4 py-3 border-bottom">
+    <div className={`fw-bold fs-6 ${emp.is_active === false ? 'text-decoration-line-through text-muted' : 'text-dark'}`}>
+        {emp.full_name || 'N/A'}
+    </div>
+    {emp.is_active === false && <Badge bg="danger" className="mt-1 rounded-0">RESIGNED (INACTIVE)</Badge>}
+</td>
                             <td className="border-bottom">
                                 <div className="text-muted mb-1">{emp.email || 'N/A'}</div>
                                 <Badge bg="light" text="dark" className="border shadow-sm">{emp.blockchain_id || 'Pending'}</Badge>
@@ -936,7 +944,15 @@ const downloadExcel = (withPhotos = false) => {
                                     <Button variant="info" className="rounded-circle p-2 shadow-sm d-flex align-items-center text-white" onClick={() => { setSelectedStaff(emp); }} title="View Profile"><Eye size={16}/></Button>
                                     <Button variant="primary" className="rounded-circle p-2 shadow-sm d-flex align-items-center" onClick={() => { setEditingEmp({...emp}); setEditEmpModal(true); }} title="Edit"><Edit2 size={16}/></Button>
                                     <Button variant="success" className="rounded-circle p-2 shadow-sm d-flex align-items-center" onClick={() => handleInlineSave(emp)} title="Save"><Save size={16}/></Button>
-                                    <Button variant="danger" className="rounded-circle p-2 shadow-sm d-flex align-items-center" onClick={() => handleDeleteEmp(emp.id)} title="Delete"><Trash2 size={16}/></Button>
+                                    <Button 
+    variant={emp.is_active === false ? "secondary" : "dark"} 
+    className="rounded-circle p-2 shadow-sm d-flex align-items-center text-white" 
+    onClick={() => emp.is_active !== false && handleResignEmp(emp.id)} 
+    title={emp.is_active === false ? "Already Resigned" : "Process Resignation & Recover Assets"} 
+    disabled={emp.is_active === false}
+>
+    <Trash2 size={16}/>
+</Button>
                                 </div>
                             </td>
                         </tr>
