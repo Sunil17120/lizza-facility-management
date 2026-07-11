@@ -24,27 +24,25 @@ const HrDashboard = () => {
     const hrEmail = localStorage.getItem('userEmail');
     const [pending, setPending] = useState([]);
     const [activeStaff, setActiveStaff] = useState([]);
+    const [locations, setLocations] = useState([]); 
     const [inventory, setInventory] = useState([]);
     const [issuedLogs, setIssuedLogs] = useState([]); 
     const [uniformRequests, setUniformRequests] = useState([]);
     const [loading, setLoading] = useState(true);
     const [isSyncing, setIsSyncing] = useState(false);
-    const [activeDossier, setActiveDossier] = useState(null);
-    const [isDossierLoading, setIsDossierLoading] = useState(false);
+    
     const [showStockModal, setShowStockModal] = useState(false);
     const [newStock, setNewStock] = useState({ item_category: 'Shirt', size: '', quantity: 0 });
-    
-    // New state to hold draft quantities for manual overwriting
     const [draftStock, setDraftStock] = useState({});
     
     const [issueModal, setIssueModal] = useState(false);
     const [selectedUserForIssue, setSelectedUserForIssue] = useState(null);
-    const [selectedInventoryId, setSelectedInventoryId] = useState('');
     const [dispatchSearch, setDispatchSearch] = useState('');
+    
     const [equipmentInventory, setEquipmentInventory] = useState([]);
     const [equipmentLogs, setEquipmentLogs] = useState({ allocations: [], checkouts: [] });
     const [equipForm, setEquipForm] = useState({ asset_name: '', category: 'Site Basics', quantity: 0 });
-    const [allocateForm, setAllocateForm] = useState({ asset_id: '', location_id: '', quantity: 1, type: 'SITE' });
+    const [allocateForm, setAllocateForm] = useState({ asset_id: '', location_id: '', officer_id: '', quantity: 1, type: 'SITE' });
     const [returnedLogs, setReturnedLogs] = useState({ uniforms: [], equipment: [] });
 
     useEffect(() => {
@@ -53,7 +51,7 @@ const HrDashboard = () => {
 
    const fetchData = async () => {
         setIsSyncing(true);
-        const [pendRes, invRes, staffRes, issuedRes, uniReqRes, equipRes, equipLogsRes, returnRes] = await Promise.all([
+        const [pendRes, invRes, staffRes, issuedRes, uniReqRes, equipRes, equipLogsRes, returnRes, locRes] = await Promise.all([
             fetch(`${API_BASE_URL}/api/hr/pending-approvals?hr_email=${hrEmail}`).catch(() => ({ok: false})),
             fetch(`${API_BASE_URL}/api/hr/inventory`).catch(() => ({ok: false})),
             fetch(`${API_BASE_URL}/api/admin/employees?admin_email=${hrEmail}`).catch(() => ({ok: false})),
@@ -61,7 +59,8 @@ const HrDashboard = () => {
             fetch(`${API_BASE_URL}/api/hr/pending-uniforms`).catch(() => ({ok: false})),
             fetch(`${API_BASE_URL}/api/equipment/inventory`).catch(() => ({ok: false})),
             fetch(`${API_BASE_URL}/api/equipment/logs`).catch(() => ({ok: false})),
-            fetch(`${API_BASE_URL}/api/hr/returned-logs`).catch(() => ({ok: false}))
+            fetch(`${API_BASE_URL}/api/hr/returned-logs`).catch(() => ({ok: false})),
+            fetch(`${API_BASE_URL}/api/admin/locations`).catch(() => ({ok: false}))
         ]);
         
         let currentInventory = [];
@@ -74,15 +73,13 @@ const HrDashboard = () => {
             const allStaff = await staffRes.json();
             setActiveStaff(allStaff.filter(e => e.is_verified));
         }
-        if (issuedRes.ok) {
-            setIssuedLogs(await issuedRes.json());
-        }
-        if (uniReqRes && uniReqRes.ok) {
-            setUniformRequests(await uniReqRes.json());
-        }
+        if (issuedRes.ok) setIssuedLogs(await issuedRes.json());
+        if (uniReqRes && uniReqRes.ok) setUniformRequests(await uniReqRes.json());
         if (equipRes && equipRes.ok) setEquipmentInventory(await equipRes.json());
         if (equipLogsRes && equipLogsRes.ok) setEquipmentLogs(await equipLogsRes.json());
         if (returnRes && returnRes.ok) setReturnedLogs(await returnRes.json());
+        if (locRes && locRes.ok) setLocations(await locRes.json());
+        
         setLoading(false);
         setIsSyncing(false);
         return currentInventory; 
@@ -93,20 +90,14 @@ const HrDashboard = () => {
 
     const autoIssueUniforms = async (emp, currentInventory) => {
         if (!emp.uniform_details || emp.uniform_details === 'Not Specified') return;
-        
         const parts = emp.uniform_details.split(',');
         for (let part of parts) {
             const splitPart = part.split(':');
             if (splitPart.length === 2) {
                 const cat = splitPart[0].trim();
                 const sz = splitPart[1].trim();
-                
                 if (sz !== 'N/A' && sz !== '') {
-                    const invItem = currentInventory.find(i => 
-                        i.item_category.toLowerCase() === cat.toLowerCase() && 
-                        i.size.toString().toLowerCase() === sz.toLowerCase()
-                    );
-                    
+                    const invItem = currentInventory.find(i => i.item_category.toLowerCase() === cat.toLowerCase() && i.size.toString().toLowerCase() === sz.toLowerCase());
                     if (invItem && invItem.quantity > 0) {
                         await fetch(`${API_BASE_URL}/api/hr/issue-uniform`, {
                             method: 'POST',
@@ -122,17 +113,12 @@ const HrDashboard = () => {
     const handleVerify = async (emp) => {
         if (!window.confirm(`Approve ${emp.full_name} and generate LFM ID?`)) return;
         setIsSyncing(true);
-        
         const res = await fetch(`${API_BASE_URL}/api/hr/verify-employee`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ target_email: emp.email, hr_email: hrEmail })
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target_email: emp.email, hr_email: hrEmail })
         });
-        
         if (res.ok) {
             const currentInv = await fetchData(); 
             await autoIssueUniforms(emp, currentInv);
-            
             alert("Employee Verified & Uniform Inventory Adjusted Automatically!");
             fetchData();
         } else {
@@ -142,10 +128,9 @@ const HrDashboard = () => {
 
     const handleAddStock = async (e) => {
         e.preventDefault();
+        const finalCategory = newStock.item_category === 'Other' ? newStock.custom_category : newStock.item_category;
         const res = await fetch(`${API_BASE_URL}/api/hr/add-inventory`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...newStock, hr_email: hrEmail })
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ item_category: finalCategory, size: newStock.size, quantity: newStock.quantity, hr_email: hrEmail })
         });
         if (res.ok) {
             setShowStockModal(false);
@@ -153,18 +138,13 @@ const HrDashboard = () => {
         }
     };
 
-    // Calculate difference and sync with backend
     const handleOverwriteStock = async (inv) => {
         const newQuantity = draftStock[inv.id];
         if (newQuantity === undefined) return;
         const difference = newQuantity - inv.quantity;
-        
         const res = await fetch(`${API_BASE_URL}/api/hr/add-inventory`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ item_category: inv.item_category, size: inv.size, quantity: difference, hr_email: hrEmail })
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ item_category: inv.item_category, size: inv.size, quantity: difference, hr_email: hrEmail })
         });
-        
         if (res.ok) {
             const newDrafts = { ...draftStock };
             delete newDrafts[inv.id];
@@ -175,290 +155,255 @@ const HrDashboard = () => {
 
     const handleDeleteStock = async (invId, category, size) => {
         if (!window.confirm(`Are you sure you want to completely delete ${category} (Size ${size}) from the database?`)) return;
-        
-        const res = await fetch(`${API_BASE_URL}/api/hr/inventory/${invId}?hr_email=${hrEmail}`, {
-            method: 'DELETE'
-        });
+        const res = await fetch(`${API_BASE_URL}/api/hr/inventory/${invId}?hr_email=${hrEmail}`, { method: 'DELETE' });
         if (res.ok) fetchData();
     };
 
-   const handleIssueFullKit = async () => {
-        if (!selectedUserForIssue || !selectedUserForIssue.uniform_details) {
-            return alert("No uniform sizes specified for this user.");
+    const handlePrintProfile = async (userId) => {
+        const response = await fetch(`${API_BASE_URL}/api/admin/employee-dossier/${userId}?admin_email=${hrEmail}`);
+        const result = await response.json();
+        if (!response.ok) {
+            alert(result.detail || "Failed to load secure dossier data");
+            return;
         }
 
-        setIsSyncing(true);
-        let issuedCount = 0;
-        let outOfStock = [];
+        const emp = result.data;
+        const companyTerms = [
+            "If the applicant is selected, he/she should work with company for a period of minimum three months.",
+            "Employee agree that will work faithfully without any issues, and will be present in time for duty and complete the duty hrs as per schedule assigned.",
+            "Selected candidate should pay 2200/- as security deposit for providing uniform.",
+            "Selected candidate should submit any one original document while joining, same will be returned back after 1month as due to verification purpose.",
+            "Candidate who are selected and deployed in respective sites while in duty they are sole responsible for any theft or pilerage and they had to be borne by them.",
+            "A minimum of one-month notice has to given before leaving the job or a month salary will be deducted.",
+            "Employer may terminate Candidate (Employee) if any mis appropriation occurs in duty without prior notice.",
+            "The Selected Employee agree that any property like sim card or mobile should returned of at the time of resignation/termination.",
+            "Selected Employee should be flexible towards work like in shifts process as per Employer.",
+            "Resigned Employee salary will release after cmpletetion of 30 days of notice period, if not then one month salary will be on hold and that will be clear with a fine of 4000/-(every month on 25th).",
+            "The above all terms and conditions are Solley Accepted and signed."
+        ];
 
-        const parts = selectedUserForIssue.uniform_details.split(',');
-        for (let part of parts) {
-            const splitPart = part.split(':');
-            if (splitPart.length === 2) {
-                const cat = splitPart[0].trim();
-                const sz = splitPart[1].trim();
+        const termsHtml = `
+            <h3 class="section-header">10. Terms & Conditions</h3>
+            <div class="terms-box">
+                <ol style="padding-left: 20px; margin-bottom: 20px;">
+                    ${companyTerms.map(term => `<li style="margin-bottom: 8px;">${term}</li>`).join('')}
+                </ol>
+                <p><strong>Declaration:</strong> I, <strong>${emp?.full_name || 'the employee'}</strong>, confirm that I have read, understood, and agreed to the above terms.</p>
+                <p style="color: #e31e24; font-weight: bold;"><em>This document is digitally signed and verified by the LIZZA HR System.</em></p>
+                
+                <div style="margin-top: 40px; display: flex; justify-content: space-between; align-items: flex-end;">
+                    <div style="text-align: center;">
+                        <div style="border-bottom: 1px solid #000; width: 200px; margin-bottom: 5px;"></div>
+                        <strong>Employee Signature</strong>
+                    </div>
+                    <div style="text-align: center; border: 2px solid #e31e24; padding: 15px; border-radius: 8px; width: 220px;">
+                        <div style="font-size: 10px; color: #e31e24; margin-bottom: 5px;">[HR STAMP & SIGN]</div>
+                        <div style="height: 40px;"></div>
+                        <strong>Authorized Signatory</strong>
+                    </div>
+                </div>
+            </div>
+        `;
 
-                if (sz !== 'N/A' && sz !== '') {
-                    const invItem = inventory.find(i => 
-                        i.item_category.toLowerCase() === cat.toLowerCase() && 
-                        i.size.toString().toLowerCase() === sz.toLowerCase()
-                    );
+        let docsHtml = '';
+        const addDoc = (title, url) => {
+            if (url) docsHtml += `<div class="doc-section"><h3 class="doc-title">${title}</h3><img src="${url}" class="doc-img" alt="${title}" /></div>`;
+        };
+        
+        addDoc('Identity / Gov ID', emp?.aadhar_photo_path);
+        addDoc('PAN Card', emp?.pan_photo_path);
+        addDoc('Voter ID', emp?.voter_photo_path);
+        addDoc('Driving Licence', emp?.dl_photo_path);
+        addDoc('Passport', emp?.passport_photo_path);
+        addDoc('Bank Passbook / Cancelled Cheque', emp?.bank_passbook_path);
+        addDoc('Left Hand Fingerprints', emp?.fingerprints_left_path);
+        addDoc('Right Hand Fingerprints', emp?.fingerprints_right_path);
 
-                    if (invItem && invItem.quantity > 0) {
-                        const res = await fetch(`${API_BASE_URL}/api/hr/issue-uniform`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ inventory_id: invItem.id, user_id: selectedUserForIssue.id, hr_email: hrEmail })
-                        });
-                        if (res.ok) issuedCount++;
-                    } else {
-                        outOfStock.push(`${cat} (Size ${sz})`);
+        const extraDocs = safeParseJSON(emp?.extra_documents_json);
+        extraDocs.forEach(doc => {
+            if (doc?.path) addDoc(doc?.title || 'Additional Document', doc.path);
+        });
+
+        const kycStatusHtml = emp?.kyc_mode !== 'without_aadhaar' 
+            ? '<span style="color: #10b981; font-weight: bold;">✅ e-KYC Verified</span>' 
+            : '<span style="color: #ef4444; font-weight: bold;">⚠️ Manual Verification</span>';
+
+        const eduData = safeParseJSON(emp?.education_json);
+        let eduHtml = eduData.length > 0 && eduData[0]?.qualification
+            ? `<table><tr><th>Qualification</th><th>Institute</th><th>Year</th><th>Marks</th></tr>` + eduData.map(e => `<tr><td>${e?.qualification||'-'}</td><td>${e?.institute||'-'}</td><td>${e?.year||'-'}</td><td>${e?.marks||'-'}</td></tr>`).join('') + `</table>` 
+            : '<p class="text-muted" style="text-align:center;">No education history provided.</p>';
+
+        const expData = safeParseJSON(emp?.experience_json);
+        let expHtml = expData.length > 0 && expData[0]?.company
+            ? `<table><tr><th>Company Name</th><th>Designation</th><th>Period</th></tr>` + expData.map(e => `<tr><td>${e?.company||'-'}</td><td>${e?.designation||'-'}</td><td>${e?.period||'-'}</td></tr>`).join('') + `</table>`
+            : '<p class="text-muted" style="text-align:center;">No prior work experience provided.</p>';
+
+       const famData = safeParseJSON(emp?.family_json);
+    let famHtml = famData.length > 0 && famData[0]?.name
+        ? `<table><tr><th>Name</th><th>Relationship</th><th>DOB</th><th>Contact Number</th></tr>` + famData.map(f => `<tr><td>${f?.name||'-'}</td><td>${f?.relation||'-'}</td><td>${f?.dob||'-'}</td><td>${f?.contact||'-'}</td></tr>`).join('') + `</table>`
+        : '<p class="text-muted" style="text-align:center;">No family details provided.</p>';
+
+        const refData = parseReferencesJSON(emp?.references_json);
+        let refHtml = refData.length > 0
+            ? `<table><tr><th>Name</th><th>Contact Number</th><th>Relation / Context</th></tr>` + refData.map(r => `<tr><td>${r?.name||'-'}</td><td>${r?.contact || r?.phone || r?.mobile || '-'}</td><td>${r?.relation || r?.relationship || '-'}</td></tr>`).join('') + `</table>`
+            : '<p class="text-muted" style="text-align:center;">No reference details provided.</p>';
+        
+        const absoluteLogoUrl = new URL(logoImg, window.location.origin).href;
+        const completeHtmlContent = `
+            <html>
+            <head>
+                <title>Dossier_${emp?.full_name || 'Employee'}</title>
+                <style>
+                    body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; padding: 30px; color: #333; max-width: 900px; margin: auto; font-size: 14px; }
+                    .logo-header { text-align: center; margin-bottom: 20px; border-bottom: 3px solid #e31e24; padding-bottom: 15px; }
+                    .logo-header img { height: 50px; vertical-align: middle; margin-right: 15px; }
+                    .logo-header .company-name { font-size: 18px; font-weight: bold; color: #e31e24; vertical-align: middle; display: inline-block; }
+                    h2 { text-align: center; color: #ec0404; text-transform: uppercase; margin-bottom: 5px; }
+                    .flex-row { display: flex; justify-content: space-between; align-items: flex-start; }
+                    .photo { width: 140px; height: 140px; border-radius: 8px; object-fit: cover; border: 2px solid #0d6efd; }
+                    .details { flex-grow: 1; padding-left: 25px; }
+                    table { width: 100%; border-collapse: collapse; margin-top: 5px; margin-bottom: 15px; }
+                    td, th { padding: 8px 12px; border: 1px solid #dee2e6; text-align: left; }
+                    th { background-color: #f8f9fa; color: #495057; font-weight: bold; width: 25%; }
+                    .section-header { margin-top: 30px; border-bottom: 2px solid #ccc; padding-bottom: 5px; color: #333; font-size: 16px; text-transform: uppercase; }
+                    .doc-section { margin-top: 30px; text-align: center; page-break-inside: avoid; }
+                    .doc-title { font-size: 14px; color: #555; margin-bottom: 10px; text-transform: uppercase; border-bottom: 1px dashed #eee; padding-bottom: 5px; }
+                    .doc-img { max-width: 100%; max-height: 450px; border: 1px solid #ccc; border-radius: 4px; padding: 5px; object-fit: contain; }
+                    .text-muted { color: #6c757d; font-style: italic; }
+                    .mobile-back-btn { background: #e31e24; color: white; border: none; padding: 16px 32px; font-size: 18px; border-radius: 50px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 12px rgba(227,30,36,0.3); margin-top: 20px; }
+                    @media print {
+                        .doc-section, table { page-break-inside: avoid; }
+                        body { padding: 0; }
+                        .no-print { display: none !important; }
                     }
-                }
-            }
-        }
+                </style>
+            </head>
+            <body>
+                <div class="no-print" style="text-align: center; padding: 15px; background: #fff3f3; border-bottom: 2px solid #e31e24; margin-bottom: 20px;">
+                    <h4 style="color: #e31e24; margin: 0 0 10px 0;">PDF Document Generator</h4>
+                    <p style="margin: 0 0 15px 0;">Use your browser menu to save or share as PDF if the system sheet does not appear automatically.</p>
+                    <button class="mobile-back-btn" onclick="window.close(); setTimeout(function(){ window.location.href = '${window.location.href}'; }, 300);">← Return to Dashboard</button>
+                </div>
 
-        setIsSyncing(false);
+                <div class="logo-header">
+        <img src="${absoluteLogoUrl}" alt="Company Logo" />
+        <span class="company-name">LIZZA FACILITY MANAGEMENT</span>
+    </div>
+                
+                <h2>Official HR Dossier</h2>
+                <div style="text-align: center; font-size: 11px; color: #555; letter-spacing: 1.5px; border-bottom: 1px solid #eee; padding-bottom: 15px; margin-bottom: 20px; text-transform: uppercase;">
+                    Privileged & Confidential • HR Dept Only
+                </div>
+                
+                <h3 class="section-header" style="margin-top:0;">1. Identity & Employment Status</h3>
+                <div class="flex-row">
+                    <div><img src="${emp?.profile_photo_path || 'https://via.placeholder.com/150'}" class="photo" alt="Profile" /></div>
+                    <div class="details">
+                        <table>
+                            <tr><th>Full Name</th><td style="font-weight: bold; font-size: 16px;">${emp?.full_name || 'N/A'}</td></tr>
+                            <tr><th>System Role</th><td style="text-transform: uppercase; font-weight:bold; color: #fd0d0d;">${emp?.user_type || 'N/A'}</td></tr>
+                            <tr><th>Assigned Dept/Site</th><td>${emp?.department || 'N/A'} - ${emp?.unit_name || 'Dynamic'}</td></tr>
+                            <tr><th>Onboarded By</th><td style="color:#e31e24; font-weight:bold;">${emp?.onboarded_by_name || 'Admin / Direct Hire'}</td></tr>
+                            <tr><th>Designation</th><td>${emp?.designation || 'N/A'}</td></tr>
+                            <tr><th>Primary Mobile</th><td>${emp?.phone_number || 'N/A'}</td></tr>
+                            <tr><th>KYC Authenticity</th><td>${kycStatusHtml}</td></tr>
+                        </table>
+                    </div>
+                </div>
+
+                <h3 class="section-header">2. Demographics, Medical & Uniform</h3>
+                <table>
+                    <tr><th>Date of Birth</th><td>${emp?.dob || 'N/A'}</td><th>Blood Group</th><td style="color:#e31e24; font-weight:bold;">${emp?.blood_group || 'N/A'}</td></tr>
+                    <tr><th>Gender</th><td>${emp?.gender || 'N/A'}</td><th>Height (cm)</th><td>${emp?.height || 'N/A'}</td></tr>
+                    <tr><th>Marital Status</th><td>${emp?.marital_status || 'N/A'}</td><th>Nationality</th><td>${emp?.nationality || 'N/A'}</td></tr>
+                    <tr><th>Father's Name</th><td>${emp?.father_name || 'N/A'}</td><th>Religion</th><td>${emp?.religion || 'N/A'}</td></tr>
+                    <tr><th>Mother's Name</th><td>${emp?.mother_name || 'N/A'}</td><th>Category/Caste</th><td>${emp?.category || '-'} / ${emp?.caste || '-'}</td></tr>
+                    <tr><th>Identity Mark</th><td colspan="3">${emp?.identity_mark || 'None'}</td></tr>
+                    <tr><th>Medical Remarks</th><td>${emp?.medical_remarks || 'None'}</td><th>Uniform Sizes</th><td style="font-weight:bold; color:#0d6efd;">${emp?.uniform_details || 'Not Specified'}</td></tr>
+                </table>
+
+                <h3 class="section-header">3. Address Information</h3>
+                <table>
+                    <tr><th colspan="2" style="text-align:center; background-color:#e9ecef;">Permanent Address</th><th colspan="2" style="text-align:center; background-color:#e9ecef;">Temporary Address</th></tr>
+                    <tr>
+                        <th style="width:15%;">Address</th><td style="width:35%;">${emp?.perm_address || 'N/A'}</td>
+                        <th style="width:15%;">Address</th><td style="width:35%;">${emp?.temp_address || 'N/A'}</td>
+                    </tr>
+                    <tr>
+                        <th>State & PIN</th><td>${emp?.perm_state || 'N/A'} - ${emp?.perm_pin || ''}</td>
+                        <th>State & PIN</th><td>${emp?.temp_state || 'N/A'} - ${emp?.temp_pin || ''}</td>
+                    </tr>
+                    <tr>
+                        <th>Alt. Contact</th><td>${emp?.perm_mobile || 'N/A'}</td>
+                        <th>Local Contact</th><td>${emp?.temp_mobile || 'N/A'}</td>
+                    </tr>
+                </table>
+
+                <h3 class="section-header">4. Verified Identity & KYC Details</h3>
+                <table>
+                    <tr><th>Gov ID (UID) Number</th><td style="font-weight:bold;">${emp?.aadhar_raw && emp.aadhar_raw !== 'N/A' ? emp.aadhar_raw : 'Not Provided'}</td><th>PAN Number</th><td style="font-weight:bold;">${emp?.pan_raw && emp.pan_raw !== 'N/A' ? emp.pan_raw : 'Not Provided'}</td></tr>
+                    <tr><th>Voter ID</th><td>${emp?.voter_id_raw && emp.voter_id_raw !== 'N/A' ? emp.voter_id_raw : 'Not Provided'}</td><th>Driving Licence</th><td>${emp?.dl_raw && emp.dl_raw !== 'N/A' ? emp.dl_raw : 'Not Provided'}</td></tr>
+                    <tr><th>Passport Number</th><td colspan="3">${emp?.passport_raw && emp.passport_raw !== 'N/A' ? emp.passport_raw : 'Not Provided'}</td></tr>
+                </table>
+
+                <h3 class="section-header">5. Salary & Banking Details</h3>
+                <table>
+                    <tr><th>Bank Name</th><td>${emp?.bank_name || 'N/A'}</td><th>IFSC Code</th><td>${emp?.ifsc_code || 'N/A'}</td></tr>
+                    <tr><th>Account Number</th><td colspan="3" style="font-weight:bold; letter-spacing: 1px;">${emp?.account_number_raw && emp.account_number_raw !== 'N/A' ? emp.account_number_raw : 'Not Provided'}</td></tr>
+                </table>
+
+                <h3 class="section-header">6. Education History</h3>
+                ${eduHtml}
+
+                <h3 class="section-header">7. Prior Work Experience</h3>
+                ${expHtml}
+
+                <h3 class="section-header">8. Family Details</h3>
+                ${famHtml}
+
+                <h3 class="section-header">9. Reference Details</h3>
+                ${refHtml}
+                ${termsHtml}
+
+                <div style="page-break-before: always;"></div>
+                <h3 class="section-header" style="text-align:center; background-color:#0f172a; color:white; padding:12px; border-radius: 8px;">APPENDIX: OFFICIAL DOCUMENTS & EVIDENCE</h3>
+                ${docsHtml || '<p style="text-align: center; color: #94a3b8; margin-top: 30px;">No documents uploaded to this profile.</p>'}
+                
+                <script>
+                    window.onload = function() {
+                        setTimeout(() => { 
+                            window.print(); 
+                        }, 1000);
+                    };
+                </script>
+            </body>
+            </html>
+        `;
+
+        const blob = new Blob([completeHtmlContent], { type: 'text/html;charset=utf-8' });
+        const blobUrl = URL.createObjectURL(blob);
         
-        if (issuedCount > 0) {
-            let msg = `Successfully issued ${issuedCount} items to ${selectedUserForIssue.full_name}!`;
-            if (outOfStock.length > 0) msg += `\n\nHowever, the following items are OUT OF STOCK and were skipped: ${outOfStock.join(', ')}`;
-            alert(msg);
-        } else {
-            alert(`Could not issue any items. They might be out of stock:\n${outOfStock.join('\n')}`);
-        }
-        
-        setIssueModal(false);
-        setSelectedUserForIssue(null);
-        fetchData();
+        window.open(blobUrl, '_blank');
     };
 
-const handlePrintProfile = async (userId) => {
-    const response = await fetch(`${API_BASE_URL}/api/admin/employee-dossier/${userId}?admin_email=${hrEmail}`);
-    const result = await response.json();
-    
-    if (!response.ok) {
-        alert(result.detail || "Failed to load secure dossier data");
-        return;
-    }
-
-    const emp = result.data;
-    const companyTerms = [
-        "If the applicant is selected, he/she should work with company for a period of minimum three months.",
-        "Employee agree that will work faithfully without any issues, and will be present in time for duty and complete the duty hrs as per schedule assigned.",
-        "Selected candidate should pay 2200/- as security deposit for providing uniform.",
-        "Selected candidate should submit any one original document while joining, same will be returned back after 1month as due to verification purpose.",
-        "Candidate who are selected and deployed in respective sites while in duty they are sole responsible for any theft or pilerage and they had to be borne by them.",
-        "A minimum of one-month notice has to given before leaving the job or a month salary will be deducted.",
-        "Employer may terminate Candidate (Employee) if any mis appropriation occurs in duty without prior notice.",
-        "The Selected Employee agree that any property like sim card or mobile should returned of at the time of resignation/termination.",
-        "Selected Employee should be flexible towards work like in shifts process as per Employer.",
-        "Resigned Employee salary will release after cmpletetion of 30 days of notice period, if not then one month salary will be on hold and that will be clear with a fine of 4000/-(every month on 25th).",
-        "The above all terms and conditions are Solley Accepted and signed."
-    ];
-
-    const termsHtml = `
-        <h3 class="section-header">10. Terms & Conditions</h3>
-        <div class="terms-box">
-            <ol style="padding-left: 20px; margin-bottom: 20px;">
-                ${companyTerms.map(term => `<li style="margin-bottom: 8px;">${term}</li>`).join('')}
-            </ol>
-            <p><strong>Declaration:</strong> I, <strong>${emp?.full_name || 'the employee'}</strong>, confirm that I have read, understood, and agreed to the above terms.</p>
-            <p style="color: #e31e24; font-weight: bold;"><em>This document is digitally signed and verified by the LIZZA HR System.</em></p>
-            
-            <div style="margin-top: 40px; display: flex; justify-content: space-between; align-items: flex-end;">
-                <div style="text-align: center;">
-                    <div style="border-bottom: 1px solid #000; width: 200px; margin-bottom: 5px;"></div>
-                    <strong>Employee Signature</strong>
-                </div>
-                <div style="text-align: center; border: 2px solid #e31e24; padding: 15px; border-radius: 8px; width: 220px;">
-                    <div style="font-size: 10px; color: #e31e24; margin-bottom: 5px;">[HR STAMP & SIGN]</div>
-                    <div style="height: 40px;"></div>
-                    <strong>Authorized Signatory</strong>
-                </div>
-            </div>
-        </div>
-    `;
-
-    let docsHtml = '';
-    const addDoc = (title, url) => {
-        if (url) docsHtml += `<div class="doc-section"><h3 class="doc-title">${title}</h3><img src="${url}" class="doc-img" alt="${title}" /></div>`;
+    const downloadDispatchExcel = () => {
+        let tableHtml = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"></head><body><table border="1"><thead><tr style="background-color: #f2f2f2; font-weight: bold;"><th>Date Issued</th><th>Approver</th><th>Recipient</th><th>Target Site</th><th>Items</th><th>Authorized By</th></tr></thead><tbody>`;
+        filteredDispatch.forEach(log => {
+            const targetStaff = activeStaff.find(s => s.id === log.user_id) || pending.find(s => s.id === log.user_id);
+            const staffName = targetStaff ? targetStaff.full_name : `User ID: ${log.user_id}`;
+            const requestedBy = targetStaff?.onboarded_by_email ? targetStaff.onboarded_by_email : 'Direct HR';
+            const site = log.site_name || targetStaff?.department || 'Unassigned';
+            tableHtml += `<tr><td>${new Date(log.issued_at).toLocaleDateString()}</td><td>${requestedBy}</td><td>${staffName}</td><td>${site}</td><td>${log.combined_items.join(', ')}</td><td>${log.issued_by}</td></tr>`;
+        });
+        tableHtml += `</tbody></table></body></html>`;
+        const blob = new Blob([tableHtml], { type: 'application/vnd.ms-excel' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = `Uniform_Dispatch_Report.xls`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
     };
-    
-    addDoc('Identity / Gov ID', emp?.aadhar_photo_path);
-    addDoc('PAN Card', emp?.pan_photo_path);
-    addDoc('Voter ID', emp?.voter_photo_path);
-    addDoc('Driving Licence', emp?.dl_photo_path);
-    addDoc('Passport', emp?.passport_photo_path);
-    addDoc('Bank Passbook / Cancelled Cheque', emp?.bank_passbook_path);
-    addDoc('Left Hand Fingerprints', emp?.fingerprints_left_path);
-    addDoc('Right Hand Fingerprints', emp?.fingerprints_right_path);
-
-    const extraDocs = safeParseJSON(emp?.extra_documents_json);
-    extraDocs.forEach(doc => {
-        if (doc?.path) addDoc(doc?.title || 'Additional Document', doc.path);
-    });
-
-    const kycStatusHtml = emp?.kyc_mode !== 'without_aadhaar' 
-        ? '<span style="color: #10b981; font-weight: bold;">✅ e-KYC Verified</span>' 
-        : '<span style="color: #ef4444; font-weight: bold;">⚠️ Manual Verification</span>';
-
-    const eduData = safeParseJSON(emp?.education_json);
-    let eduHtml = eduData.length > 0 && eduData[0]?.qualification
-        ? `<table><tr><th>Qualification</th><th>Institute</th><th>Year</th><th>Marks</th></tr>` + eduData.map(e => `<tr><td>${e?.qualification||'-'}</td><td>${e?.institute||'-'}</td><td>${e?.year||'-'}</td><td>${e?.marks||'-'}</td></tr>`).join('') + `</table>` 
-        : '<p class="text-muted" style="text-align:center;">No education history provided.</p>';
-
-    const expData = safeParseJSON(emp?.experience_json);
-    let expHtml = expData.length > 0 && expData[0]?.company
-        ? `<table><tr><th>Company Name</th><th>Designation</th><th>Period</th></tr>` + expData.map(e => `<tr><td>${e?.company||'-'}</td><td>${e?.designation||'-'}</td><td>${e?.period||'-'}</td></tr>`).join('') + `</table>`
-        : '<p class="text-muted" style="text-align:center;">No prior work experience provided.</p>';
-
-   const famData = safeParseJSON(emp?.family_json);
-let famHtml = famData.length > 0 && famData[0]?.name
-    ? `<table><tr><th>Name</th><th>Relationship</th><th>DOB</th><th>Contact Number</th></tr>` + famData.map(f => `<tr><td>${f?.name||'-'}</td><td>${f?.relation||'-'}</td><td>${f?.dob||'-'}</td><td>${f?.contact||'-'}</td></tr>`).join('') + `</table>`
-    : '<p class="text-muted" style="text-align:center;">No family details provided.</p>';
-
-    const refData = parseReferencesJSON(emp?.references_json);
-    let refHtml = refData.length > 0
-        ? `<table><tr><th>Name</th><th>Contact Number</th><th>Relation / Context</th></tr>` + refData.map(r => `<tr><td>${r?.name||'-'}</td><td>${r?.contact || r?.phone || r?.mobile || '-'}</td><td>${r?.relation || r?.relationship || '-'}</td></tr>`).join('') + `</table>`
-        : '<p class="text-muted" style="text-align:center;">No reference details provided.</p>';
-    const absoluteLogoUrl = new URL(logoImg, window.location.origin).href;
-    const completeHtmlContent = `
-        <html>
-        <head>
-            <title>Dossier_${emp?.full_name || 'Employee'}</title>
-            <style>
-                body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; padding: 30px; color: #333; max-width: 900px; margin: auto; font-size: 14px; }
-                .logo-header { text-align: center; margin-bottom: 20px; border-bottom: 3px solid #e31e24; padding-bottom: 15px; }
-                .logo-header img { height: 50px; vertical-align: middle; margin-right: 15px; }
-                .logo-header .company-name { font-size: 18px; font-weight: bold; color: #e31e24; vertical-align: middle; display: inline-block; }
-                h2 { text-align: center; color: #ec0404; text-transform: uppercase; margin-bottom: 5px; }
-                .flex-row { display: flex; justify-content: space-between; align-items: flex-start; }
-                .photo { width: 140px; height: 140px; border-radius: 8px; object-fit: cover; border: 2px solid #0d6efd; }
-                .details { flex-grow: 1; padding-left: 25px; }
-                table { width: 100%; border-collapse: collapse; margin-top: 5px; margin-bottom: 15px; }
-                td, th { padding: 8px 12px; border: 1px solid #dee2e6; text-align: left; }
-                th { background-color: #f8f9fa; color: #495057; font-weight: bold; width: 25%; }
-                .section-header { margin-top: 30px; border-bottom: 2px solid #ccc; padding-bottom: 5px; color: #333; font-size: 16px; text-transform: uppercase; }
-                .doc-section { margin-top: 30px; text-align: center; page-break-inside: avoid; }
-                .doc-title { font-size: 14px; color: #555; margin-bottom: 10px; text-transform: uppercase; border-bottom: 1px dashed #eee; padding-bottom: 5px; }
-                .doc-img { max-width: 100%; max-height: 450px; border: 1px solid #ccc; border-radius: 4px; padding: 5px; object-fit: contain; }
-                .text-muted { color: #6c757d; font-style: italic; }
-                .mobile-back-btn { background: #e31e24; color: white; border: none; padding: 16px 32px; font-size: 18px; border-radius: 50px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 12px rgba(227,30,36,0.3); margin-top: 20px; }
-                @media print {
-                    .doc-section, table { page-break-inside: avoid; }
-                    body { padding: 0; }
-                    .no-print { display: none !important; }
-                }
-            </style>
-        </head>
-        <body>
-            <div class="no-print" style="text-align: center; padding: 15px; background: #fff3f3; border-bottom: 2px solid #e31e24; margin-bottom: 20px;">
-                <h4 style="color: #e31e24; margin: 0 0 10px 0;">PDF Document Generator</h4>
-                <p style="margin: 0 0 15px 0;">Use your browser menu to save or share as PDF if the system sheet does not appear automatically.</p>
-                <button class="mobile-back-btn" onclick="window.close(); setTimeout(function(){ window.location.href = '${window.location.href}'; }, 300);">← Return to Dashboard</button>
-            </div>
-
-            <div class="logo-header">
-    <img src="${absoluteLogoUrl}" alt="Company Logo" />
-    <span class="company-name">LIZZA FACILITY MANAGEMENT</span>
-</div>
-            
-            <h2>Official HR Dossier</h2>
-            <div style="text-align: center; font-size: 11px; color: #555; letter-spacing: 1.5px; border-bottom: 1px solid #eee; padding-bottom: 15px; margin-bottom: 20px; text-transform: uppercase;">
-                Privileged & Confidential • HR Dept Only
-            </div>
-            
-            <h3 class="section-header" style="margin-top:0;">1. Identity & Employment Status</h3>
-            <div class="flex-row">
-                <div><img src="${emp?.profile_photo_path || 'https://via.placeholder.com/150'}" class="photo" alt="Profile" /></div>
-                <div class="details">
-                    <table>
-                        <tr><th>Full Name</th><td style="font-weight: bold; font-size: 16px;">${emp?.full_name || 'N/A'}</td></tr>
-                        <tr><th>System Role</th><td style="text-transform: uppercase; font-weight:bold; color: #fd0d0d;">${emp?.user_type || 'N/A'}</td></tr>
-                        <tr><th>Assigned Dept/Site</th><td>${emp?.department || 'N/A'} - ${emp?.unit_name || 'Dynamic'}</td></tr>
-                        <tr><th>Onboarded By</th><td style="color:#e31e24; font-weight:bold;">${emp?.onboarded_by_name || 'Admin / Direct Hire'}</td></tr>
-                        <tr><th>Designation</th><td>${emp?.designation || 'N/A'}</td></tr>
-                        <tr><th>Primary Mobile</th><td>${emp?.phone_number || 'N/A'}</td></tr>
-                        <tr><th>KYC Authenticity</th><td>${kycStatusHtml}</td></tr>
-                    </table>
-                </div>
-            </div>
-
-            <h3 class="section-header">2. Demographics, Medical & Uniform</h3>
-            <table>
-                <tr><th>Date of Birth</th><td>${emp?.dob || 'N/A'}</td><th>Blood Group</th><td style="color:#e31e24; font-weight:bold;">${emp?.blood_group || 'N/A'}</td></tr>
-                <tr><th>Gender</th><td>${emp?.gender || 'N/A'}</td><th>Height (cm)</th><td>${emp?.height || 'N/A'}</td></tr>
-                <tr><th>Marital Status</th><td>${emp?.marital_status || 'N/A'}</td><th>Nationality</th><td>${emp?.nationality || 'N/A'}</td></tr>
-                <tr><th>Father's Name</th><td>${emp?.father_name || 'N/A'}</td><th>Religion</th><td>${emp?.religion || 'N/A'}</td></tr>
-                <tr><th>Mother's Name</th><td>${emp?.mother_name || 'N/A'}</td><th>Category/Caste</th><td>${emp?.category || '-'} / ${emp?.caste || '-'}</td></tr>
-                <tr><th>Identity Mark</th><td colspan="3">${emp?.identity_mark || 'None'}</td></tr>
-                <tr><th>Medical Remarks</th><td>${emp?.medical_remarks || 'None'}</td><th>Uniform Sizes</th><td style="font-weight:bold; color:#0d6efd;">${emp?.uniform_details || 'Not Specified'}</td></tr>
-            </table>
-
-            <h3 class="section-header">3. Address Information</h3>
-            <table>
-                <tr><th colspan="2" style="text-align:center; background-color:#e9ecef;">Permanent Address</th><th colspan="2" style="text-align:center; background-color:#e9ecef;">Temporary Address</th></tr>
-                <tr>
-                    <th style="width:15%;">Address</th><td style="width:35%;">${emp?.perm_address || 'N/A'}</td>
-                    <th style="width:15%;">Address</th><td style="width:35%;">${emp?.temp_address || 'N/A'}</td>
-                </tr>
-                <tr>
-                    <th>State & PIN</th><td>${emp?.perm_state || 'N/A'} - ${emp?.perm_pin || ''}</td>
-                    <th>State & PIN</th><td>${emp?.temp_state || 'N/A'} - ${emp?.temp_pin || ''}</td>
-                </tr>
-                <tr>
-                    <th>Alt. Contact</th><td>${emp?.perm_mobile || 'N/A'}</td>
-                    <th>Local Contact</th><td>${emp?.temp_mobile || 'N/A'}</td>
-                </tr>
-            </table>
-
-            <h3 class="section-header">4. Verified Identity & KYC Details</h3>
-            <table>
-                <tr><th>Gov ID (UID) Number</th><td style="font-weight:bold;">${emp?.aadhar_raw && emp.aadhar_raw !== 'N/A' ? emp.aadhar_raw : 'Not Provided'}</td><th>PAN Number</th><td style="font-weight:bold;">${emp?.pan_raw && emp.pan_raw !== 'N/A' ? emp.pan_raw : 'Not Provided'}</td></tr>
-                <tr><th>Voter ID</th><td>${emp?.voter_id_raw && emp.voter_id_raw !== 'N/A' ? emp.voter_id_raw : 'Not Provided'}</td><th>Driving Licence</th><td>${emp?.dl_raw && emp.dl_raw !== 'N/A' ? emp.dl_raw : 'Not Provided'}</td></tr>
-                <tr><th>Passport Number</th><td colspan="3">${emp?.passport_raw && emp.passport_raw !== 'N/A' ? emp.passport_raw : 'Not Provided'}</td></tr>
-            </table>
-
-            <h3 class="section-header">5. Salary & Banking Details</h3>
-            <table>
-                <tr><th>Bank Name</th><td>${emp?.bank_name || 'N/A'}</td><th>IFSC Code</th><td>${emp?.ifsc_code || 'N/A'}</td></tr>
-                <tr><th>Account Number</th><td colspan="3" style="font-weight:bold; letter-spacing: 1px;">${emp?.account_number_raw && emp.account_number_raw !== 'N/A' ? emp.account_number_raw : 'Not Provided'}</td></tr>
-            </table>
-
-            <h3 class="section-header">6. Education History</h3>
-            ${eduHtml}
-
-            <h3 class="section-header">7. Prior Work Experience</h3>
-            ${expHtml}
-
-            <h3 class="section-header">8. Family Details</h3>
-            ${famHtml}
-
-            <h3 class="section-header">9. Reference Details</h3>
-            ${refHtml}
-            ${termsHtml}
-
-            <div style="page-break-before: always;"></div>
-            <h3 class="section-header" style="text-align:center; background-color:#0f172a; color:white; padding:12px; border-radius: 8px;">APPENDIX: OFFICIAL DOCUMENTS & EVIDENCE</h3>
-            ${docsHtml || '<p style="text-align: center; color: #94a3b8; margin-top: 30px;">No documents uploaded to this profile.</p>'}
-            
-            <script>
-                window.onload = function() {
-                    setTimeout(() => { 
-                        window.print(); 
-                    }, 1000);
-                };
-            </script>
-        </body>
-        </html>
-    `;
-
-    const blob = new Blob([completeHtmlContent], { type: 'text/html;charset=utf-8' });
-    const blobUrl = URL.createObjectURL(blob);
-    
-    window.open(blobUrl, '_blank');
-};
 
    const groupedDispatch = Object.values(issuedLogs.reduce((acc, log) => {
         const date = new Date(log.issued_at).toLocaleDateString();
@@ -477,27 +422,11 @@ let famHtml = famData.length > 0 && famData[0]?.name
         const searchStr = `${staffName} ${log.combined_items.join(' ')} ${log.issued_by}`.toLowerCase();
         return searchStr.includes(dispatchSearch.toLowerCase());
     });
-const activeUniformRequests = uniformRequests;
+    
+    const activeUniformRequests = uniformRequests;
 
     if (loading) return <div className="text-center py-5"><Spinner animation="border" variant="danger" /></div>;
-const downloadDispatchExcel = () => {
-        let tableHtml = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"></head><body><table border="1"><thead><tr style="background-color: #f2f2f2; font-weight: bold;"><th>Date Issued</th><th>Approver</th><th>Recipient</th><th>Target Site</th><th>Items</th><th>Authorized By</th></tr></thead><tbody>`;
-        filteredDispatch.forEach(log => {
-            const targetStaff = activeStaff.find(s => s.id === log.user_id) || pending.find(s => s.id === log.user_id);
-            const staffName = targetStaff ? targetStaff.full_name : `User ID: ${log.user_id}`;
-            const requestedBy = targetStaff?.onboarded_by_email ? targetStaff.onboarded_by_email : 'Direct HR';
-            const site = log.site_name || targetStaff?.department || 'Unassigned';
-            tableHtml += `<tr><td>${new Date(log.issued_at).toLocaleDateString()}</td><td>${requestedBy}</td><td>${staffName}</td><td>${site}</td><td>${log.combined_items.join(', ')}</td><td>${log.issued_by}</td></tr>`;
-        });
-        tableHtml += `</tbody></table></body></html>`;
-        const blob = new Blob([tableHtml], { type: 'application/vnd.ms-excel' });
-        const link = document.createElement('a');
-        link.href = URL.createObjectURL(blob);
-        link.download = `Uniform_Dispatch_Report.xls`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-    };
+
     return (
         <>
         <style>
@@ -571,11 +500,11 @@ const downloadDispatchExcel = () => {
                             ))}
                         </Row>
                     </Tab>
+
                    <Tab eventKey="uniform-requests" title={`Approved Requests (${activeUniformRequests.length})`}>
     <Row className="g-3 mt-2">
         {activeUniformRequests.length === 0 ? <Col xs={12}><div className="text-center text-muted p-5 bg-white rounded-4 shadow-sm border border-light">No approved uniform requests waiting.</div></Col> :
             activeUniformRequests.map(req => {
-                // 1. PRE-CALCULATE STOCK AVAILABILITY FOR THE UI
                 let missingStock = [];
                 if (req.details && req.details !== 'Not Specified') {
                     const parts = req.details.split(',');
@@ -611,7 +540,6 @@ const downloadDispatchExcel = () => {
                                 </div>
                                 
                                 <div className={`p-3 rounded-4 mb-4 border shadow-sm position-relative ${isFullyInStock ? 'bg-light' : 'bg-danger bg-opacity-10 border-danger'}`}>
-                                    {/* OUT OF STOCK BADGE */}
                                     {!isFullyInStock && (
                                         <Badge bg="danger" className="position-absolute top-0 end-0 m-2 shadow-sm py-2 px-3 rounded-pill shadow-sm">
                                             <ShieldAlert size={14} className="me-1 mb-1"/> Out of Stock: {missingStock.join(', ')}
@@ -622,7 +550,6 @@ const downloadDispatchExcel = () => {
                                 </div>
 
                                 <div className="d-flex flex-column gap-2 mt-auto">
-                                    {/* AUTO-ASSIGN (ONLY SHOWS IF EVERYTHING IS IN STOCK) */}
                                     {isFullyInStock && (
                                         <Button variant="success" className="w-100 rounded-pill fw-bold shadow-sm active-scale d-flex align-items-center justify-content-center" onClick={async () => {
                                             setIsSyncing(true);
@@ -652,7 +579,6 @@ const downloadDispatchExcel = () => {
                                         </Button>
                                     )}
                                     
-                                    {/* MANUAL SUBSTITUTE BUTTON */}
                                     <Button variant={isFullyInStock ? "outline-primary" : "danger"} className="w-100 rounded-pill fw-bold shadow-sm active-scale d-flex align-items-center justify-content-center" onClick={() => { 
                                         const baseUser = activeStaff.find(u => u.id === req.user_id) || {};
                                         const userObj = {
@@ -661,7 +587,7 @@ const downloadDispatchExcel = () => {
                                             full_name: req.emp_name, 
                                             blockchain_id: req.emp_id, 
                                             uniform_details: req.details,
-                                            active_req_id: req.req_id // Pass the Request ID so we can close it from the modal
+                                            active_req_id: req.req_id
                                         };
                                         setSelectedUserForIssue(userObj); 
                                         setIssueModal(true); 
@@ -831,72 +757,11 @@ const downloadDispatchExcel = () => {
                         </Row>
                     </Tab>
 
-                    <Tab eventKey="tracking" title="Dispatch Tracking">
-                        <Card className="glass-card border-0 mt-3">
-                            <Card.Header className="bg-white py-4 d-flex flex-column flex-md-row justify-content-between align-items-md-center border-bottom-0 gap-3">
-                                <h5 className="m-0 fw-bold d-flex align-items-center text-dark"><MapPin className="me-2 text-success"/> Uniform Dispatch History</h5>
-                                
-                                <div className="position-relative" style={{ minWidth: '300px' }}>
-                                    <Search size={18} className="position-absolute text-muted" style={{top: '12px', left: '14px'}} />
-                                    <Form.Control 
-                                        type="text" 
-                                        placeholder="Search by name, item, or HR email..." 
-                                        className="custom-input border-0 bg-light shadow-sm w-100"
-                                        style={{paddingLeft: '40px'}}
-                                        value={dispatchSearch}
-                                        onChange={e => setDispatchSearch(e.target.value)}
-                                    />
-                                </div>
-                            </Card.Header>
-
-                            <Card.Body className="p-0">
-                                {filteredDispatch.length === 0 ? <div className="text-center text-muted py-5 border-top bg-light">No dispatch records found matching your search.</div> : (
-                                    <div className="table-responsive">
-                                        <table className="table table-hover align-middle mb-0">
-                                            <thead className="table-light text-muted small text-uppercase">
-                                                <tr>
-                                                    <th className="ps-4">Date Issued</th>
-                                                    <th>Field Officer / Approver</th>
-                                                    <th>Ground Staff (Recipient)</th>
-                                                    <th>Items Dispatched</th>
-                                                    <th>Authorized By (HR)</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {filteredDispatch.map(log => {
-                                                    const targetStaff = activeStaff.find(s => s.id === log.user_id) || pending.find(s => s.id === log.user_id);
-                                                    const staffName = targetStaff ? targetStaff.full_name : `User ID: ${log.user_id}`;
-                                                    const requestedBy = targetStaff?.onboarded_by_email ? targetStaff.onboarded_by_email : 'Direct HR / Admin';
-                                                    
-                                                    return (
-                                                        <tr key={`${log.user_id}-${log.issued_at}`}>
-                                                            <td className="ps-4 py-3 fw-bold text-dark">{new Date(log.issued_at).toLocaleDateString()}</td>
-                                                            <td><Badge bg="info" className="text-dark fw-bold">{requestedBy}</Badge></td>
-                                                            <td><div className="fw-bold text-dark">{staffName}</div></td>
-                                                            
-                                                            <td>
-                                                                <div className="fw-bold text-success">
-                                                                    {log.combined_items.join(', ')}
-                                                                </div>
-                                                            </td>
-                                                            
-                                                            <td className="text-muted small">{log.issued_by}</td>
-                                                        </tr>
-                                                    );
-                                                })}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                )}
-                            </Card.Body>
-                        </Card>
-                    </Tab>
-                    {/* TAB: DISPATCH TRACKING */}
                     <Tab eventKey="tracking" title="Uniform Dispatch Log">
                         <Card className="glass-card border-0 mt-3">
                             <Card.Header className="bg-white py-4 d-flex flex-column flex-md-row justify-content-between align-items-md-center border-bottom-0 gap-3">
                                 <div className="d-flex align-items-center gap-3">
-                                    <h5 className="m-0 fw-bold d-flex align-items-center text-dark"><MapPin className="me-2 text-danger"/> Uniform Dispatch History</h5>
+                                    <h5 className="m-0 fw-bold d-flex align-items-center text-dark"><MapPin className="me-2 text-success"/> Uniform Dispatch History</h5>
                                     <Button variant="dark" size="sm" className="rounded-pill fw-bold shadow-sm d-flex align-items-center" onClick={downloadDispatchExcel} disabled={filteredDispatch.length === 0}>
                                         <Download size={14} className="me-2"/> Download Excel
                                     </Button>
@@ -940,7 +805,6 @@ const downloadDispatchExcel = () => {
                         </Card>
                     </Tab>
 
-                    {/* TAB: EQUIPMENT DIRECTORY (RED/BLACK/WHITE THEME) */}
                     <Tab eventKey="equipment" title="Asset Directory">
                         <Row className="g-4 mt-2">
                             <Col xs={12} lg={4}>
@@ -956,7 +820,7 @@ const downloadDispatchExcel = () => {
                                             <Form.Group className="mb-3"><Form.Control className="border-1 shadow-none" style={{ borderColor: '#212529' }} placeholder="Asset Name (e.g. Torch)" value={equipForm.asset_name} onChange={e => setEquipForm({...equipForm, asset_name: e.target.value})} required /></Form.Group>
                                             <Form.Group className="mb-3">
                                                 <Form.Select className="border-1 shadow-none" style={{ borderColor: '#212529' }} value={equipForm.category} onChange={e => setEquipForm({...equipForm, category: e.target.value})}>
-                                                    <option value="Site Basics">Site Basics</option><option value="Electronics">Electronics</option><option value="Apparel Accessories">Apparel Accessories</option><option value="Tools">Tools</option>
+                                                    <option value="Site Basics">Site Basics</option><option value="Electronics">Electronics</option><option value="Tools">Tools</option>
                                                 </Form.Select>
                                             </Form.Group>
                                             <Form.Group className="mb-3"><Form.Control className="border-1 shadow-none" style={{ borderColor: '#212529' }} type="number" placeholder="Quantity" value={equipForm.quantity} onChange={e => setEquipForm({...equipForm, quantity: e.target.value})} required /></Form.Group>
@@ -972,7 +836,7 @@ const downloadDispatchExcel = () => {
                                             e.preventDefault();
                                             const endpoint = allocateForm.type === 'SITE' ? 'allocate' : 'checkout';
                                             const bodyData = { asset_id: allocateForm.asset_id, hr_email: hrEmail };
-                                            if (allocateForm.type === 'SITE') { bodyData.location_id = allocateForm.location_id; bodyData.quantity = allocateForm.quantity; } else { bodyData.user_id = allocateForm.location_id; }
+                                            if (allocateForm.type === 'SITE') { bodyData.location_id = allocateForm.location_id; bodyData.quantity = allocateForm.quantity; } else { bodyData.user_id = allocateForm.officer_id; }
                                             const res = await fetch(`${API_BASE_URL}/api/equipment/${endpoint}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bodyData) });
                                             if (res.ok) { alert("Equipment Dispatched"); fetchData(); }
                                         }}>
@@ -987,13 +851,20 @@ const downloadDispatchExcel = () => {
                                                     {equipmentInventory.filter(a => a.total_quantity > 0).map(a => <option key={a.id} value={a.id}>{a.asset_name} (Stock: {a.total_quantity})</option>)}
                                                 </Form.Select>
                                             </Form.Group>
+                                            <Form.Group className="mb-3">
+                                                <Form.Select className="border-1 shadow-none" style={{ borderColor: '#212529' }} onChange={e => setAllocateForm({...allocateForm, location_id: e.target.value})} required>
+                                                    <option value="">Select Target Site...</option>
+                                                    {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                                                </Form.Select>
+                                            </Form.Group>
+
                                             {allocateForm.type === 'SITE' ? (
                                                 <Form.Group className="mb-3"><Form.Control className="border-1 shadow-none" style={{ borderColor: '#212529' }} type="number" placeholder="Qty to Send" onChange={e => setAllocateForm({...allocateForm, quantity: e.target.value})} required /></Form.Group>
                                             ) : (
                                                 <Form.Group className="mb-3">
-                                                    <Form.Select className="border-1 shadow-none" style={{ borderColor: '#212529' }} onChange={e => setAllocateForm({...allocateForm, location_id: e.target.value})} required>
-                                                        <option value="">Select Target Employee...</option>
-                                                        {activeStaff.map(emp => <option key={emp.id} value={emp.id}>{emp.full_name} ({emp.user_type})</option>)}
+                                                    <Form.Select className="border-1 shadow-none" style={{ borderColor: '#212529' }} onChange={e => setAllocateForm({...allocateForm, officer_id: e.target.value})} required disabled={!allocateForm.location_id}>
+                                                        <option value="">Select Field Officer...</option>
+                                                        {activeStaff.filter(emp => emp.user_type === 'field_officer' && emp.location_id == allocateForm.location_id).map(emp => <option key={emp.id} value={emp.id}>{emp.full_name} ({emp.user_type})</option>)}
                                                     </Form.Select>
                                                 </Form.Group>
                                             )}
@@ -1045,7 +916,6 @@ const downloadDispatchExcel = () => {
                         </Row>
                     </Tab>
 
-                    {/* TAB: RETURNS & RECOVERIES */}
                     <Tab eventKey="returns" title="Returns Ledger">
                         <Row className="g-4 mt-2">
                             <Col xs={12}>
@@ -1077,12 +947,25 @@ const downloadDispatchExcel = () => {
                     <Modal.Header closeButton className="border-0"><Modal.Title className="fw-bold fs-5">Receive Warehouse Stock</Modal.Title></Modal.Header>
                     <Modal.Body className="bg-light rounded-bottom p-4">
                         <Form onSubmit={handleAddStock}>
-                            <Form.Group className="mb-3">
+                           <Form.Group className="mb-3">
                                 <Form.Label className="small fw-bold text-muted ps-1">Item Category</Form.Label>
                                 <Form.Select className="custom-input border-0 shadow-sm" value={newStock.item_category} onChange={e => setNewStock({...newStock, item_category: e.target.value})}>
-                                    <option value="Shirt">Shirt</option><option value="Pant">Pant</option><option value="Shoes">Shoes</option><option value="Jacket">Jacket</option>
+                                    <option value="Shirt">Shirt</option>
+                                    <option value="Pant">Pant</option>
+                                    <option value="Shoes">Shoes</option>
+                                    <option value="Jacket">Jacket</option>
+                                    <option value="Tie">Tie</option>
+                                    <option value="Belt">Belt</option>
+                                    <option value="Other">Other (Type Below)</option>
                                 </Form.Select>
                             </Form.Group>
+                            
+                            {/* Shows the custom text box if they select "Other" */}
+                            {newStock.item_category === 'Other' && (
+                                <Form.Group className="mb-3">
+                                    <Form.Control className="custom-input border-0 shadow-sm" placeholder="Type custom item (e.g. Socks, Cap)..." onChange={e => setNewStock({...newStock, custom_category: e.target.value})} required />
+                                </Form.Group>
+                            )}
                             <Form.Group className="mb-3">
                                 <Form.Label className="small fw-bold text-muted ps-1">Size Indicator</Form.Label>
                                 <Form.Control className="custom-input border-0 shadow-sm" required placeholder="e.g. L, 34, 9" value={newStock.size} onChange={e => setNewStock({...newStock, size: e.target.value})} />
@@ -1177,41 +1060,41 @@ const downloadDispatchExcel = () => {
                         <div className="text-center text-muted py-4">No sizes specified in dossier.</div>
                     )}
                 </div>
+
                 <div className="bg-white rounded-4 shadow-sm border mb-4 p-3 border-danger border-opacity-50">
                     <div className="small fw-bold text-danger text-uppercase tracking-wide mb-3"><PackagePlus size={16} className="me-1 mb-1"/> Add Special Items & Accessories</div>
                     <div className="d-flex gap-2">
                         <Form.Select id="adhoc-issue-select" className="custom-input border-1 py-2 shadow-none flex-grow-1 border-dark">
-                            <option value="">Select extra item from Equipment Vault (Tie, Belt, etc.)...</option>
-                            {equipmentInventory.filter(i => i.total_quantity > 0).map(inv => (
-                                <option key={inv.id} value={inv.id}>{inv.asset_name} - {inv.category} ({inv.total_quantity} left)</option>
+                            <option value="">Select extra uniform item (Tie, Belt, etc.)...</option>
+                            {inventory.filter(i => i.quantity > 0 && !['Shirt', 'Pant', 'Shoes', 'Jacket'].includes(i.item_category)).map(inv => (
+                                <option key={inv.id} value={inv.id}>{inv.item_category} Size: {inv.size} ({inv.quantity} left)</option>
                             ))}
                         </Form.Select>
                         <Button variant="dark" className="rounded-pill fw-bold px-4 py-2 active-scale text-white" disabled={isSyncing}
                             onClick={async () => {
                                 const selId = document.getElementById("adhoc-issue-select").value;
-                                if(!selId) return alert("Select a special item to dispatch.");
+                                if(!selId) return alert("Select an item.");
                                 setIsSyncing(true);
-                                const res = await fetch(`${API_BASE_URL}/api/equipment/checkout`, {
+                                const res = await fetch(`${API_BASE_URL}/api/hr/issue-uniform`, {
                                     method: 'POST',
                                     headers: { 'Content-Type': 'application/json' },
                                     body: JSON.stringify({ 
-                                        asset_id: selId, 
+                                        inventory_id: selId, 
                                         user_id: selectedUserForIssue.id, 
                                         hr_email: hrEmail
                                     })
                                 });
                                 if (res.ok) {
-                                    alert(`Accessory successfully dispatched and logged in Asset Directory!`);
+                                    alert(`Extra uniform item dispatched!`);
                                     await fetchData(); 
                                 }
                                 setIsSyncing(false);
                             }}>
-                            Dispatch Accessory
+                            Dispatch Item
                         </Button>
                     </div>
                 </div>
                 
-
                 {/* NEW FOOTER TO CLOSE THE REQUEST DIRECTLY FROM THE MODAL */}
                 {selectedUserForIssue.active_req_id && (
                     <div className="mt-4 pt-4 border-top d-flex flex-column flex-md-row justify-content-between align-items-center gap-3">
