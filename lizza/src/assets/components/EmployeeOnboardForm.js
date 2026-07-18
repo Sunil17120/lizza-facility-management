@@ -50,8 +50,13 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
     tempAddress: '', tempState: '', tempPin: '', tempMobile: '', 
     designation: '', unitName: '', shiftStart: '09:00', shiftEnd: '18:00', 
     bankName: '', accountNumber: '', ifscCode: '', 
-    aadhar: '', panCard: '', voterId: '', drivingLicence: '', passportNo: ''
+    bankName: '', accountNumber: '', ifscCode: '', confirmAccountNumber: '',
+    aadhar: '', panCard: '', voterId: '', drivingLicence: '', passportNo: '',
+    enrolledSite: '', customSite: ''
   });
+  const canvasRef = useRef(null);
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [signatureDataUrl, setSignatureDataUrl] = useState(null);
   
   const [languages, setLanguages] = useState([{ name: '', read: false, write: false, speak: false }]);
   const [education, setEducation] = useState([{ qualification: '', year: '', institute: '', marks: '' }]);
@@ -66,6 +71,24 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
   const [previews, setPreviews] = useState({ profile: null });
   const [error, setError] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  // --- ADD THIS TO FETCH SITES FROM DATABASE ---
+  const [siteList, setSiteList] = useState([]);
+
+  React.useEffect(() => {
+    const fetchSites = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/admin/locations`);
+        if (response.ok) {
+          const data = await response.json();
+          setSiteList(data);
+        }
+      } catch (err) {
+        console.error("Error fetching locations:", err);
+      }
+    };
+    fetchSites();
+  }, []);
+  // ---------------------------------------------
 
   const [ekycZip, setEkycZip] = useState(null);
   const [shareCode, setShareCode] = useState('');
@@ -91,6 +114,52 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
     "Resigned Employee salary will release after cmpletetion of 30 days of notice period, if not then one month salary will be on hold and that will be clear with a fine of 4000/-(every month on 25th).",
     "The above all terms and conditions are Solley Accepted and signed."
   ];
+  // ================= SIGNATURE LOGIC =================
+  const getCanvasCoords = (e) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    return {
+      x: (clientX - rect.left) * (canvas.width / rect.width),
+      y: (clientY - rect.top) * (canvas.height / rect.height)
+    };
+  };
+
+  const startDrawing = (e) => {
+    setIsDrawing(true);
+    const coords = getCanvasCoords(e);
+    const ctx = canvasRef.current.getContext('2d');
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = '#000';
+    ctx.beginPath();
+    ctx.moveTo(coords.x, coords.y);
+  };
+
+  const draw = (e) => {
+    if (!isDrawing) return;
+    const coords = getCanvasCoords(e);
+    const ctx = canvasRef.current.getContext('2d');
+    ctx.lineTo(coords.x, coords.y);
+    ctx.stroke();
+  };
+
+  const stopDrawing = () => {
+    if (isDrawing) {
+      setIsDrawing(false);
+      setSignatureDataUrl(canvasRef.current.toDataURL('image/png'));
+    }
+  };
+
+  const clearSignature = () => {
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    setSignatureDataUrl(null);
+  };
+  // ===================================================
 
   const handleFileChange = async (e, type) => {
     const file = e.target.files[0];
@@ -216,6 +285,28 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
     }
     if (!termsAccepted) { setError("You must accept the terms and conditions to complete onboarding."); return; }
     if (!files.aadharPhoto) { setError("Gov ID Photo (Front & Back) is strictly mandatory for our records."); return; }
+    // 1. Mandatory Profile Photo Check
+    if (!files.profile) { setError("Live Applicant Photo is strictly mandatory. Please capture it in Step 1."); return; }
+
+    // 2. Mandatory Site for Ground Staff Check
+    if (formData.userType === 'employee') {
+        if (!formData.enrolledSite || (formData.enrolledSite === 'Other' && !formData.customSite.trim())) {
+            setError("Site Name is mandatory for Ground Staff. Please select or specify the site in Step 2."); 
+            return;
+        }
+    }
+
+    // 3. Confirm Account Number Match
+    if (formData.accountNumber && formData.accountNumber !== formData.confirmAccountNumber) {
+        setError("Account Number and Confirm Account Number do not match. Check Banking Details in Step 2."); 
+        return;
+    }
+
+    // 4. Mandatory Signature Check
+    if (!signatureDataUrl) {
+        setError("Employee Digital Signature is mandatory. Please sign at the bottom of Step 4."); 
+        return;
+    }
     if (kycMode === 'without_aadhaar') {
         if (!files.fingerprintsLeft || !files.fingerprintsRight) { setError("Fingerprints are strictly required when skipping digital KYC."); return; }
         if (!formData.aadhar) { setError("Gov ID Number is strictly mandatory when skipping online KYC."); return; }
@@ -249,7 +340,22 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
     if (formData.religion) submitData.append('religion', formData.religion);
     if (formData.nationality) submitData.append('nationality', formData.nationality);
     if (formData.medicalRemarks) submitData.append('medical_remarks', formData.medicalRemarks);
-    if (formData.unitName) submitData.append('unit_name', formData.unitName);
+    const finalSiteName = formData.userType === 'employee' 
+        ? (formData.enrolledSite === 'Other' ? formData.customSite : formData.enrolledSite)
+        : formData.unitName;
+    if (finalSiteName) submitData.append('unit_name', finalSiteName);
+
+    // Convert signature Data URL to File
+    if (signatureDataUrl) {
+        const byteString = atob(signatureDataUrl.split(',')[1]);
+        const ab = new ArrayBuffer(byteString.length);
+        const ia = new Uint8Array(ab);
+        for (let i = 0; i < byteString.length; i++) {
+            ia[i] = byteString.charCodeAt(i);
+        }
+        const signatureBlob = new Blob([ab], { type: 'image/png' });
+        submitData.append('signature_photo', new File([signatureBlob], 'signature.png', { type: 'image/png' }));
+    }
     
     if (formData.permAddress) submitData.append('perm_address', formData.permAddress);
     if (formData.permState) submitData.append('perm_state', formData.permState);
@@ -593,6 +699,26 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
                             </Form.Select>
                             </Col>
                         </Row>
+                        {formData.userType === 'employee' && (
+                                <Col xs={12} md={4}>
+                                    <Form.Label className="small fw-bold text-muted ps-1">Site Enrolled <span className="text-danger">*</span></Form.Label>
+                                    <Form.Select className="custom-input mb-2" required value={formData.enrolledSite} onChange={e => setFormData({...formData, enrolledSite: e.target.value})}>
+                                        <option value="">Select a Site...</option>
+                                        
+                                        {/* Dynamically fetched sites from the database */}
+                                        {siteList.map((site, idx) => (
+                                            <option key={site.id || idx} value={site.name}>
+                                                {site.name}
+                                            </option>
+                                        ))}
+
+                                        <option value="Other">Other (Specify Below)</option>
+                                    </Form.Select>
+                                    {formData.enrolledSite === 'Other' && (
+                                        <Form.Control className="custom-input fade-in border-danger" required placeholder="Type exact site name..." value={formData.customSite} onChange={e => setFormData({...formData, customSite: e.target.value})} />
+                                    )}
+                                </Col>
+                            )}
 
                         <div className="section-title text-danger border-bottom border-danger pb-2 mt-5">Banking Details</div>
                         <Row className="g-3 mt-1">
@@ -607,6 +733,10 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
                             <Col xs={12} md={4}>
                                 <Form.Label className="small fw-bold text-muted ps-1">Account Number</Form.Label>
                                 <Form.Control className="custom-input" type="password" value={formData.accountNumber} onChange={e => setFormData({...formData, accountNumber: e.target.value})} />
+                            </Col>
+                            <Col xs={12} md={4}>
+                                <Form.Label className="small fw-bold text-muted ps-1">Confirm Account Number</Form.Label>
+                                <Form.Control className="custom-input border-primary" type="text" placeholder="Visible to verify..." value={formData.confirmAccountNumber} onChange={e => setFormData({...formData, confirmAccountNumber: e.target.value})} />
                             </Col>
                             <Col xs={12}>
                                 <div className="file-upload-wrapper p-3 mt-2 bg-light">
@@ -814,6 +944,31 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
                         <Button type="button" size="sm" variant="outline-danger" className="rounded-pill px-3 mt-2 fw-bold" onClick={() => setExtraDocuments([...extraDocuments, { title: '', file: null }])}>
                             <Plus size={14} className="me-1"/> Add Extra Document
                         </Button>
+                        <div className="section-title text-danger border-bottom border-danger pb-2 mt-5">Employee Digital Signature <span className="text-danger">*</span></div>
+                        <div className="border border-danger rounded-4 bg-light p-3 text-center bg-danger bg-opacity-10 mb-4">
+                            <p className="small text-muted mb-2 fw-bold">Sign clearly inside the box below:</p>
+                            <div className="mx-auto bg-white rounded shadow-sm border overflow-hidden" style={{ maxWidth: '400px', touchAction: 'none' }}>
+                                <canvas
+                                    ref={canvasRef}
+                                    width={400}
+                                    height={150}
+                                    style={{ width: '100%', height: '150px', touchAction: 'none', cursor: 'crosshair' }}
+                                    onPointerDown={startDrawing}
+                                    onPointerMove={draw}
+                                    onPointerUp={stopDrawing}
+                                    onPointerOut={stopDrawing}
+                                    onTouchStart={(e) => { e.preventDefault(); startDrawing(e); }}
+                                    onTouchMove={(e) => { e.preventDefault(); draw(e); }}
+                                    onTouchEnd={stopDrawing}
+                                />
+                            </div>
+                            <div className="mt-3">
+                                <Button variant="outline-danger" size="sm" className="rounded-pill fw-bold bg-white" onClick={clearSignature}>
+                                    <Trash size={14} className="me-1"/> Clear Signature
+                                </Button>
+                            </div>
+                            {signatureDataUrl && <div className="text-success mt-2 small fw-bold"><CheckCircle size={14} className="me-1"/> Signature Captured</div>}
+                        </div>
 
                         {kycMode === 'without_aadhaar' && (
                             <div className="mt-5 border border-danger p-3 rounded-4 bg-danger bg-opacity-10">

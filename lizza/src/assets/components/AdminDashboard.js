@@ -512,6 +512,10 @@ const downloadExcel = (withPhotos = false) => {
         "Resigned Employee salary will release after cmpletetion of 30 days of notice period, if not then one month salary will be on hold and that will be clear with a fine of 4000/-(every month on 25th).",
         "The above all terms and conditions are Solley Accepted and signed."
       ];
+     const sigImage = emp?.signature_path 
+          ? `<img src="${emp.signature_path}" style="max-width: 180px; max-height: 60px; margin-bottom: 5px;" alt="Signature" />` 
+          : `<div style="border-bottom: 1px solid #000; width: 200px; height: 60px; margin-bottom: 5px;"></div>`;
+
       const termsHtml = `
           <h3 class="section-header">10. Terms & Conditions</h3>
           <div class="terms-box">
@@ -523,8 +527,8 @@ const downloadExcel = (withPhotos = false) => {
               
               <div style="margin-top: 40px; display: flex; justify-content: space-between; align-items: flex-end;">
                   <div style="text-align: center;">
-                      <div style="border-bottom: 1px solid #000; width: 200px; margin-bottom: 5px;"></div>
-                      <strong>Employee Signature</strong>
+                      ${sigImage}
+                      <div><strong>Employee Signature</strong></div>
                   </div>
                   <div style="text-align: center; border: 2px solid #e31e24; padding: 15px; border-radius: 8px; width: 220px;">
                       <div style="font-size: 10px; color: #e31e24; margin-bottom: 5px;">[HR STAMP & SIGN]</div>
@@ -642,7 +646,7 @@ const downloadExcel = (withPhotos = false) => {
                 <table>
                   <tr><th>Full Name</th><td style="font-weight: bold; font-size: 16px;">${emp?.full_name || 'N/A'}</td></tr>
                   <tr><th>System Role</th><td style="text-transform: uppercase; font-weight:bold; color: #f40505;">${emp?.user_type || 'N/A'}</td></tr>
-                  <tr><th>Assigned Dept/Site</th><td>${emp?.department || 'N/A'} - ${emp?.unit_name || 'Dynamic'}</td></tr>
+                  <tr><th>Assigned Dept/Site</th><td>${emp?.department || 'N/A'} / <span style="font-weight:bold; color:#0d6efd;">${emp?.unit_name || 'Unassigned'}</span></td></tr>
                   <tr><th>Onboarded By</th><td style="font-weight:bold;">${emp?.onboarded_by_name || 'Admin / Direct Hire'}</td></tr>
                   <tr><th>Designation</th><td>${emp?.designation || 'N/A'}</td></tr>
                   <tr><th>Primary Mobile</th><td>${emp?.phone_number || 'N/A'}</td></tr>
