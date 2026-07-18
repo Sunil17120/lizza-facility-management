@@ -258,7 +258,7 @@ const HrDashboard = () => {
             <head>
                 <title>Dossier_${emp?.full_name || 'Employee'}</title>
                 <style>
-                    body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; padding: 30px; color: #333; max-width: 900px; margin: auto; font-size: 14px; }
+                    body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; padding: 30px; color: #333; max-width: 900px; margin: auto; font-size: 14px; background-color: #ffffff; text-transform: uppercase; }
                     .logo-header { text-align: center; margin-bottom: 20px; border-bottom: 3px solid #e31e24; padding-bottom: 15px; }
                     .logo-header img { height: 50px; vertical-align: middle; margin-right: 15px; }
                     .logo-header .company-name { font-size: 18px; font-weight: bold; color: #e31e24; vertical-align: middle; display: inline-block; }
