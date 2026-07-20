@@ -771,7 +771,19 @@ const syncOfflineData = useCallback(async () => {
                           {dutyStatus === 'OFF_DUTY' && <Button variant="primary" className="btn-premium flex-grow-1 shadow-sm active-scale" onClick={() => handleDayShiftAction('START')}>Start Shift</Button>}
                           {dutyStatus === 'ON_DUTY' && <Button variant="warning" className="btn-premium text-dark flex-grow-1 shadow-sm active-scale" onClick={() => handleDayShiftAction('BREAK')}><Coffee size={18} className="me-1"/> Break</Button>}
                           {dutyStatus === 'ON_BREAK' && <Button variant="success" className="btn-premium flex-grow-1 shadow-sm active-scale" onClick={() => handleDayShiftAction('RESUME')}>Resume Duty</Button>}
-                          {dutyStatus !== 'OFF_DUTY' && <Button variant="danger" className="btn-premium flex-grow-1 shadow-sm active-scale" onClick={() => handleDayShiftAction('END')}>End Shift</Button>}
+                         {dutyStatus !== 'OFF_DUTY' && (
+    <Button 
+        variant="danger" 
+        className="btn-premium flex-grow-1 shadow-sm active-scale" 
+        onClick={() => {
+            if (window.confirm("⚠️ WARNING: Are you sure you want to END your shift?\n\nThis will stop live GPS tracking and conclude your daily duty log. Click OK to confirm.")) {
+                handleDayShiftAction('END');
+            }
+        }}
+    >
+        End Shift
+    </Button>
+)}
                       </div>
                   </Card.Body>
               </Card>

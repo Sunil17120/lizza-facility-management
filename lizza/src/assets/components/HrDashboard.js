@@ -347,7 +347,9 @@ const HrDashboard = () => {
                 <table>
                     <tr><th>Gov ID (UID) Number</th><td style="font-weight:bold;">${emp?.aadhar_raw && emp.aadhar_raw !== 'N/A' ? emp.aadhar_raw : 'Not Provided'}</td><th>PAN Number</th><td style="font-weight:bold;">${emp?.pan_raw && emp.pan_raw !== 'N/A' ? emp.pan_raw : 'Not Provided'}</td></tr>
                     <tr><th>Voter ID</th><td>${emp?.voter_id_raw && emp.voter_id_raw !== 'N/A' ? emp.voter_id_raw : 'Not Provided'}</td><th>Driving Licence</th><td>${emp?.dl_raw && emp.dl_raw !== 'N/A' ? emp.dl_raw : 'Not Provided'}</td></tr>
-                    <tr><th>Passport Number</th><td colspan="3">${emp?.passport_raw && emp.passport_raw !== 'N/A' ? emp.passport_raw : 'Not Provided'}</td></tr>
+                    <tr><th>Passport Number</th><td colspan="3">${emp?.passport_raw && emp.passport_raw !== 'N/A' ? emp.passport_raw : 'Not Provided'}</td>
+                    <th>UAN Number</th><td style="font-weight:bold; color:#0d6efd;">${emp?.uan_raw && emp.uan_raw !== 'N/A' ? emp.uan_raw : (emp?.uan_enc && emp.uan_enc !== 'N/A' ? emp.uan_enc : 'Not Provided')}</td>
+                    </tr>
                 </table>
 
                 <h3 class="section-header">5. Salary & Banking Details</h3>

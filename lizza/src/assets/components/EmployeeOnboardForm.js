@@ -39,7 +39,7 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
 
   const [kycMode, setKycMode] = useState('aadhaar_xml'); 
   const [kycStatus, setKycStatus] = useState('pending'); 
-  
+  const [hasUAN, setHasUAN] = useState(false);
   const [formData, setFormData] = useState({
     userType: 'employee', department: 'Security',
     firstName: '', lastName: '', phoneNumber: '', email: '', dob: '', 
@@ -51,6 +51,7 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
     designation: '', unitName: '', shiftStart: '09:00', shiftEnd: '18:00', 
     bankName: '', accountNumber: '', ifscCode: '', 
     bankName: '', accountNumber: '', ifscCode: '', confirmAccountNumber: '',
+    uan: '', confirmUan: '',
     aadhar: '', panCard: '', voterId: '', drivingLicence: '', passportNo: '',
     enrolledSite: '', customSite: ''
   });
@@ -301,6 +302,10 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
         setError("Account Number and Confirm Account Number do not match. Check Banking Details in Step 2."); 
         return;
     }
+    if (hasUAN && (!formData.uan || formData.uan !== formData.confirmUan)) {
+        setError("UAN numbers do not match or are empty. Check PF/UAN Details in Step 2."); 
+        return;
+    }
 
     // 4. Mandatory Signature Check
     if (!signatureDataUrl) {
@@ -369,6 +374,7 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
     if (formData.bankName) submitData.append('bank_name', formData.bankName);
     if (formData.accountNumber) submitData.append('account_number', formData.accountNumber);
     if (formData.ifscCode) submitData.append('ifsc_code', formData.ifscCode);
+    if (hasUAN && formData.uan) submitData.append('uan', formData.uan);
     if (formData.aadhar) submitData.append('aadhar_number', formData.aadhar);
     if (formData.panCard) submitData.append('pan_number', formData.panCard);
     if (formData.voterId) submitData.append('voter_id', formData.voterId);
@@ -745,6 +751,51 @@ const EmployeeOnboardForm = ({ locations, onCancel, onSuccess }) => {
                                     <input type="file" accept="image/*,.pdf" onChange={e => handleFileChange(e, 'bankPassbook')} />
                                     {files.bankPassbook && <div className="text-success mt-2 small fw-bold"><CheckCircle size={14} className="me-1"/> File Selected</div>}
                                 </div>
+                                {/* PASTED RIGHT BELOW THE BANK PASSBOOK UPLOAD COL */}
+                        
+                        <div className="section-title text-danger border-bottom border-danger pb-2 mt-5">PF / UAN Details</div>
+                        <div className="mb-3 p-3 bg-light rounded-4 border">
+                            <Form.Check 
+                                type="switch"
+                                id="uan-switch"
+                                label={<span className="fw-bold text-dark ms-2">Employee has an existing UAN (Universal Account Number)?</span>}
+                                checked={hasUAN}
+                                onChange={(e) => {
+                                    setHasUAN(e.target.checked);
+                                    if (!e.target.checked) setFormData({...formData, uan: '', confirmUan: ''});
+                                }}
+                                style={{transform: 'scale(1.1)', transformOrigin: 'left center'}}
+                            />
+                        </div>
+                        
+                        {hasUAN && (
+                            <Row className="g-3 mt-1 fade-in">
+                                <Col xs={12} md={6}>
+                                    <Form.Label className="small fw-bold text-muted ps-1">UAN Number <span className="text-danger">*</span></Form.Label>
+                                    <Form.Control 
+                                        className="custom-input" 
+                                        type="password" 
+                                        maxLength="12"
+                                        required={hasUAN} 
+                                        placeholder="12-digit UAN" 
+                                        value={formData.uan} 
+                                        onChange={e => setFormData({...formData, uan: e.target.value.replace(/\D/g, '')})} 
+                                    />
+                                </Col>
+                                <Col xs={12} md={6}>
+                                    <Form.Label className="small fw-bold text-muted ps-1">Confirm UAN Number <span className="text-danger">*</span></Form.Label>
+                                    <Form.Control 
+                                        className="custom-input border-primary" 
+                                        type="text" 
+                                        maxLength="12"
+                                        required={hasUAN} 
+                                        placeholder="Visible to verify..." 
+                                        value={formData.confirmUan} 
+                                        onChange={e => setFormData({...formData, confirmUan: e.target.value.replace(/\D/g, '')})} 
+                                    />
+                                </Col>
+                            </Row>
+                        )}
                             </Col>
                         </Row>
                     </Card.Body>
